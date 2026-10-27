@@ -1,0 +1,7 @@
+# dsh-rss-news-daily bundle patch.
+# 单行 insert：profile 层可用同 id 行覆盖 config（见 docs/DESIGN.md §5 全字段）。
+
+- insert:
+    - id: rss-news-daily
+      name: 'dsh-rss-news-daily'
+      config: {}
