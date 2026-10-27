@@ -171,7 +171,7 @@ function apiSources(deps: ApiDeps) {
         ok: true,
         sources: deps.svc.listSources().map((s) => ({
           id: s.id, url: s.url, title: s.title, category: s.category, tier: s.tier,
-          enabled: s.enabled, builtin: s.builtin, summarize: s.summarize, health: s.health,
+          enabled: s.enabled, builtin: s.builtin, summarize: s.summarize, proxy: s.proxy, cooldownHours: s.cooldownHours, health: s.health,
         })),
       })
     }
