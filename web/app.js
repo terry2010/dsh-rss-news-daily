@@ -130,7 +130,7 @@ function mdLite(md) {
 $('#digestDay').addEventListener('change', loadDigest)
 $('#btnDigestRun').addEventListener('click', async () => {
   const btn = $('#btnDigestRun')
-  btn.disabled = true // 防重入：并发 digest 会竞态写文件/markDigested
+  btn.disabled = true; btn.hidden = true // 生成中隐藏入口，防重入
   $('#btnDigestStop').hidden = false
   $('#digestBusy').hidden = false
   $('#statusbar').textContent = '生成日报中（LLM 总结可能要 1-2 分钟）…' // 直写状态栏：不被 toast 的 3s 自动刷新冲掉
@@ -142,7 +142,7 @@ $('#btnDigestRun').addEventListener('click', async () => {
     toast(`日报已生成（${doc.itemCount ?? '?'} 条${doc.degraded ? ' · 总结降级' : ''}${tk}）`)
     loadDigest()
   } catch (e) { toast(`生成失败: ${e.message}`) }
-  finally { btn.disabled = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
+  finally { btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
 })
 $('#btnDigestStop').addEventListener('click', async () => {
   try { await post('/digest-stop', {}); toast('已请求停止，正在降级收尾…') }
