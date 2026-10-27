@@ -133,11 +133,13 @@ export function apply(ctx: Context, config: ConfigType) {
       if (!llmRuntime) return { ok: false, error: 'LLM 不可用' }
       const client = new DshLlmClient(llmRuntime, pickTranslateRoute(), log)
       const text = await client.generateText({
-        system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文。格式：第一行输出译文标题，空一行输出译文正文。只输出译文，不要解释。',
+        system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
         prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
         maxTokens: 1200,
       })
-      item.state.translation = text
+      // 标签协议解析 → 统一存 '标题\n\n正文'；标签缺失时回退原样（渲染层另有 trim+split 兜底）
+      const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
+      item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
       await store.save()
       return { ok: true, translation: text }
     },
