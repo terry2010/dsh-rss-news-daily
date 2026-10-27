@@ -32,6 +32,9 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 .digest a { color: var(--acc); }
 .src-wrap { margin-bottom: 8px; }
 .srclist .src { display: flex; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.src-info { min-width: 0; flex: 1; }
+.src-actions { flex-shrink: 0; display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start; justify-content: flex-end; max-width: 220px; }
+.src-actions button { white-space: nowrap; }
 .src-wrap .src-edit { border-radius: 0 0 10px 10px; border-top: none; }
 .src.off { opacity: 0.55; }
 .src-url { font-size: 12px; color: var(--dim); word-break: break-all; }
