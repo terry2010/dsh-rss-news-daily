@@ -72,7 +72,7 @@ export function apply(ctx: Context, config: ConfigType) {
   const store = new Store({ path: join(dataDir, 'store.json'), maxItems: config.fetch.maxStoredItems, log })
   const prefs = new PrefsStore(join(dataDir, 'prefs.json'), log)
   const fetcher = createFetcher({
-    proxyUrl: config.fetch.proxyUrl,
+    proxyUrl: () => (prefs.get() as { proxyUrl?: string }).proxyUrl || config.fetch.proxyUrl,
     timeoutMs: config.fetch.requestTimeoutMs,
     sizeLimitBytes: config.fetch.sizeLimitBytes,
     retries: config.fetch.retries,

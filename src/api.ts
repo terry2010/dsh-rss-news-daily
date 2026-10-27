@@ -234,10 +234,13 @@ function apiPrefs(deps: ApiDeps) {
     if (method === 'GET') return sendJson(res, 200, { ok: true, prefs: deps.prefs.get() })
     if (method === 'POST') {
       const body = await readBody(req) as Partial<ReturnType<PrefsStore['get']>>
-      deps.prefs.save({
+      // 只落显式给出的字段——undefined 会让 normalizePrefs 把已学权重清成默认
+      const patch = Object.fromEntries(Object.entries({
         topics: body.topics, keywords: body.keywords,
         bannedKeywords: body.bannedKeywords, sourceWeight: body.sourceWeight,
-      })
+        proxyUrl: body.proxyUrl,
+      }).filter(([, v]) => v !== undefined))
+      deps.prefs.save(patch)
       return sendJson(res, 200, { ok: true, prefs: deps.prefs.get() })
     }
     sendJson(res, 405, { ok: false, error: `unsupported ${method}` })

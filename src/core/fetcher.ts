@@ -37,8 +37,8 @@ export interface FetcherOptions {
   userAgent?: string
   /** Injectable fetch for tests / transports. */
   fetchImpl?: typeof fetch
-  /** 全局代理（http://…），源级 proxy:true 时使用；SOCKS5 不支持（undici ProxyAgent 仅 HTTP CONNECT） */
-  proxyUrl?: string
+  /** 全局代理（http://…），源级 proxy:true 时使用；可为取值函数（UI prefs 动态读取）；SOCKS5 不支持 */
+  proxyUrl?: string | (() => string | undefined)
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000
@@ -174,7 +174,7 @@ export function createFetcher(options: FetcherOptions = {}) {
   const userAgent = options.userAgent ?? DEFAULT_USER_AGENT
 
   const fetchOne = async (url: string, signal?: AbortSignal, init?: { proxy?: string | boolean }): Promise<FetchedDocument | FetchFailure> => {
-    const dispatcher = await resolveDispatcher(init?.proxy, options.proxyUrl)
+    const dispatcher = await resolveDispatcher(init?.proxy, typeof options.proxyUrl === 'function' ? options.proxyUrl() : options.proxyUrl)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     const combined = signal === undefined

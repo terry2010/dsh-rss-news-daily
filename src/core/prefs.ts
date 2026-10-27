@@ -18,6 +18,8 @@ export interface PrefsFile extends Prefs {
   llm?: { provider: string; model: string }
   /** UI 指定的多时间点调度覆盖；digestTimes 空=回 dailyTime */
   schedule?: { digestTimes: string[]; fetchTimes: string[] }
+  /** UI 全局代理 URL（fetcher 每次解析：UI 覆盖 > config.fetch.proxyUrl > 环境变量） */
+  proxyUrl?: string
 }
 
 function numMapOf(v: unknown): Record<string, number> {
@@ -51,7 +53,8 @@ export function normalizePrefs(value: unknown): PrefsFile {
       : undefined,
     schedule: Array.isArray(sched.digestTimes) || Array.isArray(sched.fetchTimes)
       ? { digestTimes: times(sched.digestTimes), fetchTimes: times(sched.fetchTimes) }
-      : undefined,
+      : undefined,,
+    proxyUrl: typeof r.proxyUrl === 'string' && r.proxyUrl ? r.proxyUrl : undefined
   }
 }
 

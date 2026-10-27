@@ -30,7 +30,9 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 .digest .md-num { margin: 8px 0 2px; font-weight: 600; }
 .digest .md-li { color: var(--lead); }
 .digest a { color: var(--acc); }
-.srclist .src { display: flex; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+.src-wrap { margin-bottom: 8px; }
+.srclist .src { display: flex; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.src-wrap .src-edit { border-radius: 0 0 10px 10px; border-top: none; }
 .src.off { opacity: 0.55; }
 .src-url { font-size: 12px; color: var(--dim); word-break: break-all; }
 .src-err { color: var(--err); font-size: 12px; }

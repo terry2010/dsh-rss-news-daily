@@ -201,6 +201,7 @@ async function loadSources() {
 
 function renderSources() {
   $('#srcList').innerHTML = state.sources.map((s) => `
+    <div class="src-wrap">
     <div class="src ${s.enabled ? '' : 'off'}">
       <div class="src-info">
         <b>${esc(s.title)}</b> <span class="tag">${esc(s.category)}</span>${s.builtin ? '<span class="tag dim">内置</span>' : ''}
@@ -214,22 +215,18 @@ function renderSources() {
         <button data-src-act="edit" data-id="${esc(s.url)}" title="编辑源属性">⚙</button>
         ${s.builtin ? '' : `<button data-src-act="del" data-id="${esc(s.url)}">删除</button>`}
       </div>
-      ${state.editing === s.id ? `
-      <div class="src-edit">
-        <label>名称 <input data-f="title" value="${esc(s.title)}"></label>
-        <label>分类 <input data-f="category" value="${esc(s.category)}"></label>
-        <label><input type="checkbox" data-f="enabled" ${s.enabled ? 'checked' : ''}> 启用</label>
-        <label><input type="checkbox" data-f="summarize" ${s.summarize !== false ? 'checked' : ''}> AI 摘要</label>
-        <label>代理 <select data-f="proxy">
-          <option value=""${s.proxy === undefined || s.proxy === false ? ' selected' : ''}>直连</option>
-          <option value="global"${s.proxy === true ? ' selected' : ''}>跟随全局</option>
-          <option value="custom"${typeof s.proxy === 'string' ? ' selected' : ''}>自定义</option>
-        </select><input data-f="proxyUrl" placeholder="http://127.0.0.1:7890" value="${typeof s.proxy === 'string' ? esc(s.proxy) : ''}"${typeof s.proxy === 'string' ? '' : ' hidden'}></label>
-        <label>最小冷却小时 <input type="number" min="0" step="1" data-f="cooldownHours" value="${s.cooldownHours ?? ''}" placeholder="24"></label>
-        <button data-src-act="save" data-id="${esc(s.url)}">保存</button>
-        <button data-src-act="cancel">取消</button>
-      </div>` : ''}
-      </div>
+    </div>
+    ${state.editing === s.id ? `
+    <div class="src-edit">
+      <label>名称 <input data-f="title" value="${esc(s.title)}"></label>
+      <label>分类 <input data-f="category" value="${esc(s.category)}"></label>
+      <label><input type="checkbox" data-f="enabled" ${s.enabled ? 'checked' : ''}> 启用</label>
+      <label><input type="checkbox" data-f="summarize" ${s.summarize !== false ? 'checked' : ''}> AI 摘要</label>
+      <label><input type="checkbox" data-f="useProxy" ${s.proxy === true || typeof s.proxy === 'string' ? 'checked' : ''}> 使用代理</label>
+      <label>最小冷却小时 <input type="number" min="0" step="1" data-f="cooldownHours" value="${s.cooldownHours ?? ''}" placeholder="24"></label>
+      <button data-src-act="save" data-id="${esc(s.url)}">保存</button>
+      <button data-src-act="cancel">取消</button>
+    </div>` : ''}
     </div>`).join('')
 }
 
@@ -252,13 +249,12 @@ $('#srcList').addEventListener('click', async (e) => {
     } else if (btn.dataset.srcAct === 'save') {
       const panel = btn.closest('.src-edit')
       const g = (n) => panel.querySelector(`[data-f="${n}"]`)
-      const pv = g('proxy').value
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
         title: g('title').value.trim() || undefined,
         category: g('category').value.trim() || undefined,
         enabled: g('enabled').checked,
         summarize: g('summarize').checked,
-        proxy: pv === 'global' ? true : pv === 'custom' ? (g('proxyUrl').value.trim() || null) : null,
+        proxy: g('useProxy').checked ? true : false,
         cooldownHours: g('cooldownHours').value === '' ? null : Number(g('cooldownHours').value),
       }) })
       state.editing = null; toast('已保存')
@@ -268,13 +264,7 @@ $('#srcList').addEventListener('click', async (e) => {
     loadSources()
   } catch (err) { toast(`操作失败: ${err.message}`) }
 })
-// 代理选「自定义」才显示 URL 输入框
-$('#srcList').addEventListener('change', (e) => {
-  if (e.target.dataset?.f === 'proxy') {
-    const inp = e.target.parentElement.querySelector('[data-f="proxyUrl"]')
-    if (inp) inp.hidden = e.target.value !== 'custom'
-  }
-})
+// 代理是「使用/不使用」单选框——勾选后走设置页的全局代理（config.fetch.proxyUrl 或此处 prefs.proxyUrl）
 
 $('#btnAddSrc').addEventListener('click', async () => {
   const url = $('#newSrcUrl').value.trim()
@@ -315,8 +305,15 @@ async function loadPrefs() {
     const r = await api('/prefs')
     state.prefs = r.prefs
     renderPrefs()
+    $('#proxyUrl').value = r.prefs.proxyUrl || ''
   } catch { /* ignore */ }
 }
+$('#btnProxySave').addEventListener('click', async () => {
+  try {
+    await post('/prefs', { proxyUrl: $('#proxyUrl').value.trim() || undefined })
+    toast('全局代理已保存，下次抓取生效')
+  } catch (e) { toast(`保存失败: ${e.message}`) }
+})
 
 function renderPrefs() {
   const p = state.prefs || {}
