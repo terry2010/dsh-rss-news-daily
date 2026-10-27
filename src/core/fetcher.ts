@@ -125,6 +125,12 @@ async function readBody(
         }
         if (head.byteLength >= CHARSET_PROBE_BYTES) {
           decoder = pickDecoder(contentType, head)
+          // 探测期攒下的前序 chunk 必须在选定解码器后立刻按序排空，
+          // 不能在循环末尾追加——否则文档开头会被挪到 body 末尾（"no root element"）
+          for (const bufferedChunk of buffered) {
+            chunks.push(decoder.decode(bufferedChunk, { stream: true }))
+          }
+          buffered.length = 0
         }
       } else {
         chunks.push(decoder.decode(next, { stream: true }))

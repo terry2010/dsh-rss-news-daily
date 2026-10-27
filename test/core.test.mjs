@@ -77,6 +77,29 @@ test('fetcher: 公网 302 到内网被拦截（逐跳 SSRF）', async () => {
   assert.ok('error' in r && r.error.includes('SSRF'))
 })
 
+test('fetcher: 多 chunk body 顺序保持（探测期 buffered 不得排到末尾）', async () => {
+  const { createFetcher } = await import(core + 'fetcher.js')
+  const xml = '<?xml version="1.0"?><rss version="2.0"><channel>' + '<item><title>x</title></item>'.repeat(60) + '</channel></rss>'
+  const bytes = new TextEncoder().encode(xml)
+  // 切成 3 块：首块 < 512B 探测窗口 → 走 buffered；后续走 live decode
+  const c1 = bytes.subarray(0, 300), c2 = bytes.subarray(300, 4000), c3 = bytes.subarray(4000)
+  const fetcher = createFetcher({
+    requestTimeoutMs: 5000, sizeLimitBytes: 1024 * 1024, retries: 0,
+    fetchImpl: async () => new Response(
+      new ReadableStream({ start(c) { c.enqueue(c1); c.enqueue(c2); c.enqueue(c3); c.close() } }),
+      { status: 200, headers: { 'content-type': 'application/xml' } },
+    ),
+    log: { info() {}, warn() {}, error() {} },
+  })
+  const doc = await fetcher('https://x/feed')
+  assert.equal(doc.status, 200)
+  assert.ok(doc.body.startsWith('<?xml'), `body head must be the XML prolog, got: ${doc.body.slice(0, 40)}`)
+  assert.ok(doc.body.endsWith('</rss>'), 'body tail must be document end')
+  assert.equal(doc.body.length, xml.length)
+  const { parseFeedDocument } = await import(core + 'parser.js')
+  assert.equal(parseFeedDocument(doc.body).items.length, 60, 'parsed items must survive multi-chunk decode')
+})
+
 test('store: atomic save/load, corrupt isolation, extra fields preserved', async () => {
   const { Store, normalizeStoreData } = await import(core + 'store.js')
   const dir = mkdtempSync(join(tmpdir(), 'rnd-store-'))

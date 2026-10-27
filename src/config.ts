@@ -130,7 +130,7 @@ const FetchSectionSchema = Schema.object({
   onStartup: Schema.boolean().default(true),
   concurrency: Schema.natural().min(1).max(16).default(6),
   requestTimeoutMs: Schema.number().min(1000).default(15_000),
-  sizeLimitBytes: Schema.number().min(1024).default(1024 * 1024),
+  sizeLimitBytes: Schema.number().min(1024).default(3 * 1024 * 1024),
   retries: Schema.natural().min(0).default(2),
   maxItemsPerSource: Schema.natural().min(1).default(50),
   storeContentChars: Schema.natural().min(100).default(4000),

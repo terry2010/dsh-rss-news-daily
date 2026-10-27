@@ -156,7 +156,8 @@ function recordHealth(src: FeedSource, ok: boolean, ms: number, err: string | un
   } else {
     h.fail += 1
     h.failStreak += 1
-    h.lastError = (err || 'unknown').slice(0, 200)
+    // 错误文本消毒：剥 HTML 标签 + 压空白 + 截断——拦页/错误页的原始 HTML 不进健康表
+    h.lastError = (err || 'unknown').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
     if (h.failStreak >= HEALTH_FAIL_COOLDOWN_STREAK) {
       h.cooldownUntil = new Date(now.getTime() + COOLDOWN_MS).toISOString()
     }
