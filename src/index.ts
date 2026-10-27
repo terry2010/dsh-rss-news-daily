@@ -97,7 +97,7 @@ export function apply(ctx: Context, config: ConfigType) {
   })
   const runFetch = () => runFetchCycle(makeFetchOpts()) // scheduler 回调签名 (signal?)=>…，不带参
   let fetchProg = { running: false, done: 0, total: 0 }
-  let digestProg = { running: false, done: 0, total: 0 }
+  let digestProg = { running: false, done: 0, total: 0, stage: '' }
   let fetchAbort: AbortController | undefined
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
   const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string } }) => {
@@ -283,8 +283,8 @@ export function apply(ctx: Context, config: ConfigType) {
     if (digestBusy) return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'extractive' as const, degraded: true, note: 'digest already running' })
     digestBusy = true
     digestAbort = new AbortController()
-    digestProg = { running: true, done: 0, total: 0 }
-    return digestRun(force, day).finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0 } })
+    digestProg = { running: true, done: 0, total: 0, stage: '' }
+    return digestRun(force, day).finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0, stage: '' } })
   }
   const digestRun = (force: boolean, day?: string) => runDailyDigest({
     store,
@@ -308,7 +308,7 @@ export function apply(ctx: Context, config: ConfigType) {
     digestMaxLength: config.digest.maxLength,
     llmTimeoutMs: config.llm.timeoutMs,
     signal: digestAbort?.signal,
-    onItemDone: (done, total) => { digestProg.done = done; digestProg.total = total },
+    onItemDone: (done, total, stage) => { digestProg.done = done; digestProg.total = total; digestProg.stage = stage || '' },
     llmMaxTokens: config.llm.maxTokens,
     language: 'zh',
     timezone: config.timezone,

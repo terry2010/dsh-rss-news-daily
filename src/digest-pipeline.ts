@@ -38,8 +38,8 @@ export interface DigestPipelineOptions {
   day?: string
   /** 翻译用 LLM client（translateLlm 路由）；存在时对英文条目生成中英对照译文 */
   translateClient?: LlmClient
-  /** 每完成一条逐条摘要回调（done, total），进度上报用 */
-  onItemDone?: (done: number, total: number) => void
+  /** 每完成一条回调（done, total, stage）——stage: summaries/translate/finishing，进度上报用 */
+  onItemDone?: (done: number, total: number, stage?: string) => void
   /** LLM maxTokens（config 透传，不再用 summarizer 内算值） */
   llmMaxTokens: number
   digestItems: number
@@ -86,6 +86,7 @@ async function translateItems(items: FeedItem[], client: LlmClient, opts: Digest
     return cjk * 2 <= t.replace(/\s/g, '').length
   })
   const queue = [...targets]
+  let done = 0
   const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency) }, async () => {
     for (;;) {
       if (opts.signal?.aborted) return
@@ -103,6 +104,8 @@ async function translateItems(items: FeedItem[], client: LlmClient, opts: Digest
       } catch (e) {
         item.state.translationError = e instanceof Error ? e.message : String(e)
       }
+      done++
+      opts.onItemDone?.(done, targets.length, 'translate')
     }
   })
   await Promise.all(workers)
@@ -343,6 +346,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
 
   // 整体总结（summarize 内部已含抽取降级）
   const summaryItems = picked.map((i) => toSummarizable(i, sourcesById.get(i.sourceId)?.title ?? i.sourceId))
+  opts.onItemDone?.(1, 1, 'finishing')
   const sum = await summarize(
     {
       items: summaryItems, language: opts.language, mode: 'batch',

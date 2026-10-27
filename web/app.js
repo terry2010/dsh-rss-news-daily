@@ -191,7 +191,7 @@ $('#btnDigestRun').addEventListener('click', async () => {
   const dp = setInterval(async () => {
     try {
       const p = await api('/digest-progress')
-      if (p.running) { $('#digestBusy').textContent = `⏳ 日报生成中…${p.total ? ` (${p.done}/${p.total})` : ''}`; return }
+      if (p.running) { const stage = p.stage === 'translate' ? '翻译中' : p.stage === 'finishing' ? '收尾中' : '日报生成中'; $('#digestBusy').textContent = `⏳ ${stage}…${p.total ? ` (${p.done}/${p.total})` : ''}`; return }
       clearInterval(dp); reset(); toast('日报生成完成'); loadDigest()
     } catch { /* 进度不可达不影响生成 */ }
   }, 900)
