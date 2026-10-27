@@ -221,6 +221,65 @@ async function fetchOne(
   return res
 }
 
+// ---- 源管理（news_* 工具/API 共用） ----
+
+export interface AddSourceOptions {
+  url: string
+  title?: string
+  category?: string
+}
+
+/** 添加源：SSRF → 真实抓取校验 → 解析 feed 提标题 → 落 store。校验不过不保存。 */
+export async function addSource(
+  fetch: ReturnType<typeof createFetcher>,
+  store: Store,
+  opts: AddSourceOptions,
+): Promise<FeedSource> {
+  const url = opts.url.trim()
+  if (!url) throw new Error('url required')
+  if (store.sources.some((s) => normalizeUrl(s.url) === normalizeUrl(url))) {
+    throw new Error(`已存在该源: ${url}`)
+  }
+  const doc = await fetch(url) // SSRF/超时/大小在 fetcher 内兜底
+  if ('error' in doc) throw new Error(`抓取失败: ${doc.error}`)
+  const feed = parseFeedDocument(doc.body) // 解析失败会抛 FeedParseError
+  if (feed.items.length === 0) throw new Error('feed 无条目（可能不是有效 RSS/Atom）')
+  const src = toFeedSource({
+    url, title: opts.title || feed.title || url, category: opts.category,
+    builtin: false,
+  })
+  store.addSource(src)
+  await store.save()
+  return src
+}
+
+/** 移除源（连带其条目）。内置源只支持停用不支持删除——停用走 store 覆盖层。 */
+export function removeSource(store: Store, urlOrId: string): boolean {
+  const id = normalizeUrl(urlOrId)
+  return store.removeSource(id) || store.removeSource(urlOrId)
+}
+
+/** 启用/停用源：内置源在 store 写覆盖层，用户源直接改记录。 */
+export async function setSourceEnabled(
+  store: Store,
+  urlOrId: string,
+  enabled: boolean,
+  builtinMeta?: { title: string; category: string },
+): Promise<void> {
+  const id = normalizeUrl(urlOrId)
+  const existing = store.sources.find((s) => s.id === id || normalizeUrl(s.url) === id)
+  if (existing) {
+    existing.enabled = enabled
+  } else {
+    // 内置源停用：写一条覆盖层记录（builtin=false 标记位由 effectiveSources 以 URL 命中内置后纠正）
+    store.addSource(toFeedSource({
+      url: urlOrId, title: builtinMeta?.title || urlOrId,
+      category: builtinMeta?.category, enabled,
+    }))
+  }
+  await store.save()
+}
+
 /** 跑一轮抓取；单源失败就地标注不影响其它源（铁律 2）。 */
 export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycleResult> {
   const log = opts.log || noopLog
@@ -252,6 +311,7 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
   })
   await Promise.all(workers)
   result.finishedAt = nowFn().toISOString()
+  opts.store.meta.lastFetchAt = result.finishedAt
   await opts.store.save()
   log.info(`fetch cycle done: ${result.totalAdded} added / ${result.totalFetched} fetched / ${result.errors} errors`)
   return result

@@ -21,7 +21,7 @@ export class FeedParseError extends Error {
 }
 
 /** Minimal in-memory XML element tree used internally. */
-interface XmlEl {
+export interface XmlEl {
   /** Full tag name as written (prefix retained). */
   name: string
   /** Local (prefix-stripped) tag name. */

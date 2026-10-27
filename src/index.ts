@@ -1,21 +1,29 @@
 /**
- * dsh-rss-news-daily bundle 入口。
+ * dsh-rss-news-daily 插件入口。
  *
- * 契约（loader 消费）：name / inject / Config / apply。
- * host 半体：抓取调度（timer）、news_* 工具（tools）、阅读器路由（webServer）。
- * llm 为可选能力：缺失时总结/摘要走抽取式降级，插件仍可加载（铁律 2）。
+ * 契约（cordis bundle）：
+ *  - name    'rss-news-daily'（cordis.patch.yml 里 id 必须一致）
+ *  - inject  ['timer','tools']（静态依赖；webServer/llm 为可选能力走 ctx.inject）
+ *  - Config  Schemastery schema（src/config.ts）
+ *  - apply   挂载点：store → fetcher → tools → scheduler
+ *
+ * 会话零注入：apply 只注册工具/定时器/路由，不写 systemPrompt、不发 followup。
  */
 
-import '@deepseek-ai/cordis-plugin-timer'
-
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
+import type { TimerSeam } from './scheduler.js'
 
 import { Config } from './config.js'
 import type { Config as ConfigType } from './config.js'
+import { Store } from './core/store.js'
+import { createFetcher } from './core/fetcher.js'
+import { effectiveSources, runFetchCycle, addSource, removeSource, setSourceEnabled, normalizeUrl } from './service.js'
+import { startScheduler } from './scheduler.js'
+import { registerTools } from './tools.js'
+import type { NewsService } from './tools.js'
 
 export { Config }
 
@@ -30,36 +38,90 @@ interface BuiltinSourcesFile {
   sources: Array<{ name: string; url: string; defaultEnabled?: boolean }>
 }
 
-function loadBuiltinSources(): BuiltinSourcesFile['sources'] {
-  // lib/sources.builtin.json 由 scripts/copy-assets.mjs 从 src/ 拷入
-  const file = join(fileURLToPath(new URL('.', import.meta.url)).replace(/\/$/, ''), 'sources.builtin.json')
-  const parsed = JSON.parse(readFileSync(file, 'utf8')) as BuiltinSourcesFile
-  return parsed.sources
+function loadBuiltinSources(): BuiltinSourcesFile {
+  const file = join(fileURLToPath(new URL('.', import.meta.url)), 'sources.builtin.json')
+  return JSON.parse(readFileSync(file, 'utf8')) as BuiltinSourcesFile
 }
 
 function resolveDataDir(configured: string): string {
   if (configured) return configured
-  if (process.env.DSH_HOME) return join(process.env.DSH_HOME, 'data', 'rss-news-daily')
-  return join(homedir(), '.dsh', 'rss-news-daily')
+  const home = process.env.DSH_HOME
+  if (home) return join(home, 'data', 'rss-news-daily')
+  return join(process.env.HOME || '.', '.dsh', 'rss-news-daily')
 }
 
-export function apply(ctx: Context, config: ConfigType): void {
+export function apply(ctx: Context, config: ConfigType) {
   const log = ctx.logger('rss-news-daily')
-
   if (!config.enabled) {
     log.info('disabled by config; loaded inert')
     return
   }
-
   const dataDir = resolveDataDir(config.dataDir)
-  const builtin = loadBuiltinSources()
-  const enabledCount = builtin.filter((s) => s.defaultEnabled !== false).length
-
+  const store = new Store({ path: join(dataDir, 'store.json'), maxItems: config.fetch.maxStoredItems, log })
+  const fetcher = createFetcher({
+    timeoutMs: config.fetch.requestTimeoutMs,
+    sizeLimitBytes: config.fetch.sizeLimitBytes,
+    retries: config.fetch.retries,
+  })
+  const sources = effectiveSources(config.sources, store)
+  const enabledCount = sources.filter((s) => s.enabled).length
   log.info(
-    `loaded: dataDir=${dataDir} builtin=${builtin.length} sources `
-    + `(${enabledCount} enabled) digestItems=${config.digest.digestItems} `
-    + `dailyTime=${config.dailyTime} tz=${config.timezone || 'host-local'}`,
+    `loaded: ${sources.length} sources (${enabledCount} enabled) digestItems=${config.digest.digestItems} `
+    + `dailyTime=${config.dailyTime} tz=${config.timezone || 'host-local'} dataDir=${dataDir}`,
   )
+
+  const runFetch = () => runFetchCycle({
+    fetch: fetcher,
+    store,
+    sources: effectiveSources(config.sources, store), // 每轮重取：用户改源/健康度实时生效
+    maxItemsPerSource: config.fetch.maxItemsPerSource,
+    storeContentChars: config.fetch.storeContentChars,
+    concurrency: config.fetch.concurrency,
+    dedupeThreshold: config.dedupe.threshold,
+    dedupeWindowDays: config.dedupe.windowDays,
+    log,
+  })
+
+  // 对外操作门面：tools（M2）与 HTTP API（M4）共用同一组语义
+  const svc: NewsService = {
+    listSources: () => effectiveSources(config.sources, store),
+    addSource: (o) => addSource(fetcher, store, o),
+    setEnabled: (id, en) => setSourceEnabled(store, id, en),
+    removeSource: (id) => removeSource(store, id),
+    runFetch,
+    status: () => {
+      const list = effectiveSources(config.sources, store)
+      const failures = list.filter((s) => s.health.lastError).map((s) => ({ name: s.title, error: s.health.lastError! }))
+      return {
+        sources: list.length,
+        enabled: list.filter((s) => s.enabled).length,
+        items: store.items.length,
+        lastFetchAt: store.meta.lastFetchAt,
+        lastDigestDay: store.meta.lastDigestDay,
+        failures,
+      }
+    },
+  }
+
+  let disposed = false
+  void store.load()
+    .then(() => {
+      if (disposed) return
+      registerTools(ctx, svc)
+      startScheduler(ctx as unknown as TimerSeam, {
+        fetch: config.fetch,
+        dailyTime: config.dailyTime,
+        timezone: config.timezone,
+        catchUpHours: config.catchUpHours,
+        enabled: true,
+        lastDigestDay: () => store.meta.lastDigestDay,
+        runFetchCycle: runFetch,
+        runDailyDigest: async () => { log.info('daily digest: M3 pipeline not wired yet') },
+        log,
+      })
+      log.info('tools registered, scheduler armed')
+    })
+    .catch((e) => log.error('store load failed; plugin degraded to inert', e))
 
   // 可选能力按服务逐项声明：有就用、没有就降级，绝不因缺服务而拒载。
   ctx.inject(['llm'], () => {
