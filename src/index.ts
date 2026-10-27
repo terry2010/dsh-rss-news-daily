@@ -28,6 +28,7 @@ import type { NewsService } from './tools.js'
 import { runDailyDigest } from './digest-pipeline.js'
 import { DshLlmClient } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
+import { mountApi } from './api.js'
 
 export { Config }
 
@@ -166,8 +167,20 @@ export function apply(ctx: Context, config: ConfigType) {
       log.info('llm service available: LLM summaries enabled')
     }
   })
-  ctx.inject(['webServer'], () => {
-    log.info('webServer available: reader page will mount at /dsh-rss-news-daily/')
+  ctx.inject(['webServer'], (c) => {
+    const ws = (c as unknown as { webServer?: unknown }).webServer
+    if (ws) {
+      disposers.push(mountApi(ws as Parameters<typeof mountApi>[0], {
+        store,
+        prefs,
+        svc,
+        configSources: config.sources,
+        timezone: config.timezone,
+        readerPageSize: config.readerPageSize,
+        runDigest: digestNow,
+      }))
+      log.info('reader mounted at /dsh-rss-news-daily/')
+    }
   })
 
   // apply 返回值即 cordis 插件 disposer：卸载时停调度、反注册工具。

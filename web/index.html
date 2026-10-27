@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RSS 新闻 · dsh-rss-news-daily</title>
+<link rel="stylesheet" href="web/style.css">
+</head>
+<body>
+<header>
+  <div class="tabs">
+    <button class="tab active" data-tab="items">📰 全部新闻</button>
+    <button class="tab" data-tab="digest">📋 今日精选</button>
+    <button class="tab" data-tab="sources">🔌 订阅源</button>
+    <button class="tab" data-tab="prefs">🎛 调教</button>
+  </div>
+  <div class="statusbar" id="statusbar">加载中…</div>
+</header>
+
+<main>
+  <!-- 全部条目流 -->
+  <section id="tab-items">
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="搜索标题/摘要…">
+      <input type="date" id="day">
+      <select id="category"><option value="">全部分类</option></select>
+      <select id="srcFilter"><option value="">全部源</option></select>
+      <label><input type="checkbox" id="unread"> 只看未读</label>
+      <button id="btnFetch" title="立即抓取全部源">⟳ 抓取</button>
+    </div>
+    <div id="itemList" class="itemlist"></div>
+    <div class="pager"><button id="prevPage">‹ 上一页</button><span id="pageInfo"></span><button id="nextPage">下一页 ›</button></div>
+  </section>
+
+  <!-- 今日精选日报 -->
+  <section id="tab-digest" hidden>
+    <div class="toolbar">
+      <input type="date" id="digestDay">
+      <button id="btnDigestRun" title="立即生成今日日报">▶ 生成日报</button>
+    </div>
+    <article id="digestView" class="digest"></article>
+  </section>
+
+  <!-- 订阅源管理 -->
+  <section id="tab-sources" hidden>
+    <div class="toolbar">
+      <input type="url" id="newSrcUrl" placeholder="https://…/feed.xml">
+      <input type="text" id="newSrcTitle" placeholder="名称（可选）">
+      <button id="btnAddSrc">＋ 添加</button>
+      <button id="btnOpmlExport">⇩ 导出 OPML</button>
+      <label class="filebtn">⇧ 导入 OPML<input type="file" id="opmlFile" accept=".opml,.xml" hidden></label>
+    </div>
+    <div id="srcList" class="srclist"></div>
+  </section>
+
+  <!-- 偏好调教 -->
+  <section id="tab-prefs" hidden>
+    <div class="toolbar"><input type="text" id="tuneText" placeholder="例：多推 AI Agent、少推币圈、屏蔽裁员"><button id="btnTune">应用调教</button></div>
+    <div id="tuneResult"></div>
+    <h3>当前权重</h3>
+    <div id="prefsView"></div>
+  </section>
+</main>
+
+<script src="web/app.js"></script>
+</body>
+</html>
