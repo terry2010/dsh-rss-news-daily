@@ -209,7 +209,7 @@ function renderSources() {
         ${s.health?.lastError ? `<div class="src-err">✗ ${esc(s.health.lastError)}${s.health.cooldownUntil ? ' · 冷却中' : ''}</div>` : `<div class="src-ok">✓ ${s.health?.ok || 0} 次成功${s.health?.avgMs ? ` · ${Math.round(s.health.avgMs)}ms` : ''}</div>`}
       </div>
       <div class="src-actions">
-        ${s.health?.cooldownUntil ? `<button data-src-act="retry" data-id="${esc(s.url)}">↻ 重试</button>` : ''}
+        <button data-src-act="retry" data-id="${esc(s.url)}" title="立即抓取该源（冷却源则复活重试）">↻ 重试</button>
         <button data-src-act="toggle" data-id="${esc(s.url)}" data-en="${s.enabled ? 0 : 1}">${s.enabled ? '停用' : '启用'}</button>
         <button data-src-act="sum" data-id="${esc(s.url)}" data-sum="${s.summarize !== false ? 0 : 1}" title="该源条目是否生成 AI 摘要">${s.summarize !== false ? '摘要✓' : '摘要✗'}</button>
         <button data-src-act="edit" data-id="${esc(s.url)}" title="编辑源属性">⚙</button>
