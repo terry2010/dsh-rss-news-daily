@@ -130,8 +130,13 @@ function mdLite(md) {
 $('#digestDay').addEventListener('change', loadDigest)
 $('#btnDigestRun').addEventListener('click', async () => {
   toast('生成日报中（LLM 总结可能要 1-2 分钟）…')
-  try { await post('/digest-run', {}); toast('日报已生成'); loadDigest() }
-  catch (e) { toast(`生成失败: ${e.message}`) }
+  try {
+    // force: 手动点 = 现在就要重新生成，含当日已推条目（幂等空跑由 force 绕过）
+    const r = await post('/digest-run', { force: true })
+    const doc = r.doc || {}
+    toast(`日报已生成（${doc.itemCount ?? '?'} 条${doc.degraded ? ' · 总结降级' : ''}）`)
+    loadDigest()
+  } catch (e) { toast(`生成失败: ${e.message}`) }
 })
 
 // ---- 订阅源管理 ----
