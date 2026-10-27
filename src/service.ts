@@ -165,8 +165,12 @@ function recordHealth(src: FeedSource, ok: boolean, ms: number, err: string | un
   } else {
     h.fail += 1
     h.failStreak += 1
-    // 错误文本消毒：剥 HTML 标签 + 压空白 + 截断——拦页/错误页的原始 HTML 不进健康表
-    h.lastError = (err || 'unknown').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+    // 错误文本消毒：真 HTML 拦页才剥标签（以 < 开头或 >=3 个标签），
+    // 保留 "document root <html>" 这类解析错误里的标签名
+    const rawErr = err || 'unknown'
+    const tagCount = (rawErr.match(/<[^>]+>/g) || []).length
+    h.lastError = (rawErr.trimStart().startsWith('<') || tagCount >= 3
+      ? rawErr.replace(/<[^>]+>/g, ' ') : rawErr).replace(/\s+/g, ' ').trim().slice(0, 200)
     if (h.failStreak >= HEALTH_FAIL_COOLDOWN_STREAK) {
       h.cooldownUntil = new Date(now.getTime() + (src.cooldownHours ? src.cooldownHours * 3600e3 : COOLDOWN_MS)).toISOString()
     }
@@ -303,22 +307,37 @@ export async function setSourceEnabled(
 /** 更新源的任意可编辑属性（title/category/proxy/cooldownHours 走 override；enabled/summarize 由专门开关管，但这里一并兜住）。 */
 export async function updateSource(store: Store, urlOrId: string, patch: {
   title?: string; category?: string; enabled?: boolean; summarize?: boolean
-  proxy?: string | boolean | null; cooldownHours?: number | null
+  proxy?: string | boolean | null; cooldownHours?: number | null; url?: string
 }, currentEnabled = true): Promise<void> {
   const id = normalizeUrl(urlOrId)
   const builtin = builtinCatalog().find((s) => normalizeUrl(s.url) === id)
     ?? builtinCatalog().find((s) => s.url === urlOrId)
   const existing = store.sources.find((s) => s.id === id || normalizeUrl(s.url) === id)
+  const newUrl = typeof patch.url === 'string' && patch.url ? patch.url : undefined
+  const newId = newUrl ? normalizeUrl(newUrl) : undefined
   if (existing) {
+    if (newUrl && newId !== existing.id) { // 改 URL=改身份：id 重算 + 健康表迁移到新 id
+      const h = store.getHealth(existing.id)
+      if (h) store.setHealth(newId!, h)
+      existing.url = newUrl; existing.id = newId!
+    }
     if (patch.title !== undefined) existing.title = patch.title
     if (patch.category !== undefined) existing.category = patch.category
     if (patch.enabled !== undefined) existing.enabled = patch.enabled
     if (patch.summarize !== undefined) existing.summarize = patch.summarize
     if (patch.proxy !== undefined) (existing as { proxy?: string | boolean }).proxy = patch.proxy === null ? undefined : patch.proxy
     if (patch.cooldownHours !== undefined) (existing as { cooldownHours?: number }).cooldownHours = patch.cooldownHours === null ? undefined : patch.cooldownHours
+  } else if (newUrl && builtin) {
+    // 改内置源的 URL：旧 url 置停用（否则内置默认会再抓旧址）+ 新 url 落 override
+    store.addSource(toFeedSource({ url: builtin.url, title: builtin.name, category: builtin.category, enabled: false }))
+    store.addSource(toFeedSource({
+      url: newUrl, title: patch.title || builtin.name, category: patch.category ?? builtin.category,
+      enabled: patch.enabled ?? true, summarize: patch.summarize ?? true,
+      proxy: patch.proxy === null ? undefined : patch.proxy, cooldownHours: patch.cooldownHours === null ? undefined : patch.cooldownHours,
+    }))
   } else {
     store.addSource(toFeedSource({
-      url: urlOrId, title: patch.title || builtin?.name || urlOrId, category: patch.category ?? builtin?.category,
+      url: newUrl ?? urlOrId, title: patch.title || builtin?.name || newUrl || urlOrId, category: patch.category ?? builtin?.category,
       enabled: patch.enabled ?? currentEnabled, summarize: patch.summarize ?? true,
       proxy: patch.proxy === null ? undefined : patch.proxy, cooldownHours: patch.cooldownHours === null ? undefined : patch.cooldownHours,
     }))

@@ -218,6 +218,7 @@ function renderSources() {
     </div>
     ${state.editing === s.id ? `
     <div class="src-edit">
+      <label class="wide">URL <input data-f="url" value="${esc(s.url)}"></label>
       <label>名称 <input data-f="title" value="${esc(s.title)}"></label>
       <label>分类 <input data-f="category" value="${esc(s.category)}"></label>
       <label><input type="checkbox" data-f="enabled" ${s.enabled ? 'checked' : ''}> 启用</label>
@@ -243,13 +244,14 @@ $('#srcList').addEventListener('click', async (e) => {
     } else if (btn.dataset.srcAct === 'sum') {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ summarize: btn.dataset.sum === '1' }) })
     } else if (btn.dataset.srcAct === 'edit') {
-      state.editing = btn.dataset.id; renderSources(); return
+      state.editing = state.editing === btn.dataset.id ? null : btn.dataset.id; renderSources(); return
     } else if (btn.dataset.srcAct === 'cancel') {
       state.editing = null; renderSources(); return
     } else if (btn.dataset.srcAct === 'save') {
       const panel = btn.closest('.src-edit')
       const g = (n) => panel.querySelector(`[data-f="${n}"]`)
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        url: g('url').value.trim() || undefined,
         title: g('title').value.trim() || undefined,
         category: g('category').value.trim() || undefined,
         enabled: g('enabled').checked,
