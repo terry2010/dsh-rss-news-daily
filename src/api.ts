@@ -99,10 +99,10 @@ function apiItems(deps: ApiDeps) {
     const q = (u.searchParams.get('q') || '').toLowerCase()
     const unread = u.searchParams.get('unread') === '1'
     const page = Math.max(1, Number(u.searchParams.get('page')) || 1)
-    const dayStart = day ? new Date(`${day}T00:00:00`).getTime() : 0
-    const dayEnd = day ? dayStart + 86400e3 : 0
+    const dayStart = /^\d{4}-\d{2}-\d{2}$/.test(day) ? new Date(`${day}T00:00:00`).getTime() : 0
+    const dayEnd = dayStart ? dayStart + 86400e3 : 0
     let items = deps.store.items
-    if (day) items = items.filter((i) => { const t = new Date(i.fetchedAt).getTime(); return t >= dayStart && t < dayEnd })
+    if (dayStart) items = items.filter((i) => { const t = new Date(i.fetchedAt).getTime(); return t >= dayStart && t < dayEnd })
     if (category) items = items.filter((i) => i.topic === category)
     if (source) items = items.filter((i) => i.sourceId === source || i.sourceId.includes(source))
     if (unread) items = items.filter((i) => !i.state.read && !i.state.hidden)

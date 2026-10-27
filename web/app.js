@@ -38,7 +38,7 @@ async function loadStatus() {
 async function loadItems() {
   const p = new URLSearchParams()
   if ($('#q').value) p.set('q', $('#q').value)
-  if ($('#day').value) p.set('day', $('#day').value)
+  if (/^\d{4}-\d{2}-\d{2}$/.test($('#day').value.trim())) p.set('day', $('#day').value.trim()) // 非 yyyy-mm-dd 不参与过滤
   if ($('#category').value) p.set('category', $('#category').value)
   if ($('#srcFilter').value) p.set('source', $('#srcFilter').value)
   if ($('#unread').checked) p.set('unread', '1')
@@ -148,7 +148,8 @@ function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTi
 async function loadDigest() {
   const ld = new Date()
   const localDay = `${ld.getFullYear()}-${String(ld.getMonth() + 1).padStart(2, '0')}-${String(ld.getDate()).padStart(2, '0')}`
-  const day = $('#digestDay').value || localDay // 本地日界：UTC toISOString 会让凌晨看到的日期停在昨天
+  const dv = $('#digestDay').value.trim()
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(dv) ? dv : localDay // 本地日界：UTC toISOString 会让凌晨看到的日期停在昨天
   $('#digestDay').value = day
   try {
     const r = await api(`/digest/${day}`)
@@ -246,7 +247,7 @@ function renderSources() {
         ${s.health?.lastError ? `<div class="src-err">✗ ${esc(s.health.lastError)}${s.health.cooldownUntil ? ' · 冷却中' : ''}</div>` : `<div class="src-ok">✓ ${s.health?.ok || 0} 次成功${s.health?.avgMs ? ` · ${Math.round(s.health.avgMs)}ms` : ''}</div>`}
       </div>
       <div class="src-actions">
-        <button data-src-act="retry" data-id="${esc(s.url)}" title="立即抓取该源（冷却源则复活重试）">↻ 重试</button>
+        <button data-src-act="retry" data-id="${esc(s.url)}" title="${s.health?.lastError || s.health?.cooldownUntil ? '复活并重试该源' : '立即抓取该源'}">${s.health?.lastError || s.health?.cooldownUntil ? '↻ 重试' : '↻ 抓取'}</button>
         <button data-src-act="toggle" data-id="${esc(s.url)}" data-en="${s.enabled ? 0 : 1}">${s.enabled ? '停用' : '启用'}</button>
         <button data-src-act="sum" data-id="${esc(s.url)}" data-sum="${s.summarize !== false ? 0 : 1}" title="该源条目是否生成 AI 摘要">${s.summarize !== false ? '摘要✓' : '摘要✗'}</button>
         <button data-src-act="edit" data-id="${esc(s.url)}" title="编辑源属性">⚙</button>
