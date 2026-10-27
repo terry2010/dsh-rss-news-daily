@@ -94,7 +94,8 @@ export function apply(ctx: Context, config: ConfigType) {
     dedupeWindowDays: config.dedupe.windowDays,
     log,
   })
-  const runFetch = (force = false) => runFetchCycle({ ...makeFetchOpts(), force })
+  const runFetch = () => runFetchCycle(makeFetchOpts()) // scheduler 回调签名 (signal?)=>…，不带参
+  const runFetchForce = (force = false) => runFetchCycle({ ...makeFetchOpts(), force }) // svc/api：手动抓取可带 force 绕冷却
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => runFetchCycle(makeFetchOpts(sources))
 
   // 对外操作门面：tools（M2）与 HTTP API（M4）共用同一组语义
@@ -109,7 +110,7 @@ export function apply(ctx: Context, config: ConfigType) {
     removeSource: (id) => removeSource(store, id),
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),
-    runFetch,
+    runFetch: runFetchForce,
     tune: async (text) => {
       const r = parseTune(text, prefs.get())
       if (!r.ok) return { ok: false, actions: [], error: r.error }
