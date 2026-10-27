@@ -161,8 +161,10 @@ $('#srcFilter').addEventListener('change', () => {
   state.page = 1; loadItems()
 })
 $('#q').addEventListener('input', debounce(() => { state.page = 1; loadItems() }, 400))
-$('#prevPage').addEventListener('click', () => { if (state.page > 1) { state.page--; loadItems() } })
-$('#nextPage').addEventListener('click', () => { if (state.page * state.pageSize < state.total) { state.page++; loadItems() } })
+// 翻页后滚回列表顶部（pager 在页脚，不滚会停在页底）
+const toTop = () => window.scrollTo(0, 0)
+$('#prevPage').addEventListener('click', () => { if (state.page > 1) { state.page--; loadItems().then(toTop) } })
+$('#nextPage').addEventListener('click', () => { if (state.page * state.pageSize < state.total) { state.page++; loadItems().then(toTop) } })
 $('#btnFetch').addEventListener('click', async () => {
   const src = $('#srcFilter').value, cat = $('#category').value
   toast('抓取中…')
