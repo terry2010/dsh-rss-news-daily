@@ -53,8 +53,8 @@ export function normalizePrefs(value: unknown): PrefsFile {
       : undefined,
     schedule: Array.isArray(sched.digestTimes) || Array.isArray(sched.fetchTimes)
       ? { digestTimes: times(sched.digestTimes), fetchTimes: times(sched.fetchTimes) }
-      : undefined,,
-    proxyUrl: typeof r.proxyUrl === 'string' && r.proxyUrl ? r.proxyUrl : undefined
+      : undefined,
+    proxyUrl: typeof r.proxyUrl === 'string' && r.proxyUrl ? r.proxyUrl : undefined,
   }
 }
 
