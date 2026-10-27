@@ -155,16 +155,32 @@ export function createFetcher(options: FetcherOptions = {}) {
       ? controller.signal
       : AbortSignal.any([controller.signal, signal])
     try {
-      const blocked = ssrfRejectReason(url)
-      if (blocked) return { url, status: 0, error: `SSRF blocked: ${blocked}`, retryable: false }
-      const response = await fetchImpl(url, {
-        headers: {
-          'user-agent': userAgent,
-          accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
-        },
-        redirect: 'follow',
-        signal: combined,
-      })
+      // 手动跟随重定向：每一跳都过 SSRF，防"公网 302 到内网"穿透（audit M1-H2）
+      let current = url
+      let response: Response | undefined
+      for (let hop = 0; hop <= 5; hop += 1) {
+        const blocked = ssrfRejectReason(current)
+        if (blocked) return { url, status: 0, error: `SSRF blocked: ${blocked}`, retryable: false }
+        response = await fetchImpl(current, {
+          headers: {
+            'user-agent': userAgent,
+            accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+          },
+          redirect: 'manual',
+          signal: combined,
+        })
+        if (response.status >= 300 && response.status < 400) {
+          const loc = response.headers.get('location')
+          if (!loc) break
+          current = new URL(loc, current).toString()
+          continue
+        }
+        break
+      }
+      if (!response) return { url, status: 0, error: 'no response', retryable: false }
+      if (response.status >= 300 && response.status < 400) {
+        return { url, status: response.status, error: `too many redirects`, retryable: false }
+      }
       if (!response.ok) {
         return { url, status: response.status, error: `HTTP ${response.status} ${response.statusText}`.trim() }
       }

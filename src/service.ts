@@ -25,6 +25,8 @@ export interface FetchCycleOptions {
   storeContentChars: number
   concurrency: number
   dedupeThreshold: number
+  /** 近似去重窗口（天）：仅对窗口内条目做 Jaccard；0=不限 */
+  dedupeWindowDays?: number
   log?: LogSink
   now?: () => Date
 }
@@ -117,16 +119,20 @@ export function effectiveSources(
       builtin: prev?.builtin,
     }))
   }
-  // store 用户源：含运行时新增 + 对内置源的状态/健康度覆盖
+  // store 用户源：含运行时新增 + 对内置源的状态/改名覆盖（改名以用户为准）
   for (const s of store.sources) {
     const key = normalizeUrl(s.url)
     const prev = byUrl.get(key)
     if (prev && prev.builtin) {
-      // 用户改过内置源：沿用内置元数据 + 用户状态/健康度
-      byUrl.set(key, { ...prev, enabled: s.enabled, weight: s.weight ?? prev.weight, health: s.health || prev.health })
+      byUrl.set(key, { ...prev, title: s.title || prev.title, enabled: s.enabled, weight: s.weight ?? prev.weight })
     } else {
-      byUrl.set(key, { ...s, builtin: s.builtin === true, health: s.health || emptyHealth() })
+      byUrl.set(key, { ...s, builtin: s.builtin === true })
     }
+  }
+  // 健康度统一从 store.health 表读（纯内置源也持久化；含畸形防御）
+  for (const s of byUrl.values()) {
+    const h = store.getHealth(s.id)
+    s.health = h && typeof h === 'object' ? { ...h } : emptyHealth()
   }
   return [...byUrl.values()]
 }
@@ -137,6 +143,7 @@ function inCooldown(src: FeedSource, now: Date): boolean {
 }
 
 function recordHealth(src: FeedSource, ok: boolean, ms: number, err: string | undefined, now: Date): void {
+  if (!src.health || typeof src.health !== 'object') src.health = emptyHealth() // 畸形数据防御
   const h = src.health
   const samples = Math.min(h.ok + h.fail, 9)
   h.avgMs = h.avgMs === undefined ? ms : (h.avgMs * samples + ms) / (samples + 1)
@@ -186,7 +193,11 @@ async function fetchOne(
     if ('error' in doc) throw new Error(doc.error)
     const feed = parseFeedDocument(doc.body)
     const seen = new Set(opts.store.items.map((i) => i.id))
-    const known = opts.store.items.map((i) => ({ title: i.title, hash: i.hash }))
+    const windowMs = (opts.dedupeWindowDays ?? 0) * 86400e3
+    const cutoff = windowMs > 0 ? now.getTime() - windowMs : 0
+    const known = opts.store.items
+      .filter((i) => !cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
+      .map((i) => ({ title: i.title, hash: i.hash }))
     const fresh: FeedItem[] = []
     for (const p of feed.items.slice(0, opts.maxItemsPerSource)) {
       const item = toItem(src, p, now, opts.storeContentChars)
@@ -200,15 +211,12 @@ async function fetchOne(
     res.fetched = feed.items.length
     res.added = opts.store.addItems(fresh)
     recordHealth(src, true, performance.now() - t0, undefined, now)
-    // 健康度写回 store 里的同名源（若存在）
-    const stored = opts.store.sources.find((s) => normalizeUrl(s.url) === src.id)
-    if (stored) stored.health = { ...src.health }
   } catch (e) {
     res.error = String((e as Error)?.message || e).slice(0, 200)
     recordHealth(src, false, performance.now() - t0, res.error, now)
-    const stored = opts.store.sources.find((s) => normalizeUrl(s.url) === src.id)
-    if (stored) stored.health = { ...src.health }
   }
+  // 健康度统一落 store.health 表（含纯内置源）
+  try { opts.store.setHealth(src.id, src.health) } catch { /* 健康度写失败不拖垮本轮 */ }
   return res
 }
 
@@ -229,6 +237,7 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
   if (skipped > 0) log.info(`fetch cycle: ${skipped} source(s) disabled or in cooldown`)
 
   const queue = [...active]
+  const nowFn = opts.now || (() => new Date())
   const workers = Array.from({ length: Math.max(1, opts.concurrency) }, async () => {
     for (;;) {
       const src = queue.shift()
@@ -241,7 +250,7 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
     }
   })
   await Promise.all(workers)
-  result.finishedAt = new Date().toISOString()
+  result.finishedAt = nowFn().toISOString()
   await opts.store.save()
   log.info(`fetch cycle done: ${result.totalAdded} added / ${result.totalFetched} fetched / ${result.errors} errors`)
   return result

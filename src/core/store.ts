@@ -33,6 +33,8 @@ export interface StoreData {
   meta: StoreMeta
   sources: FeedSource[]
   items: FeedItem[]
+  /** 全源健康度表（含纯内置源）：key=normalizeUrl(url) */
+  health: Record<string, FeedSource['health']>
 }
 
 const EMPTY_META: StoreMeta = {
@@ -58,7 +60,7 @@ export function normalizeStoreData(value: unknown): StoreData | null {
       title: stringOf(source.title),
       enabled: typeof source.enabled === 'boolean' ? source.enabled : true,
       addedAt: stringOf(source.addedAt),
-    })) as FeedSource[]
+    })).map((s) => sanitizeSource(s as Record<string, unknown>)) as unknown as FeedSource[]
     : []
   const items = Array.isArray(record.items)
     ? record.items.filter(isItemLike).map((item) => ({
@@ -74,11 +76,14 @@ export function normalizeStoreData(value: unknown): StoreData | null {
       fetchedAt: stringOf(item.fetchedAt),
       hash: stringOf(item.hash),
       digestedDay: stringOf(item.digestedDay),
-    })) as FeedItem[]
+    })).map((i) => sanitizeItem(i as Record<string, unknown>)) as unknown as FeedItem[]
     : []
   const meta = (typeof record.meta === 'object' && record.meta !== null
     ? record.meta
     : {}) as Record<string, unknown>
+  const health = (typeof record.health === 'object' && record.health !== null
+    ? record.health
+    : {}) as StoreData['health']
   return {
     schema: STORE_SCHEMA,
     meta: {
@@ -88,7 +93,36 @@ export function normalizeStoreData(value: unknown): StoreData | null {
     },
     sources,
     items,
+    health,
   }
+}
+
+/** spread 保留扩展字段后，对已知类型字段做消毒——防手写坏数据在运行期崩掉（如 health:5） */
+export function sanitizeSource(s: Record<string, unknown>): Record<string, unknown> {
+  if (typeof s.health !== 'object' || s.health === null) {
+    s.health = { ok: 0, fail: 0, failStreak: 0 }
+  }
+  const h = s.health as Record<string, unknown>
+  h.ok = typeof h.ok === 'number' ? h.ok : 0
+  h.fail = typeof h.fail === 'number' ? h.fail : 0
+  h.failStreak = typeof h.failStreak === 'number' ? h.failStreak : 0
+  s.weight = typeof s.weight === 'number' ? s.weight : 1
+  s.tier = s.tier === 1 || s.tier === 2 || s.tier === 3 ? s.tier : 3
+  return s
+}
+
+/** 同上，条目侧：state/reasons/score 畸形时回默认。 */
+export function sanitizeItem(it: Record<string, unknown>): Record<string, unknown> {
+  if (typeof it.state !== 'object' || it.state === null) {
+    it.state = { read: false, hidden: false, liked: 0 }
+  }
+  const st = it.state as Record<string, unknown>
+  st.read = st.read === true
+  st.hidden = st.hidden === true
+  st.liked = st.liked === 1 || st.liked === -1 ? st.liked : 0
+  if (!Array.isArray(it.reasons)) it.reasons = []
+  it.score = typeof it.score === 'number' ? it.score : 0
+  return it
 }
 
 /** Minimal structural guard: a source-like entry carries a string url. */
@@ -134,6 +168,7 @@ export class Store {
       meta: { ...EMPTY_META },
       sources: [],
       items: [],
+      health: {},
     }
   }
 
@@ -147,6 +182,21 @@ export class Store {
 
   get items(): FeedItem[] {
     return this.data.items
+  }
+
+  /** 全源健康度表（含纯内置源），直接改引用后需 save() 持久化。 */
+  get health(): StoreData['health'] {
+    return this.data.health
+  }
+
+  /** 写某源健康度并标脏（fetchOne 每轮调用）。 */
+  setHealth(id: string, health: FeedSource['health']): void {
+    this.data.health[id] = { ...health }
+    this.dirty = true
+  }
+
+  getHealth(id: string): FeedSource['health'] | undefined {
+    return this.data.health[id]
   }
 
   /** Load the document from disk; missing/corrupt files start empty. */

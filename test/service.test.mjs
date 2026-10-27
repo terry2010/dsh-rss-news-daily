@@ -79,6 +79,43 @@ test('runFetchCycle: 连续3次失败触发冷却', async () => {
   assert.ok(src.health.cooldownUntil, 'cooldownUntil should be set after 3rd consecutive failure')
 })
 
+test('健康度落 store.health 表：纯内置源冷却跨轮/跨重启生效', async () => {
+  const { runFetchCycle, effectiveSources } = await import('../lib/service.js')
+  const { Store } = await import('../lib/core/store.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-hp-'))
+  const file = join(dir, 's.json')
+  const store = new Store({ path: file })
+  await store.load()
+  const fetch = async (url) => ({ url, status: 0, error: 'down', retryable: false })
+  const src = mkSource({ health: { ok: 0, fail: 2, failStreak: 2 } })
+  await runFetchCycle({ fetch, store, sources: [src], maxItemsPerSource: 50, storeContentChars: 4000, concurrency: 1, dedupeThreshold: 0.85 })
+  assert.equal(store.getHealth(src.id).failStreak, 3, 'health 必须落到 store.health 表')
+  // 模拟重启：新 Store 重读文件，health 表应持久化保留
+  const st2 = new Store({ path: file })
+  await st2.load()
+  assert.equal(st2.getHealth(src.id)?.failStreak, 3, '重启后 health 表应保留 failStreak')
+  assert.ok(st2.getHealth(src.id)?.cooldownUntil)
+})
+
+test('畸形 store 数据不崩整轮（health:5 消毒）', async () => {
+  const { runFetchCycle } = await import('../lib/service.js')
+  const { Store } = await import('../lib/core/store.js')
+  const { writeFileSync } = await import('node:fs')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-bad-'))
+  const file = join(dir, 's.json')
+  writeFileSync(file, JSON.stringify({ schema: 1, meta: {}, sources: [{ url: 'https://x/feed', id: 'i', title: 'x', enabled: true, addedAt: '', health: 5 }], items: [], health: {} }))
+  const store = new Store({ path: file })
+  await store.load()
+  const fetch = async (url) => ({ url, status: 200, body: RSS2 })
+  const r = await runFetchCycle({ fetch, store, sources: effectiveSanitized(store), maxItemsPerSource: 50, storeContentChars: 4000, concurrency: 1, dedupeThreshold: 0.85 })
+  assert.equal(r.errors, 0)
+  assert.equal(r.totalAdded, 2)
+})
+
+function effectiveSanitized(store) {
+  return store.sources.map((s) => ({ ...s, tier: 1, lang: 'en', method: 'direct', weight: 1, topic: 'x' }))
+}
+
 test('effectiveSources: 内置 ∪ config ∪ store 合并，用户覆盖内置', async () => {
   const { effectiveSources, normalizeUrl } = await import('../lib/service.js')
   const store = await mkStore()
@@ -89,6 +126,7 @@ test('effectiveSources: 内置 ∪ config ∪ store 合并，用户覆盖内置'
   const overridden = list.find((s) => s.id === normalizeUrl(builtinUrl))
   assert.equal(overridden.enabled, false)
   assert.equal(overridden.builtin, true)
+  assert.equal(overridden.title, 'X用户改', '改名应以用户为准')
   const extra = effectiveSources([{ url: 'https://extra.example/feed?x=1', title: 'E' }], store)
   assert.ok(extra.some((s) => normalizeUrl(s.url) === 'https://extra.example/feed?x=1'))
 })

@@ -55,6 +55,26 @@ test('ssrf: rejects private, allows public', async () => {
   for (const ok of ['https://example.com/f', 'https://hnrss.org/frontpage']) {
     assert.equal(ssrfRejectReason(ok), null, `expected allow: ${ok}`)
   }
+  // M1 评审穿透用例回归
+  for (const bad of ['http://localhost./', 'http://[::ffff:127.0.0.1]/', 'http://[::ffff:169.254.169.254]/', 'http://[64:ff9b::a9fe:a9fe]/']) {
+    assert.ok(ssrfRejectReason(bad), `expected reject (bypass): ${bad}`)
+  }
+})
+
+test('fetcher: 公网 302 到内网被拦截（逐跳 SSRF）', async () => {
+  const { createFetcher } = await import(core + 'fetcher.js')
+  const fetcher = createFetcher({
+    retries: 0,
+    fetchImpl: async (url, init) => {
+      if (init?.redirect !== 'manual') throw new Error('redirect must be manual for per-hop SSRF')
+      if (url === 'https://pub.example/feed') {
+        return { status: 302, ok: false, headers: new Headers({ location: 'http://169.254.169.254/x' }) }
+      }
+      throw new Error(`should never reach inner target: ${url}`)
+    },
+  })
+  const r = await fetcher('https://pub.example/feed')
+  assert.ok('error' in r && r.error.includes('SSRF'))
 })
 
 test('store: atomic save/load, corrupt isolation, extra fields preserved', async () => {

@@ -21,10 +21,32 @@ function isPrivateIpv4(host: string): boolean {
   return false
 }
 
+/** 把 IPv6 文本里可能嵌入的 IPv4（v4-mapped ::ffff:x、NAT64 64:ff9b::/96）解码成点分串 */
+function embeddedIpv4(h: string): string | null {
+  let m = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)
+  if (m) return m[1]
+  // WHATWG URL 把 ::ffff:127.0.0.1 规范化成 ::ffff:7f00:1（两 16 位组）
+  m = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i)
+  if (m) {
+    const hi = parseInt(m[1], 16), lo = parseInt(m[2], 16)
+    return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
+  }
+  // NAT64 知名前缀 64:ff9b::/96（后 32 位为 IPv4，可为点分或两组 hex）
+  m = h.match(/^64:ff9b::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/i)
+  if (m) return m[1]
+  m = h.match(/^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i)
+  if (m) {
+    const hi = parseInt(m[1], 16), lo = parseInt(m[2], 16)
+    return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
+  }
+  return null
+}
+
 function isPrivateIpv6(host: string): boolean {
   const h = host.toLowerCase().replace(/^\[|\]$/g, '')
-  return h === '::1' || h === '::' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')
-    || h.startsWith('::ffff:127.') || h.startsWith('::ffff:10.') || h.startsWith('::ffff:192.168.')
+  if (h === '::1' || h === '::' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true
+  const v4 = embeddedIpv4(h)
+  return v4 !== null && isPrivateIpv4(v4)
 }
 
 /** 校验通过返回 null，被拒返回原因字符串。 */
@@ -39,7 +61,7 @@ export function ssrfRejectReason(rawUrl: string): string | null {
     return `协议不允许: ${url.protocol}`
   }
   if (url.username || url.password) return 'URL 不允许内嵌凭据'
-  const host = url.hostname.toLowerCase()
+  const host = url.hostname.toLowerCase().replace(/\.$/, '') // 尾点 FQDN 归一
   if (PRIVATE_HOSTNAMES.has(host) || PRIVATE_HOST_RE.test(host)) return `内网主机名: ${host}`
   if (isPrivateIpv4(host) || isPrivateIpv6(host)) return `内网/保留 IP: ${host}`
   return null
