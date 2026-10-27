@@ -58,11 +58,12 @@ function renderItems() {
     return `
     <div class="item ${st.read ? 'read collapsed' : ''} ${st.liked === 1 ? 'liked' : ''}">
       <div class="item-head">
+        ${(() => { const t = st.translation || ''; const nl = t.indexOf('\n'); return t ? `<div style="color:var(--acc)">${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
         <a href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
       <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(state.sources || []).find((x) => x.id === i.sourceId)?.lang === 'en' ? ` <button data-act="translate" data-id="${esc(i.id)}" title="翻译成中文">译</button>` : ''}</div>
       <div class="item-lead">${esc((i.aiSummary || i.summary || '').slice(0, 140))}</div>
-      ${st.translation ? `<div class="item-lead" style="color:var(--acc)">译: ${esc(st.translation.slice(0, 200))}</div>` : ''}
+      ${(() => { const t = st.translation || ''; const nl = t.indexOf('\n'); const body = nl > 0 ? t.slice(nl).replace(/\s+/g, ' ').trim() : ''; return body ? `<div class="item-lead" style="color:var(--acc)">译: ${esc(body.slice(0, 240))}</div>` : '' })()}
       <div class="item-actions">
         <button data-act="${st.read ? 'unread' : 'read'}" data-id="${esc(i.id)}" title="${st.read ? '标为未读（展开简介）' : '标为已读（收起简介）'}">${st.read ? '◉' : '✓'}</button>
         <button data-act="${st.liked === 1 ? 'unlike' : 'like'}" data-id="${esc(i.id)}" title="推荐学习：以后多推同类">👍</button>
