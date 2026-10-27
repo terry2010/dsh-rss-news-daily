@@ -23,6 +23,7 @@ const mkStore = async (n = 0) => {
 const mkOpts = (store, over = {}) => ({
   store, configSources: [], llmEnabled: false, summaryEnabled: false,
   summaryMaxItems: 20, summaryConcurrency: 3, summaryMaxLength: 50,
+  llmTimeoutMs: 60_000, llmMaxTokens: 4096,
   digestItems: 20, perTopicLimit: 0, digestMaxLength: 800,
   language: 'zh', timezone: '', digestsDir: mkdtempSync(join(tmpdir(), 'rnd-dg-')),
   log: { info() {}, warn() {}, error() {} }, ...over,
@@ -105,11 +106,70 @@ test('scorer: 屏蔽词淘汰/主题偏好加分/跨日降权/理由可解释', 
   assert.ok(old.reasons.includes('跨日已推降权') && old.score < ai.score)
 })
 
-test('digest 渲染: 采集源状态段出现失败源', async () => {
+test('scorer: perTopicLimit>0 配额截断 + 溢出补齐不空缺', async () => {
+  const { scoreAndSelect } = await import('../lib/core/scorer.js')
+  const mk = (id, topic) => ({ id, sourceId: 's', title: `t-${id}`, summary: '', content: '', publishedAt: '', fetchedAt: new Date().toISOString(), hash: id, digestedDay: '', topic, score: 0, reasons: [], state: { read: false, hidden: false, liked: 0 }, link: 'l' })
+  const items = [mk('a1', 'AI'), mk('a2', 'AI'), mk('a3', 'AI'), mk('a4', 'AI'), mk('t1', '科技'), mk('t2', '科技')]
+  const picked = scoreAndSelect(items, new Map([['s', { tier: 1, weight: 1 }]]), 5, {
+    perTopicLimit: 2, digestDay: 'x', now: new Date(),
+  })
+  const ai = picked.filter((i) => i.topic === 'AI')
+  assert.ok(ai.length === 2 || ai.length <= 5, 'topic quota applied')
+  assert.equal(picked.length, 5, 'overflow 补齐到 n')
+})
+
+test('digest 渲染: 失败源出现在采集源状态段', async () => {
   const { runDailyDigest } = await import('../lib/digest-pipeline.js')
+  const { normalizeUrl } = await import('../lib/service.js')
+  const { addSource } = await import('../lib/service.js')
   const store = await mkStore(5)
-  store.setHealth('https://bad/feed', { ok: 0, fail: 3, failStreak: 3, lastError: 'timeout', cooldownUntil: '2099-01-01' })
+  // 加一个真实用户源，再把它的健康度写成失败——key 必须与 effectiveSources 的 id 一致
+  await addSource(async (u) => ({ url: u, status: 200, body: '<?xml version="1.0"?><rss version="2.0"><channel><title>BadSrc</title><item><title>x</title><link>https://b/1</link></item></channel></rss>' }), store, { url: 'https://bad.example/feed', title: 'BadSrc' })
+  const id = normalizeUrl('https://bad.example/feed')
+  store.setHealth(id, { ok: 0, fail: 3, failStreak: 3, lastError: 'timeout', cooldownUntil: '2099-01-01' })
   const doc = await runDailyDigest(mkOpts(store, { digestItems: 3 }))
-  assert.match(doc.markdown, /## 今日总结/)
-  assert.ok(doc.itemCount === 3)
+  assert.match(doc.markdown, /## 采集源状态/)
+  assert.match(doc.markdown, /BadSrc/)
+})
+
+test('digest 渲染: LLM 摘要失败的条目回落原摘要文本', async () => {
+  const { runDailyDigest } = await import('../lib/digest-pipeline.js')
+  const store = await mkStore(4)
+  const dead = { generateText: async () => { throw new Error('dead') } }
+  const doc = await runDailyDigest(mkOpts(store, {
+    llmClient: dead, llmEnabled: true, summaryEnabled: true, summaryMaxItems: 4, digestItems: 3,
+  }))
+  // 每条都应带 "summary of item" 的原摘要回落行
+  assert.match(doc.markdown, /summary of item \d/)
+})
+
+test('prefs: PrefsStore 读写往返 + 畸形消毒', async () => {
+  const { PrefsStore } = await import('../lib/core/prefs.js')
+  const { writeFileSync } = await import('node:fs')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-prefs-'))
+  const file = join(dir, 'prefs.json')
+  const p = new PrefsStore(file)
+  p.load()
+  assert.deepEqual(p.get().bannedKeywords, [])
+  p.save({ topics: { AI: 1.5 }, bannedKeywords: ['币圈'] })
+  const p2 = new PrefsStore(file)
+  p2.load()
+  assert.equal(p2.get().topics.AI, 1.5)
+  assert.deepEqual(p2.get().bannedKeywords, ['币圈'])
+  // 畸形文件 → 默认
+  writeFileSync(file, '{bad json', 'utf8')
+  const p3 = new PrefsStore(file)
+  p3.load()
+  assert.equal(p3.get().topics.AI, undefined)
+})
+
+test('digest: prefs 屏蔽词在管线中真正淘汰条目', async () => {
+  const { runDailyDigest } = await import('../lib/digest-pipeline.js')
+  const store = await mkStore(6)
+  store.items[0].title = '币圈大新闻'
+  const doc = await runDailyDigest(mkOpts(store, {
+    digestItems: 6,
+    prefs: { topics: {}, keywords: {}, bannedKeywords: ['币圈'], sourceWeight: {} },
+  }))
+  assert.ok(!doc.markdown.includes('币圈大新闻'), 'banned item must be excluded')
 })

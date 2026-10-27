@@ -30,6 +30,10 @@ export interface DigestPipelineOptions {
   summaryMaxItems: number
   summaryConcurrency: number
   summaryMaxLength: number
+  /** LLM 单次调用超时（流挂起兜底，防 digestRunning 闩锁） */
+  llmTimeoutMs: number
+  /** LLM maxTokens（config 透传，不再用 summarizer 内算值） */
+  llmMaxTokens: number
   digestItems: number
   perTopicLimit: number
   digestMaxLength: number
@@ -74,6 +78,8 @@ async function itemSummaries(
             language: opts.language,
             mode: 'single',
             maxLength: opts.summaryMaxLength,
+            maxTokens: opts.llmMaxTokens,
+            signal: AbortSignal.timeout(opts.llmTimeoutMs),
           },
           client,
           true,
@@ -117,7 +123,12 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   // 整体总结（summarize 内部已含抽取降级）
   const summaryItems = picked.map((i) => toSummarizable(i, sourcesById.get(i.sourceId)?.title ?? i.sourceId))
   const sum = await summarize(
-    { items: summaryItems, language: opts.language, mode: 'batch', maxLength: opts.digestMaxLength },
+    {
+      items: summaryItems, language: opts.language, mode: 'batch',
+      maxLength: opts.digestMaxLength,
+      maxTokens: opts.llmMaxTokens,
+      signal: AbortSignal.timeout(opts.llmTimeoutMs),
+    },
     opts.llmClient,
     opts.llmEnabled && !!opts.llmClient,
   )

@@ -97,7 +97,8 @@ export function renderDigest(options: DigestRenderOptions): string {
       ? `${index + 1}. [${title}](${link})`
       : `${index + 1}. ${title}`
     const meta = [source, day].filter((part) => part !== '').join(' · ')
-    const lead = (item.aiSummary || '').trim()
+    // 逐条降级回落：aiSummary 缺失时用 feed 原摘要（截 90 字），保证每条都有摘要行
+    const lead = (item.aiSummary || item.summary || '').trim().slice(0, 90)
     const reasons = item.reasons?.length ? ` · _${item.reasons.join('、')}_` : ''
     return `${head}  \n    > ${meta}${reasons}${lead === '' ? '' : `  \n    > ${escapeLinkText(lead)}`}`
   })

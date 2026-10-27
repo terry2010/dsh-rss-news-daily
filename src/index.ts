@@ -19,6 +19,7 @@ import type { TimerSeam } from './scheduler.js'
 import { Config } from './config.js'
 import type { Config as ConfigType } from './config.js'
 import { Store } from './core/store.js'
+import { PrefsStore } from './core/prefs.js'
 import { createFetcher } from './core/fetcher.js'
 import { effectiveSources, runFetchCycle, addSource, removeSource, setSourceEnabled, importOpml, exportOpml } from './service.js'
 import { startScheduler } from './scheduler.js'
@@ -61,6 +62,7 @@ export function apply(ctx: Context, config: ConfigType) {
   }
   const dataDir = resolveDataDir(config.dataDir)
   const store = new Store({ path: join(dataDir, 'store.json'), maxItems: config.fetch.maxStoredItems, log })
+  const prefs = new PrefsStore(join(dataDir, 'prefs.json'), log)
   const fetcher = createFetcher({
     timeoutMs: config.fetch.requestTimeoutMs,
     sizeLimitBytes: config.fetch.sizeLimitBytes,
@@ -121,9 +123,12 @@ export function apply(ctx: Context, config: ConfigType) {
     digestItems: config.digest.digestItems,
     perTopicLimit: config.digest.perTopicLimit,
     digestMaxLength: config.digest.maxLength,
+    llmTimeoutMs: config.llm.timeoutMs,
+    llmMaxTokens: config.llm.maxTokens,
     language: 'zh',
     timezone: config.timezone,
     digestsDir: join(dataDir, 'digests'),
+    prefs: prefs.get(), // 每次取当前值：M5 调教立即生效于下一次打分
     log,
   }).then((doc) => { log.info(`digest written: ${doc.date} ${doc.itemCount} items degraded=${doc.degraded}`) })
 
@@ -132,6 +137,7 @@ export function apply(ctx: Context, config: ConfigType) {
   void store.load()
     .then(() => {
       if (disposed) return
+      prefs.load()
       disposers.push(registerTools(ctx, svc))
       disposers.push(startScheduler(ctx as unknown as TimerSeam, {
         fetch: config.fetch,
