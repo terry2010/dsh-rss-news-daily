@@ -78,6 +78,19 @@ export interface FeedItem {
   /** AI 一句话摘要与失败原因（逐条降级字段） */
   aiSummary?: string
   aiSummaryError?: string
+  /** digest v2：结构化条目块（背景/要点/结论），解析失败回退 aiSummary */
+  aiBlocks?: { summary: string; background: string; impact: string }
+  /** digest v2：LLM 评分（1-10）与理由；启发式分仍在 score 字段 */
+  llmScore?: number
+  llmReason?: string
+  /** digest v2：LLM 主题标签（评分调用顺带产出） */
+  tags?: string[]
+  /** digest v2：LLM 重写短标题（条目块调用产出） */
+  aiTitle?: string
+  /** digest v2：合并掉的同题新闻数（本条为主条目时） */
+  dupCount?: number
+  /** digest v2：本条被合并进的主条目 id（非主条目时） */
+  dupOf?: string
   state: ItemState
 }
 

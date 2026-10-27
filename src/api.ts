@@ -79,7 +79,7 @@ export interface ApiDeps {
   timezone: string
   readerPageSize: number
   digestsDir: string
-  runDigest: (force?: boolean) => Promise<unknown>
+  runDigest: (force?: boolean, day?: string) => Promise<unknown>
   /** 宿主 LLM runtime（可选能力）；用于 /api/llm 列 provider/model */
   getLlm?: () => { listProviders(): Array<{ id: string }>; listModels(p: string): Promise<Array<{ id: string }>> } | undefined
   /** config 层的 llm 路由对（用于 effective 判定展示） */
@@ -246,6 +246,7 @@ function apiPrefs(deps: ApiDeps) {
         topics: body.topics, keywords: body.keywords,
         bannedKeywords: body.bannedKeywords, sourceWeight: body.sourceWeight,
         proxyUrl: body.proxyUrl, autoTranslate: body.autoTranslate,
+        digestOpts: body.digestOpts,
       }).filter(([, v]) => v !== undefined))
       deps.prefs.save(patch)
       return sendJson(res, 200, { ok: true, prefs: deps.prefs.get() })
@@ -386,9 +387,12 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-cancel`, handler: guard(async (q, r) => { if (q.method !== 'POST') { r.statusCode = 405; r.end(); return } sendJson(r, 200, { ok: true, result: await deps.svc.cancelFetch?.() }) }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-run`, handler: guard(async (q, r) => {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
-    const body = await readBody(q) as { force?: boolean }
-    const doc = await deps.runDigest(!!body?.force)
-    sendJson(r, 200, { ok: true, doc })
+    const body = await readBody(q) as { force?: boolean; day?: string }
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(body?.day || '') ? body!.day : undefined
+    // fire-and-forget：大 digestItems 下 LLM 全链路远超 HTTP 请求超时，
+    // 改为立即返回 + 前端轮询 /digest-progress 收尾
+    deps.runDigest(!!body?.force, day).catch(() => { /* 错误经 progress/degraded 可见 */ })
+    sendJson(r, 200, { ok: true, started: true })
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/status`, handler: guard((_q, r) => sendJson(r, 200, { ok: true, ...deps.svc.status() })) }))
 

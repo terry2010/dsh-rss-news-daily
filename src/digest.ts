@@ -23,6 +23,10 @@ export interface DigestRenderOptions {
   sourcesStatus?: string[]
   /** 降级标注（铁律③失败可见）：总结段降级原因，写入正文 */
   degradedNote?: string
+  /** 生成耗时（毫秒），渲染进头部 meta 行 */
+  durationMs?: number
+  /** 生成时刻（渲染详细时间，缺省只显示 date） */
+  generatedAt?: Date
 }
 
 const LABELS: Record<DigestLanguage, { title: string; sources: string; items: string; generated: string }> = {
@@ -75,11 +79,15 @@ function itemDay(item: FeedItem): string {
 export function renderDigest(options: DigestRenderOptions): string {
   const labels = LABELS[options.language]
   const sourceNames = new Set(options.items.map((item) => options.sourceTitles.get(item.sourceId) ?? item.sourceId))
+  const dur = options.durationMs != null ? ` · 耗时 ${Math.round(options.durationMs / 1000)}s` : ''
+  const genTime = options.generatedAt
+    ? `${options.date} ${String(options.generatedAt.getHours()).padStart(2, '0')}:${String(options.generatedAt.getMinutes()).padStart(2, '0')}`
+    : options.date
   const header = [
     `# ${labels.title} · ${options.date}`,
     '',
     `> ${options.items.length} ${labels.items} · ${sourceNames.size} ${labels.sources} · `
-      + `${labels.generated} ${options.date}`,
+      + `${labels.generated} ${genTime}${dur}`,
     '',
   ].join('\n')
 
@@ -94,13 +102,13 @@ export function renderDigest(options: DigestRenderOptions): string {
   const lines = options.items.map((item, index) => {
     const source = options.sourceTitles.get(item.sourceId) ?? item.sourceId
     const day = itemDay(item)
-    const title = escapeLinkText(item.title)
+    const title = escapeLinkText(item.aiTitle || item.title)
     const link = options.includeItemLinks ? safeLinkUrl(item.link) : ''
     const head = link !== ''
       ? `${index + 1}. [${title}](${link})`
       : `${index + 1}. ${title}`
-    const meta = [source, day].filter((part) => part !== '').join(' · ')
-    // 逐条降级回落：aiSummary 缺失时用 feed 原摘要（截 90 字），保证每条都有摘要行
+    const meta = [source, day, item.dupCount ? `同题 ${item.dupCount + 1} 家报道` : '', item.llmScore != null ? `评分 ${item.llmScore}` : '', ...(item.tags || []).map((t) => `#${t}`)].filter((part) => part !== '').join(' · ')
+    // 逐条降级回落：aiBlocks 缺失时用 aiSummary/feed 原摘要（截 90 字），保证每条都有摘要行
     const lead = (item.aiSummary || item.summary || '').trim().slice(0, 90)
     const reasons = item.reasons?.length ? ` · _${item.reasons.join('、')}_` : ''
     // 中英对照：有译文的条目加中文标题行 + 译文行
@@ -108,7 +116,13 @@ export function renderDigest(options: DigestRenderOptions): string {
     const tnl = tl.indexOf('\n')
     const tlTitle = tnl > 0 ? tl.slice(0, tnl).trim() : ''
     const tlBody = tnl > 0 ? tl.slice(tnl).replace(/\s+/g, ' ').trim() : ''
-    return `${head}${tlTitle ? `  \n    ${escapeLinkText(tlTitle)}` : ''}  \n    > ${meta}${reasons}${lead === '' ? '' : `  \n    > ${escapeLinkText(lead)}`}${tlBody ? `  \n    > 译：${escapeLinkText(tlBody.slice(0, 180))}` : ''}`
+    // v2 结构化条目块：背景/要点/结论三段；缺块回退一行摘要
+    const b = item.aiBlocks
+    const bodyMd = b
+      ? [['摘要', b.summary], ['背景', b.background], ['影响', b.impact]]
+          .filter(([, v]) => (v || '').trim()).map(([k, v]) => `  \n    > ${k}：${escapeLinkText(v)}`).join('')
+      : (lead === '' ? '' : `  \n    > ${escapeLinkText(lead)}`)
+    return `${head}${tlTitle ? `  \n    ${escapeLinkText(tlTitle)}` : ''}  \n    > ${meta}${reasons}${bodyMd}${tlBody ? `  \n    > 译：${escapeLinkText(tlBody.slice(0, 180))}` : ''}`
   })
   const section = [
     `## ${SECTION_ITEMS[options.language]}`,

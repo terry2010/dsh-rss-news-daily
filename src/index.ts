@@ -97,7 +97,7 @@ export function apply(ctx: Context, config: ConfigType) {
   })
   const runFetch = () => runFetchCycle(makeFetchOpts()) // scheduler 回调签名 (signal?)=>…，不带参
   let fetchProg = { running: false, done: 0, total: 0 }
-  let digestProg = { running: false, done: 0, total: 0 }
+  let digestProg = { running: false, done: 0, total: 0, stage: '' }
   let fetchAbort: AbortController | undefined
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
   const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string } }) => {
@@ -145,7 +145,7 @@ export function apply(ctx: Context, config: ConfigType) {
       .then(async (result) => {
         // 自动翻译：本轮新入库的外文条目逐条调翻译模型（用户勾选后开启，按条计费）
         if (prefs.get().autoTranslate && llmRuntime) {
-          const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && isForeign(i))
+          const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
           for (const it of fresh) {
             try { await translateItemCore(it) }
             catch (e) { it.state.translationError = e instanceof Error ? e.message : String(e) }
@@ -279,30 +279,36 @@ export function apply(ctx: Context, config: ConfigType) {
   }
   let digestBusy = false // 服务端防重入：调度与手动 /api/digest-run 并发会竞态落盘
   let digestAbort: AbortController | undefined // 「停止生成」：中止在飞的 LLM 调用（流逐条失败→降级收尾，不落半文件）
-  const digestNow = (force = false) => {
+  const digestNow = (force = false, day?: string) => {
     if (digestBusy) return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'extractive' as const, degraded: true, note: 'digest already running' })
     digestBusy = true
     digestAbort = new AbortController()
-    digestProg = { running: true, done: 0, total: 0 }
-    return digestRun(force).finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0 } })
+    digestProg = { running: true, done: 0, total: 0, stage: '' }
+    return digestRun(force, day).finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0, stage: '' } })
   }
-  const digestRun = (force: boolean) => runDailyDigest({
+  const digestRun = (force: boolean, day?: string) => runDailyDigest({
     store,
+    day,
     configSources: config.sources,
     // 每次 digest 现组 client：UI 换模型后下次立即生效（resolution 缓存在 client 实例上）
     llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log) : undefined,
     translateClient: llmRuntime ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log) : undefined,
     llmEnabled: config.llm.enabled,
     summaryEnabled: config.summary.enabled,
-    summaryMaxItems: config.summary.maxItems,
-    summaryConcurrency: config.summary.concurrency,
+    summaryMaxItems: prefs.get().digestOpts?.summaryMaxItems ?? config.summary.maxItems,
+    summaryConcurrency: prefs.get().digestOpts?.summaryConcurrency ?? config.summary.concurrency,
     summaryMaxLength: config.summary.maxLength,
-    digestItems: config.digest.digestItems,
-    perTopicLimit: config.digest.perTopicLimit,
-    digestMaxLength: config.digest.maxLength,
+    digestItems: prefs.get().digestOpts?.digestItems ?? config.digest.digestItems,
+    perTopicLimit: prefs.get().digestOpts?.perTopicLimit ?? config.digest.perTopicLimit,
+    llmScoreCandidates: prefs.get().digestOpts?.llmScoreCandidates ?? config.digest.llmScoreCandidates,
+    minLlmScore: prefs.get().digestOpts?.minLlmScore ?? config.digest.minLlmScore,
+    candidateHours: prefs.get().digestOpts?.candidateHours ?? undefined,
+    dedupeStories: config.digest.dedupeStories,
+    categoryPrompts: config.digest.categoryPrompts,
+    digestMaxLength: prefs.get().digestOpts?.digestMaxLength ?? config.digest.maxLength,
     llmTimeoutMs: config.llm.timeoutMs,
     signal: digestAbort?.signal,
-    onItemDone: (done, total) => { digestProg.done = done; digestProg.total = total },
+    onItemDone: (done, total, stage) => { digestProg.done = done; digestProg.total = total; digestProg.stage = stage || '' },
     llmMaxTokens: config.llm.maxTokens,
     language: 'zh',
     timezone: config.timezone,

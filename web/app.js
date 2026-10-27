@@ -65,10 +65,11 @@ function itemHtml(i) {
     return `
     <div class="item ${st.read ? 'read collapsed' : ''} ${st.liked === 1 ? 'liked' : ''}">
       <div class="item-head">
-        ${(() => { if (state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div style="color:var(--acc)">${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
+        ${(() => { if (i.aiSummary || state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div style="color:var(--acc)">译: ${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
         <a href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
       <div class="item-meta">${esc(i.topic)} · ${(() => { const d = new Date(i.publishedAt || i.fetchedAt); const p = (n) => String(n).padStart(2, '0'); return isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}` })()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(() => {
+        if (i.aiSummary) return '' // 已有中文核心事实，不再提供翻译
         const t = i.title + (i.summary || '')
         const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length
         if (cjk * 2 > t.replace(/\s/g, '').length) return ''
@@ -77,7 +78,7 @@ function itemHtml(i) {
         return ` <button data-act="translate" data-id="${esc(i.id)}" title="翻译成中文">译</button>`
       })()}</div>
       <div class="item-lead">${esc((i.aiSummary || i.summary || '').slice(0, 140))}</div>
-      ${(() => { if (state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); const body = nl > 0 ? t.slice(nl).replace(/\s+/g, ' ').trim() : t; return body && nl > 0 ? `<div class="item-lead" style="color:var(--acc)">译: ${esc(body.slice(0, 240))}</div>` : '' })()}
+      ${(() => { if (i.aiSummary || state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); const body = nl > 0 ? t.slice(nl).replace(/\s+/g, ' ').trim() : t; return body && nl > 0 ? `<div class="item-lead" style="color:var(--acc)">译: ${esc(body.slice(0, 240))}</div>` : '' })()}
       <div class="item-actions">
         <button data-act="${st.read ? 'unread' : 'read'}" data-id="${esc(i.id)}" title="${st.read ? '标为未读（展开简介）' : '标为已读（收起简介）'}">${st.read ? '◉' : '✓'}</button>
         <button data-act="${st.liked === 1 ? 'unlike' : 'like'}" data-id="${esc(i.id)}" title="推荐学习：以后多推同类">👍</button>
@@ -186,23 +187,20 @@ $('#btnDigestRun').addEventListener('click', async () => {
   btn.disabled = true; btn.hidden = true // 生成中隐藏入口，防重入
   $('#btnDigestStop').hidden = false
   $('#digestBusy').hidden = false
+  const reset = () => { btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
   const dp = setInterval(async () => {
     try {
       const p = await api('/digest-progress')
-      if (p.running) $('#digestBusy').textContent = `⏳ 日报生成中…${p.total ? ` (${p.done}/${p.total})` : ''}`
-      else { clearInterval(dp) }
+      if (p.running) { const stage = p.stage === 'translate' ? '翻译中' : p.stage === 'finishing' ? '收尾中' : '日报生成中'; $('#digestBusy').textContent = `⏳ ${stage}…${p.total ? ` (${p.done}/${p.total})` : ''}`; return }
+      clearInterval(dp); reset(); toast('日报生成完成'); loadDigest()
     } catch { /* 进度不可达不影响生成 */ }
   }, 900)
-  $('#digestBusy').textContent = '⏳ 日报生成中…（LLM 总结可能要 1-2 分钟）' // 忙文走 busybar，statusbar 保持状态行
+  $('#digestBusy').textContent = '⏳ 日报生成中…（LLM 总结可能要几分钟）' // 忙文走 busybar，statusbar 保持状态行
   try {
-    // force: 手动点 = 现在就要重新生成，含当日已推条目（幂等空跑由 force 绕过）
-    const r = await post('/digest-run', { force: true })
-    const doc = r.doc || {}
-    const tk = doc.tokens ? ` · ${doc.tokens.inputTokens + doc.tokens.outputTokens} tokens` : ''
-    toast(`日报已生成（${doc.itemCount ?? '?'} 条${doc.degraded ? ' · 总结降级' : ''}${tk}）`)
-    loadDigest()
-  } catch (e) { toast(`生成失败: ${e.message}`) }
-  finally { btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
+    // 异步触发：大条数下 LLM 全链路远超 HTTP 请求超时，服务端立即返回，轮询收尾
+    await post('/digest-run', { force: true, day: $('#digestDay').value.trim() || undefined })
+    toast('已开始生成，进度见上方横幅')
+  } catch (e) { toast(`生成失败: ${e.message}`); clearInterval(dp); reset() }
 })
 let retryPoll = 0
 async function refreshRetryBtn() {
@@ -379,12 +377,22 @@ async function loadPrefs() {
     state.prefs = r.prefs
     renderPrefs()
     $('#proxyUrl').value = r.prefs.proxyUrl || ''
+    const d = r.prefs.digestOpts || {}
+    for (const [id, k] of [['dItems','digestItems'],['dPerTopic','perTopicLimit'],['dMinScore','minLlmScore'],['dScoreN','llmScoreCandidates'],['dCandH','candidateHours'],['dSumN','summaryMaxItems'],['dConc','summaryConcurrency'],['dSumLen','digestMaxLength']]) $(`#${id}`).value = d[k] ?? ''
   } catch { /* ignore */ }
 }
 $('#btnProxySave').addEventListener('click', async () => {
   try {
     await post('/prefs', { proxyUrl: $('#proxyUrl').value.trim() || undefined })
     toast('全局代理已保存，下次抓取生效')
+  } catch (e) { toast(`保存失败: ${e.message}`) }
+})
+$('#btnDigestOptsSave').addEventListener('click', async () => {
+  const num = (id) => { const v = $(`#${id}`).value.trim(); return v === '' ? undefined : Number(v) }
+  try {
+    const r = await post('/prefs', { digestOpts: { digestItems: num('dItems'), perTopicLimit: num('dPerTopic'), minLlmScore: num('dMinScore'), llmScoreCandidates: num('dScoreN'), candidateHours: num('dCandH'), summaryMaxItems: num('dSumN'), summaryConcurrency: num('dConc'), digestMaxLength: num('dSumLen') } })
+    state.prefs = r.prefs
+    toast('日报参数已保存，下次生成生效')
   } catch (e) { toast(`保存失败: ${e.message}`) }
 })
 $('#btnFetchTest').addEventListener('click', async () => {

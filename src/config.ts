@@ -85,6 +85,14 @@ export interface DigestSectionConfig {
   perTopicLimit: number
   /** 整体总结段字数上限 */
   maxLength: number
+  /** LLM 评分候选池上限（启发式粗排后取前 N 进 LLM）；0=关闭用纯启发式 */
+  llmScoreCandidates: number
+  /** LLM 评分入选阈值（1-10）；LLM 评过分的低于此值不入选 */
+  minLlmScore: number
+  /** 同题新闻合并去重 */
+  dedupeStories: boolean
+  /** 分类→输出指令映射（覆盖内置默认，如 {"AI":"重点讲对从业者的影响"}） */
+  categoryPrompts: Record<string, string>
 }
 
 export interface Config {
@@ -162,6 +170,10 @@ const DigestSectionSchema = Schema.object({
   digestItems: Schema.natural().min(1).max(200).default(20),
   perTopicLimit: Schema.natural().min(0).default(4),
   maxLength: Schema.natural().min(50).max(3000).default(800),
+  llmScoreCandidates: Schema.natural().min(0).max(200).default(40).description('LLM 评分候选池；0=关闭 LLM 评分。'),
+  minLlmScore: Schema.natural().min(1).max(10).default(5).description('LLM 评分入选阈值（1-10）。'),
+  dedupeStories: Schema.boolean().default(true).description('同题新闻合并去重。'),
+  categoryPrompts: Schema.dict(Schema.string()).default({}).description('分类→输出指令映射。'),
 }).description('日报格式。')
 
 const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/

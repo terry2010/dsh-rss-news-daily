@@ -24,6 +24,8 @@ export interface PrefsFile extends Prefs {
   autoTranslate?: boolean
   /** UI 翻译模型覆盖（独立于日报模型 llm） */
   translateLlm?: { provider: string; model: string }
+  /** UI 日报参数覆盖；单字段未设=跟随 cordis config 默认 */
+  digestOpts?: { digestItems?: number; perTopicLimit?: number; minLlmScore?: number; candidateHours?: number; llmScoreCandidates?: number; summaryMaxItems?: number; summaryConcurrency?: number; digestMaxLength?: number }
 }
 
 function numMapOf(v: unknown): Record<string, number> {
@@ -61,6 +63,7 @@ export function normalizePrefs(value: unknown): PrefsFile {
     proxyUrl: typeof r.proxyUrl === 'string' && r.proxyUrl ? r.proxyUrl : undefined,
     autoTranslate: r.autoTranslate === true ? true : undefined,
     translateLlm: (() => { const t = (typeof r.translateLlm === 'object' && r.translateLlm !== null ? r.translateLlm : {}) as Record<string, unknown>; return typeof t.provider === 'string' && typeof t.model === 'string' && t.provider && t.model ? { provider: t.provider, model: t.model } : undefined })(),
+    digestOpts: (() => { const d = (typeof r.digestOpts === 'object' && r.digestOpts !== null ? r.digestOpts : {}) as Record<string, unknown>; const num = (k: string) => typeof d[k] === 'number' && Number.isFinite(d[k]) ? (d[k] as number) : undefined; const o = { digestItems: num('digestItems'), perTopicLimit: num('perTopicLimit'), minLlmScore: num('minLlmScore'), candidateHours: num('candidateHours'), llmScoreCandidates: num('llmScoreCandidates'), summaryMaxItems: num('summaryMaxItems'), summaryConcurrency: num('summaryConcurrency'), digestMaxLength: num('digestMaxLength') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),
   }
 }
 
