@@ -51,7 +51,15 @@
               scoped.slots.register({ name: 'sidebar.right.pane.tab', key: TAB_ID }, ReaderBody))
             scoped.slots.inject('sidebar.right.pane.tab.title', () =>
               scoped.slots.register({ name: 'sidebar.right.pane.tab.title', key: TAB_ID }, Title))
-            log.info('sidebar tab registered')
+            // 顶部会话视图 tab（对话/轨迹/上下文/编队 那排）：conversation.view slot，session 级
+            scoped.slots.inject('conversation.view', () =>
+              scoped.slots.register({
+                name: 'conversation.view',
+                id: 'rss-news',
+                order: 90, // 内置 view 占 0-30 量级，置尾；可被「更多」菜单 pin 调序
+                label: () => '新闻',
+              }, ReaderBody))
+            log.info('sidebar tab + conversation view registered')
           } catch (e) {
             log.warn(`sidebar tab failed (non-fatal): ${String(e)}`)
           }
