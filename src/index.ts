@@ -95,7 +95,13 @@ export function apply(ctx: Context, config: ConfigType) {
     log,
   })
   const runFetch = () => runFetchCycle(makeFetchOpts()) // scheduler 回调签名 (signal?)=>…，不带参
-  const runFetchForce = (force = false) => runFetchCycle({ ...makeFetchOpts(), force }) // svc/api：手动抓取可带 force 绕冷却
+  const runFetchForce = (force = false, onlyFailed = false) => {
+    // onlyFailed：只重试失败/冷却中的启用源（「重试全部失败源」按钮）；否则默认全量
+    const failedOnly = onlyFailed
+      ? effectiveSources(config.sources, store).filter((s) => s.enabled && (s.health.lastError || (s.health.cooldownUntil && new Date(s.health.cooldownUntil).getTime() > Date.now())))
+      : undefined
+    return runFetchCycle({ ...makeFetchOpts(failedOnly), force })
+  } // svc/api：手动抓取可带 force 绕冷却
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => runFetchCycle(makeFetchOpts(sources))
 
   // 对外操作门面：tools（M2）与 HTTP API（M4）共用同一组语义

@@ -160,6 +160,14 @@ $('#btnDigestRun').addEventListener('click', async () => {
   } catch (e) { toast(`生成失败: ${e.message}`) }
   finally { btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
 })
+$('#btnRetryAll').addEventListener('click', async () => {
+  toast('重试全部失败源中…')
+  try {
+    const r = await post('/fetch', { force: true, onlyFailed: true })
+    toast(`重试完成: +${r.added} 条${r.errors ? ` · ${r.errors} 仍失败` : ''}`)
+    loadSources(); loadStatus()
+  } catch (e) { toast(`重试失败: ${e.message}`) }
+})
 $('#btnDigestStop').addEventListener('click', async () => {
   try { await post('/digest-stop', {}); toast('已请求停止，正在降级收尾…') }
   catch (e) { toast(`停止失败: ${e.message}`) }

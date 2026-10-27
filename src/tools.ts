@@ -17,7 +17,7 @@ export interface NewsService {
   removeSource(urlOrId: string): Promise<boolean>
   importOpml(opmlText: string): Promise<{ added: number; duplicated: number; skipped: number; details?: Array<{ url: string; action: string; reason?: string }> }>
   exportOpml(): Promise<string>
-  runFetch(force?: boolean): Promise<FetchCycleResult>
+  runFetch(force?: boolean, onlyFailed?: boolean): Promise<FetchCycleResult>
   status(): { sources: number; enabled: number; items: number; lastFetchAt: string; lastDigestDay: string; failures: Array<{ name: string; error: string }> }
   tune(text: string): Promise<{ ok: boolean; actions: string[]; error?: string }>
   getDigest(day?: string): Promise<{ ok: boolean; day: string; markdown?: string; error?: string }>
