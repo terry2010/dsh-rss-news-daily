@@ -53,22 +53,27 @@ async function loadItems() {
 function renderItems() {
   const el = $('#itemList')
   if (!state.items.length) { el.innerHTML = '<p class="empty">没有条目</p>'; return }
-  el.innerHTML = state.items.map((i) => `
-    <div class="item ${i.state.read ? 'read' : ''} ${i.state.liked === 1 ? 'liked' : ''}">
+  el.innerHTML = state.items.map((i) => {
+    const st = i.state || {} // 老数据可能缺 state 字段——防御，防整个渲染挂掉（"翻页没反应"）
+    return `
+    <div class="item ${st.read ? 'read' : ''} ${st.liked === 1 ? 'liked' : ''}">
       <div class="item-head">
         <a href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
       <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}</div>
       <div class="item-lead">${esc((i.aiSummary || i.summary || '').slice(0, 140))}</div>
       <div class="item-actions">
-        <button data-act="read" data-id="${esc(i.id)}" title="已读">✓</button>
-        <button data-act="${i.state.liked === 1 ? 'unlike' : 'like'}" data-id="${esc(i.id)}">👍</button>
-        <button data-act="dislike" data-id="${esc(i.id)}">👎</button>
-        <button data-act="hide" data-id="${esc(i.id)}" title="隐藏">✕</button>
+        <button data-act="${st.read ? 'unread' : 'read'}" data-id="${esc(i.id)}" title="${st.read ? '标为未读' : '标为已读'}">${st.read ? '◉' : '✓'}</button>
+        <button data-act="${st.liked === 1 ? 'unlike' : 'like'}" data-id="${esc(i.id)}" title="推荐学习：以后多推同类">👍</button>
+        <button data-act="dislike" data-id="${esc(i.id)}" title="少推学习：以后少推同类">👎</button>
+        <button data-act="hide" data-id="${esc(i.id)}" title="从列表隐藏">✕</button>
         <button data-act="copy" data-id="${esc(i.id)}" data-link="${esc(safeUrl(i.link))}" title="复制链接">⧉</button>
       </div>
-    </div>`).join('')
+    </div>`
+  }).join('')
   $('#pageInfo').textContent = `第 ${state.page} 页 / 共 ${state.total} 条`
+  $('#prevPage').disabled = state.page <= 1
+  $('#nextPage').disabled = !(state.page * state.pageSize < state.total)
 }
 
 $('#itemList').addEventListener('click', async (e) => {
@@ -85,9 +90,19 @@ $('#itemList').addEventListener('click', async (e) => {
   } catch (err) { toast(`操作失败: ${err.message}`) }
 })
 
-for (const sel of ['#q', '#day', '#category', '#srcFilter', '#unread']) {
+for (const sel of ['#q', '#day', '#category', '#unread']) {
   $(sel).addEventListener('change', () => { state.page = 1; loadItems() })
 }
+// 源筛选联动：选了具体源后，分类只保留该源的分类（避免选出无交集组合）
+$('#srcFilter').addEventListener('change', () => {
+  const sel = $('#srcFilter').value
+  const cats = sel ? [...new Set(state.sources.filter((s) => s.id === sel).map((s) => s.category).filter(Boolean))]
+                   : [...new Set(state.sources.map((s) => s.category).filter(Boolean))]
+  const cur = $('#category').value
+  $('#category').innerHTML = '<option value="">全部分类</option>' + cats.map((c) => `<option>${esc(c)}</option>`).join('')
+  if (cats.includes(cur)) $('#category').value = cur
+  state.page = 1; loadItems()
+})
 $('#q').addEventListener('input', debounce(() => { state.page = 1; loadItems() }, 400))
 $('#prevPage').addEventListener('click', () => { if (state.page > 1) { state.page--; loadItems() } })
 $('#nextPage').addEventListener('click', () => { if (state.page * state.pageSize < state.total) { state.page++; loadItems() } })
