@@ -130,19 +130,20 @@ async function llmScoreItems(
   if (!top.length) return false
   try {
     const text = await client.generateText({
-      system: '你是新闻价值评审。按分档打分：9-10 突破（原创深度/重大版本/行业变革）；7-8 高值（重要进展值得即读）；5-6 有趣（增量/教程/值得关注）；3-4 低优先（例行更新/软文）；0-2 噪声（垃圾/标题党）。不要奖励夸张标题；区分厂商宣称与已交付能力。只输出 JSON 数组 [{"i":序号,"s":分数,"r":"10字内理由"}]，不要解释。',
+      system: '你是新闻价值评审。按分档打分：9-10 突破（原创深度/重大版本/行业变革）；7-8 高值（重要进展值得即读）；5-6 有趣（增量/教程/值得关注）；3-4 低优先（例行更新/软文）；0-2 噪声（垃圾/标题党）。不要奖励夸张标题；区分厂商宣称与已交付能力。并给每条 2-4 个主题标签。只输出 JSON 数组 [{"i":序号,"s":分数,"r":"10字内理由","t":["标签"]}]，不要解释。',
       prompt: top.map((it, idx) => `${idx + 1}. [${it.topic || '?'}] ${it.title}`).join('\n'),
       maxTokens: 2400,
       signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
     })
     const m = text.match(/\[[\s\S]*\]/)
-    const arr: Array<{ i: number; s: number; r?: string }> = m ? JSON.parse(m[0]) : []
+    const arr: Array<{ i: number; s: number; r?: string; t?: string[] }> = m ? JSON.parse(m[0]) : []
     let n = 0
     for (const e of arr) {
       const it = top[Number(e.i) - 1]
       if (it && typeof e.s === 'number' && e.s >= 1 && e.s <= 10) {
         it.llmScore = e.s
         if (e.r) it.llmReason = String(e.r)
+        if (Array.isArray(e.t) && e.t.length) it.tags = e.t.map(String).slice(0, 4)
         n += 1
       }
     }
@@ -268,14 +269,15 @@ async function itemSummaries(
         // v2：分类定制 + JSON 结构化块（bg/point/takeaway）；解析失败回退纯文本 aiSummary
         const catPrompt = opts.categoryPrompts?.[item.topic || ''] || DEFAULT_CAT_PROMPTS[item.topic || ''] || DEFAULT_CAT_PROMPTS['综合']
         const text = await client.generateText({
-          system: `你是资深新闻编辑。针对这条新闻写三块并严格只输出 JSON {"summary":"核心事实：变了什么、对谁（区分厂商宣称与已交付能力，1-2句）","background":"读懂这条需要的前提概念或前情（1句）","impact":"${catPrompt}（具体后果，一句话）"}，不要解释、不要代码块围栏。`,
+          system: `你是资深新闻编辑。针对这条新闻重写短标题并写三块，严格只输出 JSON {"title":"重写标题（≤15词/等价短句，去标题党，保留产品名与关键变化）","summary":"核心事实：变了什么、对谁（区分厂商宣称与已交付能力，1-2句）","background":"读懂这条需要的前提概念或前情（1句）","impact":"${catPrompt}（具体后果，一句话）"}，不要解释、不要代码块围栏。`,
           prompt: `标题：${item.title}\n来源：${sourcesById.get(item.sourceId)?.title ?? item.sourceId}\n分类：${item.topic || '综合'}\n摘要：${truncateCodePoints(item.summary || item.content || '', 500)}`,
           maxTokens: opts.llmMaxTokens,
           signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
         })
         const m = text.match(/\{[\s\S]*\}/)
-        const j = m ? (JSON.parse(m[0]) as { summary?: string; background?: string; impact?: string }) : null
+        const j = m ? (JSON.parse(m[0]) as { title?: string; summary?: string; background?: string; impact?: string }) : null
         if (j && (j.summary || j.background || j.impact)) {
+          if (j.title) item.aiTitle = String(j.title).slice(0, 80)
           item.aiBlocks = { summary: String(j.summary || ''), background: String(j.background || ''), impact: String(j.impact || '') }
           item.aiSummary = item.aiBlocks.summary // 列表行沿用 summary 段做一行摘要
         } else {
@@ -296,6 +298,7 @@ async function itemSummaries(
 /** 生成并落盘当日日报；返回 DigestDocument（含 degraded/note 元数据）。 */
 export async function runDailyDigest(opts: DigestPipelineOptions): Promise<DigestDocument> {
   const log = opts.log || noopLog
+  const startMs = Date.now()
   const now = opts.now ?? new Date()
   const day = zonedDayKey(now, opts.timezone || undefined)
   const sources = effectiveSources(opts.configSources, opts.store)
@@ -372,7 +375,10 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     } catch { /* no existing file — fall through and write empty digest */ }
   }
 
+  const elapsedMs = Date.now() - startMs
   const markdown = renderDigest({
+    durationMs: elapsedMs,
+    generatedAt: now,
     date: day,
     language: opts.language,
     sourceTitles: new Map(sources.map((s) => [s.id, s.title])),

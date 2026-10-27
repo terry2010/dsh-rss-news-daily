@@ -83,6 +83,10 @@ export interface FeedItem {
   /** digest v2：LLM 评分（1-10）与理由；启发式分仍在 score 字段 */
   llmScore?: number
   llmReason?: string
+  /** digest v2：LLM 主题标签（评分调用顺带产出） */
+  tags?: string[]
+  /** digest v2：LLM 重写短标题（条目块调用产出） */
+  aiTitle?: string
   /** digest v2：合并掉的同题新闻数（本条为主条目时） */
   dupCount?: number
   /** digest v2：本条被合并进的主条目 id（非主条目时） */
