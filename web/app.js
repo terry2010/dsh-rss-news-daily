@@ -100,7 +100,10 @@ $('#itemList').addEventListener('click', async (e) => {
     catch (err) { toast(`翻译失败: ${err.message}`) }
     state.translating = null
     state.tlHidden?.delete(btn.dataset.id) // 重译成功自动取消隐藏，译文直接展示
-    loadItems()
+    await loadItems()
+    // 整表重建后滚动锚点会丢——把该条目拉回可视区
+    document.querySelector(`.item [data-id="${CSS.escape(btn.dataset.id)}"]`)?.closest('.item')
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     return
   }
   if (btn.dataset.act === 'hidetl') { (state.tlHidden ||= new Set()).add(btn.dataset.id); renderItems(); return }
