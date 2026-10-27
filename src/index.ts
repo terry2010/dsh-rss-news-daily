@@ -83,7 +83,7 @@ export function apply(ctx: Context, config: ConfigType) {
     + `dailyTime=${config.dailyTime} tz=${config.timezone || 'host-local'} dataDir=${dataDir}`,
   )
 
-  const runFetch = (sources?: ReturnType<typeof effectiveSources>) => runFetchCycle({
+  const makeFetchOpts = (sources?: ReturnType<typeof effectiveSources>) => ({
     fetch: fetcher,
     store,
     sources: sources ?? effectiveSources(config.sources, store), // 每轮重取：用户改源/健康度实时生效
@@ -94,6 +94,8 @@ export function apply(ctx: Context, config: ConfigType) {
     dedupeWindowDays: config.dedupe.windowDays,
     log,
   })
+  const runFetch = () => runFetchCycle(makeFetchOpts())
+  const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => runFetchCycle(makeFetchOpts(sources))
 
   // 对外操作门面：tools（M2）与 HTTP API（M4）共用同一组语义
   const svc: NewsService = {
@@ -165,7 +167,7 @@ export function apply(ctx: Context, config: ConfigType) {
       store.setHealth(src.id, { ok: h.ok, fail: h.fail, avgMs: h.avgMs, cooldownUntil: '', failStreak: 0, lastError: '' })
       await store.save()
       // 清完锁立刻单抓这个源：成功 health.ok 立涨，用户不用等下一轮 interval
-      await runFetch([src]).catch((e) => log.warn(`retry fetch failed for ${src.id}: ${String(e)}`))
+      await runFetchFor([src]).catch((e) => log.warn(`retry fetch failed for ${src.id}: ${String(e)}`))
       return true
     },
     status: () => {
