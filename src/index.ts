@@ -165,6 +165,9 @@ export function apply(ctx: Context, config: ConfigType) {
       if (!src) return false
       const h = store.getHealth(src.id) ?? { ok: 0, fail: 0, avgMs: 0 }
       store.setHealth(src.id, { ok: h.ok, fail: h.fail, avgMs: h.avgMs, cooldownUntil: '', failStreak: 0, lastError: '' })
+      // src.health 是 effectiveSources 拍的快照副本，setHealth 不回流——
+      // 不同步的话 runFetchFor 的 inCooldown 过滤还会把这个源跳过（点了重试却抓不到）
+      src.health = { ok: h.ok, fail: h.fail, avgMs: h.avgMs, cooldownUntil: '', failStreak: 0, lastError: '' }
       await store.save()
       // 清完锁立刻单抓这个源：成功 health.ok 立涨，用户不用等下一轮 interval
       await runFetchFor([src]).catch((e) => log.warn(`retry fetch failed for ${src.id}: ${String(e)}`))
