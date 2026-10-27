@@ -143,7 +143,7 @@ $('#btnFetch').addEventListener('click', async () => {
 
 $('#autoTranslate').addEventListener('change', async (e) => {
   $('#autoTlWarn').hidden = !e.target.checked
-  try { await post('/prefs', { autoTranslate: e.target.checked }); toast(e.target.checked ? '已开启自动翻译' : '已关闭自动翻译') }
+  try { const r = await post('/prefs', { autoTranslate: e.target.checked }); state.prefs = r.prefs || state.prefs; toast(e.target.checked ? '已开启自动翻译' : '已关闭自动翻译') }
   catch (err) { toast(`保存失败: ${err.message}`) }
 })
 
