@@ -244,6 +244,8 @@ async function loadSources() {
 }
 
 function renderSources() {
+  const cats = [...new Set(state.sources.map((x) => x.category).filter(Boolean))]
+  $('#newSrcCat').innerHTML = '<option value="">分类…</option>' + cats.map((c) => `<option>${esc(c)}</option>`).join('') + '<option value="__new">＋ 自定义…</option>'
   $('#srcList').innerHTML = state.sources.map((s) => `
     <div class="src-wrap">
     <div class="src ${s.enabled ? '' : 'off'}">
