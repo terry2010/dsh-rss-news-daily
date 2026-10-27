@@ -61,7 +61,7 @@ function renderItems() {
         ${(() => { const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div style="color:var(--acc)">${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
         <a href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
-      <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${!/[\u4e00-\u9fff]/.test(i.title + (i.summary || '')) ? ` <button data-act="translate" data-id="${esc(i.id)}" title="翻译成中文">译</button>` : ''}</div>
+      <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(() => { const t = i.title + (i.summary || ''); const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length; return cjk * 2 <= t.replace(/\s/g, '').length ? ` <button data-act="translate" data-id="${esc(i.id)}" title="翻译成中文">译</button>` : '' })()}</div>
       <div class="item-lead">${esc((i.aiSummary || i.summary || '').slice(0, 140))}</div>
       ${(() => { const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); const body = nl > 0 ? t.slice(nl).replace(/\s+/g, ' ').trim() : t; return body && nl > 0 ? `<div class="item-lead" style="color:var(--acc)">译: ${esc(body.slice(0, 240))}</div>` : '' })()}
       <div class="item-actions">
