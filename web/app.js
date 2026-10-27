@@ -1,6 +1,11 @@
 /* dsh-rss-news-daily 阅读器（零构建，原生 JS）。全部数据走 /dsh-rss-news-daily/api/* */
 const API = '/dsh-rss-news-daily/api'
 
+// 主题跟随宿主：?theme= 管首屏不闪，postMessage 管之后明暗切换不重载
+const applyTheme = (t) => { if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t }
+applyTheme(new URLSearchParams(location.search).get('theme'))
+window.addEventListener('message', (e) => { if (e.data && e.data.type === 'rnd-theme') applyTheme(e.data.theme) })
+
 const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', total: 0, pageSize: 50 }
 const $ = (sel) => document.querySelector(sel)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))

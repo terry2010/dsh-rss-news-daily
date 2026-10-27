@@ -37,11 +37,26 @@
 
         ctx.inject(['sidebarRightTabs', 'slots'], (scoped) => {
           try {
-            const ReaderBody = () => h('iframe', {
-              src: readerUrl,
-              style: { width: '100%', height: '100%', border: 'none', background: 'transparent' },
-              title: 'RSS 新闻',
-            })
+            // dsh 主题在 body[data-ds-dark-theme]；?theme= 管首屏，MutationObserver+postMessage 管切换
+            const themeName = () => (document.body && document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light')
+            const ReaderBody = () => {
+              const ref = React.useRef(null)
+              React.useEffect(() => {
+                const push = () => {
+                  try { ref.current && ref.current.contentWindow && ref.current.contentWindow.postMessage({ type: 'rnd-theme', theme: themeName() }, '*') } catch (e) { /* iframe 未就绪则下次 mutation 再推 */ }
+                }
+                push()
+                const mo = new MutationObserver(push)
+                if (document.body) mo.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
+                return () => mo.disconnect()
+              }, [])
+              return h('iframe', {
+                ref,
+                src: `${readerUrl}?theme=${themeName()}`,
+                style: { width: '100%', height: '100%', border: 'none', background: 'transparent' },
+                title: 'RSS 新闻',
+              })
+            }
             const Title = () => h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
               h('span', { 'aria-hidden': 'true' }, '📰'), h('span', null, '新闻'))
 
