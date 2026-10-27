@@ -282,7 +282,11 @@ document.addEventListener('change', (e) => { // 分类选「＋自定义…」�
   if (sel.tagName !== 'SELECT' || sel.value !== '__new') return
   sel.hidden = true
   const inp = sel.parentElement.querySelector(sel.id === 'newSrcCat' ? '#newSrcCatNew' : 'input[data-f=categoryNew]')
-  if (inp) { inp.hidden = false; inp.focus() }
+  if (!inp) return
+  inp.hidden = false; inp.focus()
+  const back = () => { if (!inp.value.trim()) { inp.hidden = true; inp.value = ''; sel.hidden = false; sel.value = '' } }
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Escape') back() }, { once: true })
+  inp.addEventListener('blur', back, { once: true })
 })
 $('#srcList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-src-act]')
