@@ -12,7 +12,7 @@
     <button class="tab active" data-tab="items">📰 全部新闻</button>
     <button class="tab" data-tab="digest">📋 今日精选</button>
     <button class="tab" data-tab="sources">🔌 订阅源</button>
-    <button class="tab" data-tab="prefs">🎛 调教</button>
+    <button class="tab" data-tab="prefs">⚙ 设置</button>
   </div>
   <div class="statusbar" id="statusbar">加载中…</div>
 </header>
@@ -67,9 +67,9 @@
     <div class="toolbar"><input type="text" id="tuneText" placeholder="例：多推 AI Agent、少推币圈、屏蔽裁员"><button id="btnTune">应用调教</button><button id="btnResetPrefs">↺ 重置</button></div>
     <div id="tuneResult"></div>
     <h3>定时调度</h3>
+    <div class="sched-group"><span class="sched-label">生成日报</span><div id="schedDigestRows"></div></div>
+    <div class="sched-group"><span class="sched-label">更新数据</span><div id="schedFetchRows"></div></div>
     <div class="toolbar">
-      <label>日报时刻 <input type="text" id="schedDigest" placeholder="08:00, 12:30, 20:00"></label>
-      <label>抓取时刻 <input type="text" id="schedFetch" placeholder="07:30, 12:00, 19:30"></label>
       <button id="btnSchedSave">保存</button>
       <button id="btnSchedClear">恢复配置</button>
     </div>

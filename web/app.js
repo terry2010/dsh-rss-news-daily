@@ -305,19 +305,36 @@ $('#btnLlmClear').addEventListener('click', async () => {
 
 // ---- 定时调度 ----
 
+// 每个时刻一行；首行 ＋ 新增空行，后续行 − 删除本行
+const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/
+function timeRow(value, isFirst) {
+  const row = document.createElement('div'); row.className = 'sched-row'
+  const inp = document.createElement('input'); inp.type = 'time'; inp.value = value || ''
+  const b = document.createElement('button')
+  if (isFirst) { b.textContent = '＋'; b.title = '新增时刻'; b.onclick = () => row.parentElement.appendChild(timeRow('', false)) }
+  else { b.textContent = '−'; b.title = '删除该时刻'; b.onclick = () => row.remove() }
+  row.append(inp, b)
+  return row
+}
+function fillTimeRows(sel, values) {
+  const c = $(sel); c.innerHTML = ''
+  const vs = (values || []).length ? values : ['']
+  vs.forEach((v, i) => c.appendChild(timeRow(v, i === 0)))
+}
+const collectTimes = (sel) => [...$(sel).querySelectorAll('input')].map((i) => i.value.trim()).filter((v) => TIME_RE.test(v))
+
 async function loadSchedule() {
   try {
     const r = await api('/schedule')
-    $('#schedDigest').value = (r.schedule.digestTimes || []).join(', ')
-    $('#schedFetch').value = (r.schedule.fetchTimes || []).join(', ')
+    fillTimeRows('#schedDigestRows', r.schedule.digestTimes || [])
+    fillTimeRows('#schedFetchRows', r.schedule.fetchTimes || [])
     $('#schedInfo').textContent = `生效来源: ${r.effective === 'ui' ? '界面指定' : '配置默认'}；同一时刻若两表都含，先抓取后生成日报`
   } catch (e) { $('#schedInfo').textContent = `调度信息不可用: ${esc(e.message)}` }
 }
-const parseTimes = (s) => s.split(/[,，\s]+/).map((t) => t.trim()).filter((t) => /^([01]?\d|2[0-3]):[0-5]\d$/.test(t))
 
 $('#btnSchedSave').addEventListener('click', async () => {
-  const digestTimes = parseTimes($('#schedDigest').value)
-  const fetchTimes = parseTimes($('#schedFetch').value)
+  const digestTimes = collectTimes('#schedDigestRows')
+  const fetchTimes = collectTimes('#schedFetchRows')
   await post('/schedule', { digestTimes, fetchTimes })
   toast('调度已保存，下一次挂钟生效')
   loadSchedule()
