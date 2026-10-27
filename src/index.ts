@@ -145,7 +145,7 @@ export function apply(ctx: Context, config: ConfigType) {
       .then(async (result) => {
         // 自动翻译：本轮新入库的外文条目逐条调翻译模型（用户勾选后开启，按条计费）
         if (prefs.get().autoTranslate && llmRuntime) {
-          const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && isForeign(i))
+          const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
           for (const it of fresh) {
             try { await translateItemCore(it) }
             catch (e) { it.state.translationError = e instanceof Error ? e.message : String(e) }
