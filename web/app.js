@@ -72,7 +72,8 @@ function renderItems() {
       </div>
     </div>`
   }).join('')
-  $('#pageInfo').textContent = `第 ${state.page} 页 / 共 ${state.total} 条`
+  const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize))
+  $('#pageInfo').textContent = `第 ${state.page} / ${totalPages} 页 · 共 ${state.total} 条`
   $('#prevPage').disabled = state.page <= 1
   $('#nextPage').disabled = !(state.page * state.pageSize < state.total)
 }
