@@ -305,6 +305,53 @@ test('api: /api/items 投影含 aiSummaryError（铁律③失败可见）', asyn
   assert.equal(item.aiSummaryError, 'model dead')
 })
 
+test('api: /api/llm GET 列 provider+current+effective；POST 设/清覆盖', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  deps.getLlm = () => ({
+    listProviders: () => [{ id: 'deepseek' }, { id: 'oai' }],
+    listModels: async (p) => p === 'deepseek' ? [{ id: 'deepseek-chat' }, { id: 'deepseek-r1' }] : [{ id: 'gpt-5' }],
+  })
+  deps.configLlm = { provider: '', model: '' }
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  const llm = findHandler(regs, '/dsh-rss-news-daily/api/llm')
+
+  let res = mkRes()
+  await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm'), res)
+  let out = JSON.parse(res.body)
+  assert.equal(out.available, true)
+  assert.equal(out.providers.length, 2)
+  assert.equal(out.effective, 'auto')
+
+  res = mkRes()
+  await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm?provider=deepseek'), res)
+  assert.deepEqual(JSON.parse(res.body).models, ['deepseek-chat', 'deepseek-r1'])
+
+  res = mkRes()
+  await llm(mkReq('POST', '/dsh-rss-news-daily/api/llm', { provider: 'deepseek', model: 'deepseek-r1' }), res)
+  assert.deepEqual(deps.prefs.get().llm, { provider: 'deepseek', model: 'deepseek-r1' })
+  res = mkRes()
+  await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm'), res)
+  assert.equal(JSON.parse(res.body).effective, 'ui')
+
+  res = mkRes()
+  await llm(mkReq('POST', '/dsh-rss-news-daily/api/llm', { provider: '', model: '' }), res)
+  assert.equal(deps.prefs.get().llm, undefined, 'empty pair clears override')
+  res = mkRes()
+  await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm'), res)
+  assert.equal(JSON.parse(res.body).effective, 'auto')
+})
+
+test('prefs: llm 覆盖字段落盘往返（PrefsStore）', async () => {
+  const { PrefsStore } = await import('../lib/core/prefs.js')
+  const file = join(mkdtempSync(join(tmpdir(), 'rnd-pllm-')), 'p.json')
+  const p = new PrefsStore(file)
+  p.save({ llm: { provider: 'deepseek', model: 'chat' } })
+  const p2 = new PrefsStore(file); p2.load()
+  assert.deepEqual(p2.get().llm, { provider: 'deepseek', model: 'chat' })
+})
+
 test('api: cross-site 请求被 403', async () => {
   const { mountApi } = await import('../lib/api.js')
   const deps = await mkDeps()

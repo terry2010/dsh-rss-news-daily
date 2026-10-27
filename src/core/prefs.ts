@@ -14,6 +14,8 @@ import { noopLog } from './types.js'
 export interface PrefsFile extends Prefs {
   /** 调教历史（M5 写入）：{at, text, actions[]} */
   tuningHistory?: Array<{ at: string; text: string; actions: string[] }>
+  /** UI 指定的日报模型覆盖；两个都非空才生效（成对校验同 config） */
+  llm?: { provider: string; model: string }
 }
 
 function numMapOf(v: unknown): Record<string, number> {
@@ -32,12 +34,16 @@ function strListOf(v: unknown): string[] {
 /** 把未知输入消毒成 PrefsFile；畸形字段回默认，不抛错。 */
 export function normalizePrefs(value: unknown): PrefsFile {
   const r = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>
+  const llm = (typeof r.llm === 'object' && r.llm !== null ? r.llm : {}) as Record<string, unknown>
   return {
     topics: numMapOf(r.topics),
     keywords: numMapOf(r.keywords),
     bannedKeywords: strListOf(r.bannedKeywords),
     sourceWeight: numMapOf(r.sourceWeight),
     tuningHistory: Array.isArray(r.tuningHistory) ? r.tuningHistory as PrefsFile['tuningHistory'] : [],
+    llm: typeof llm.provider === 'string' && typeof llm.model === 'string'
+      ? { provider: llm.provider, model: llm.model }
+      : undefined,
   }
 }
 

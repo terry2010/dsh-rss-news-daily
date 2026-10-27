@@ -64,6 +64,14 @@
   <section id="tab-prefs" hidden>
     <div class="toolbar"><input type="text" id="tuneText" placeholder="例：多推 AI Agent、少推币圈、屏蔽裁员"><button id="btnTune">应用调教</button><button id="btnResetPrefs">↺ 重置</button></div>
     <div id="tuneResult"></div>
+    <h3>日报模型</h3>
+    <div class="toolbar">
+      <select id="llmProvider"><option value="">provider…</option></select>
+      <select id="llmModel"><option value="">model…</option></select>
+      <button id="btnLlmSave">保存</button>
+      <button id="btnLlmClear">恢复自动路由</button>
+    </div>
+    <div id="llmInfo" class="hist"></div>
     <h3>当前权重</h3>
     <div id="prefsView"></div>
   </section>

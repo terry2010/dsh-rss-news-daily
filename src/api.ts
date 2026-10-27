@@ -80,6 +80,10 @@ export interface ApiDeps {
   readerPageSize: number
   digestsDir: string
   runDigest: (force?: boolean) => Promise<unknown>
+  /** 宿主 LLM runtime（可选能力）；用于 /api/llm 列 provider/model */
+  getLlm?: () => { listProviders(): Array<{ id: string }>; listModels(p: string): Promise<Array<{ id: string }>> } | undefined
+  /** config 层的 llm 路由对（用于 effective 判定展示） */
+  configLlm?: { provider: string; model: string }
 }
 
 // === API 端点 ===
@@ -236,6 +240,38 @@ function apiPrefs(deps: ApiDeps) {
   }
 }
 
+/** /api/llm：GET 列 provider（?provider=p 时列其 model）；POST 设/清 UI 模型覆盖 */
+function apiLlm(deps: ApiDeps) {
+  return async (req: Req, res: Res) => {
+    const method = String(req.method || 'GET').toUpperCase()
+    const runtime = deps.getLlm?.()
+    const ui = deps.prefs.get().llm
+    const cfg = deps.configLlm
+    const effective = ui?.provider && ui?.model ? 'ui' : (cfg?.provider && cfg?.model ? 'config' : 'auto')
+    const current = effective === 'ui' ? ui! : effective === 'config' ? cfg! : { provider: '', model: '' }
+    if (method === 'GET') {
+      if (!runtime) return sendJson(res, 200, { ok: true, available: false, providers: [], models: [], current, effective })
+      const u = new URL(req.url || '', 'http://x')
+      const provider = u.searchParams.get('provider') || ''
+      const providers = runtime.listProviders().map((p) => ({ id: p.id }))
+      let models: string[] = []
+      if (provider) {
+        models = (await runtime.listModels(provider).catch(() => [])).map((m) => m.id)
+      }
+      return sendJson(res, 200, { ok: true, available: true, providers, models, current, effective })
+    }
+    if (method === 'POST') {
+      const body = await readBody(req) as { provider?: string; model?: string }
+      const provider = String(body.provider || '').trim()
+      const model = String(body.model || '').trim()
+      if (provider && model) deps.prefs.save({ llm: { provider, model } })
+      else deps.prefs.save({ llm: undefined }) // 空对 = 清除覆盖回自动
+      return sendJson(res, 200, { ok: true, llm: deps.prefs.get().llm })
+    }
+    sendJson(res, 405, { ok: false, error: `unsupported ${method}` })
+  }
+}
+
 async function serveStatic(res: Res, rel: string): Promise<void> {
   const webDir = join(fileURLToPath(new URL('.', import.meta.url)), 'web')
   const safe = rel.replace(/^\/+|\.{2,}/g, '') || 'index.html'
@@ -273,6 +309,7 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/api/sources/`, handler: guard((q, r) => apiSources(deps)(q, r, (q.url || '').replace(`${BASE}/api/sources/`, ''))) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/opml`, handler: guard(apiOpml(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/prefs`, handler: guard(apiPrefs(deps)) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/llm`, handler: guard(apiLlm(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/tune`, handler: guard(async (q, r) => {
     const body = await readBody(q) as { text?: string }
     const res2 = parseTune(String(body.text || ''), deps.prefs.get())

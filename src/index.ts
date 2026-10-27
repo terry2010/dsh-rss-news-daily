@@ -176,11 +176,17 @@ export function apply(ctx: Context, config: ConfigType) {
     },
   }
 
-  let llmClient: LlmClient | undefined
+  let llmRuntime: ConstructorParameters<typeof DshLlmClient>[0] | undefined
+  const pickRoute = (): { provider: string; model: string } => {
+    const ui = prefs.get().llm
+    if (ui?.provider && ui?.model) return ui // UI 覆盖 > config 对 > 自动
+    return { provider: config.llm.provider, model: config.llm.model }
+  }
   const digestNow = (force = false) => runDailyDigest({
     store,
     configSources: config.sources,
-    llmClient,
+    // 每次 digest 现组 client：UI 换模型后下次立即生效（resolution 缓存在 client 实例上）
+    llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log) : undefined,
     llmEnabled: config.llm.enabled,
     summaryEnabled: config.summary.enabled,
     summaryMaxItems: config.summary.maxItems,
@@ -237,11 +243,7 @@ export function apply(ctx: Context, config: ConfigType) {
   ctx.inject(['llm'], (c) => {
     const runtime = (c as unknown as { llm?: unknown }).llm
     if (runtime) {
-      llmClient = new DshLlmClient(
-        runtime as ConstructorParameters<typeof DshLlmClient>[0],
-        { provider: config.llm.provider, model: config.llm.model },
-        log,
-      )
+      llmRuntime = runtime as ConstructorParameters<typeof DshLlmClient>[0]
       log.info('llm service available: LLM summaries enabled')
     }
   })
@@ -257,6 +259,8 @@ export function apply(ctx: Context, config: ConfigType) {
         readerPageSize: config.readerPageSize,
         digestsDir: join(dataDir, 'digests'),
         runDigest: digestNow,
+        getLlm: () => llmRuntime,
+        configLlm: { provider: config.llm.provider, model: config.llm.model },
       }))
       log.info('reader mounted at /dsh-rss-news-daily/')
     }

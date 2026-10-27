@@ -240,6 +240,46 @@ $('#btnTune').addEventListener('click', async () => {
   } catch (e) { $('#tuneResult').innerHTML = `<p class="err">${esc(e.message)}</p>` }
 })
 
+// ---- 日报模型选择 ----
+
+async function loadLlm() {
+  try {
+    const r = await api('/llm')
+    const eff = { ui: '界面指定', config: '配置指定', auto: '自动路由' }[r.effective] || r.effective
+    $('#llmInfo').textContent = r.available
+      ? `当前生效: ${r.current.provider || '自动'}/${r.current.model || '自动'}（来源: ${eff}）`
+      : '宿主无 LLM 服务——摘要走抽取式降级'
+    if (!r.available) return
+    $('#llmProvider').innerHTML = r.providers.map((p) =>
+      `<option value="${esc(p.id)}" ${p.id === r.current.provider ? 'selected' : ''}>${esc(p.id)}</option>`).join('')
+    await loadLlmModels(r.current.provider || r.providers[0]?.id || '', r.current.model)
+  } catch (e) { $('#llmInfo').textContent = `模型信息不可用: ${esc(e.message)}` }
+}
+
+async function loadLlmModels(provider, selected) {
+  if (!provider) return
+  try {
+    const r = await api(`/llm?provider=${encodeURIComponent(provider)}`)
+    $('#llmModel').innerHTML = r.models.map((m) =>
+      `<option value="${esc(m)}" ${m === selected ? 'selected' : ''}>${esc(m)}</option>`).join('')
+  } catch { /* provider 模型列表拉取失败留空 */ }
+}
+
+$('#llmProvider').addEventListener('change', (e) => loadLlmModels(e.target.value, ''))
+$('#btnLlmSave').addEventListener('click', async () => {
+  const provider = $('#llmProvider').value
+  const model = $('#llmModel').value
+  if (!provider || !model) return toast('provider 和 model 都要选')
+  await post('/llm', { provider, model })
+  toast('模型已保存，下次日报生效')
+  loadLlm()
+})
+$('#btnLlmClear').addEventListener('click', async () => {
+  await post('/llm', { provider: '', model: '' })
+  toast('已恢复自动路由')
+  loadLlm()
+})
+
 // ---- 初始化 ----
 
 document.querySelectorAll('.tab').forEach((btn) => {
@@ -249,7 +289,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
     $(`#tab-${btn.dataset.tab}`).hidden = false
     if (btn.dataset.tab === 'digest') loadDigest()
     if (btn.dataset.tab === 'sources') loadSources()
-    if (btn.dataset.tab === 'prefs') loadPrefs()
+    if (btn.dataset.tab === 'prefs') { loadPrefs(); loadLlm() }
   })
 })
 
