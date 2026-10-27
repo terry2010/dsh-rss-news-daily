@@ -146,7 +146,9 @@ function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTi
 // ---- 今日精选日报 ----
 
 async function loadDigest() {
-  const day = $('#digestDay').value || new Date().toISOString().slice(0, 10)
+  const ld = new Date()
+  const localDay = `${ld.getFullYear()}-${String(ld.getMonth() + 1).padStart(2, '0')}-${String(ld.getDate()).padStart(2, '0')}`
+  const day = $('#digestDay').value || localDay // 本地日界：UTC toISOString 会让凌晨看到的日期停在昨天
   $('#digestDay').value = day
   try {
     const r = await api(`/digest/${day}`)
