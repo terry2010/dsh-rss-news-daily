@@ -19,7 +19,7 @@ export interface SchedulerOptions {
   /** 已生成日报的最近日期（YYYY-MM-DD，来自 store.meta.lastDigestDay） */
   lastDigestDay: () => string
   runFetchCycle: (signal?: AbortSignal) => Promise<FetchCycleResult>
-  runDailyDigest: () => Promise<void>
+  runDailyDigest: () => Promise<unknown>
   log?: LogSink
 }
 
@@ -72,6 +72,7 @@ export function startScheduler(ctx: TimerSeam, options: SchedulerOptions): () =>
 
     const armNext = (): void => {
       try {
+        nextTimer?.() // 先清旧句柄：catch-up 路径会重复 armNext，防双挂钟
         const { secondsUntil } = nextZonedOccurrence(options.dailyTime, options.timezone || undefined, new Date())
         nextTimer = ctx.timeout(fire, secondsUntil * 1000)
       } catch (error) {

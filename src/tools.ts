@@ -19,6 +19,11 @@ export interface NewsService {
   runFetch(): Promise<FetchCycleResult>
   status(): { sources: number; enabled: number; items: number; lastFetchAt: string; lastDigestDay: string; failures: Array<{ name: string; error: string }> }
   tune(text: string): Promise<{ ok: boolean; actions: string[]; error?: string }>
+  getDigest(day?: string): Promise<{ ok: boolean; day: string; markdown?: string; error?: string }>
+  regenDigest(force: boolean): Promise<{ ok: boolean; items?: number; degraded?: boolean; error?: string }>
+  searchItems(q: string, limit?: number): Array<{ id: string; title: string; link: string; topic: string; fetchedAt: string; digestedDay: string }>
+  feedback(id: string, action: string): Promise<{ ok: boolean; learned?: string[]; error?: string }>
+  retrySource(urlOrId: string): Promise<void>
 }
 
 const sourceSchema = {
@@ -232,6 +237,66 @@ function newsTune(svc: NewsService) {
   })
 }
 
+const strArr = { type: 'array', items: { type: 'string' } } as const
+
+function newsDigest(svc: NewsService) {
+  return defineTool({
+    name: 'news_digest',
+    description: 'Read the daily digest markdown. Pass day=YYYY-MM-DD for a specific day; default today.',
+    parameters: { day: { type: 'string', description: 'YYYY-MM-DD; default today' } },
+    output: {
+      schema: { type: 'object', properties: { ok: { type: 'boolean' }, day: { type: 'string' }, markdown: { type: 'string' }, error: { type: 'string' } }, additionalProperties: false },
+      render: (_a, v) => text(v.ok ? (v.markdown ?? '(empty)') : `digest: ${v.error}`),
+    },
+    execute: async (args: { day?: string }) => svc.getDigest(args.day),
+  })
+}
+
+function newsRegen(svc: NewsService) {
+  return defineTool({
+    name: 'news_regen',
+    description: 'Regenerate today\'s digest. force=true recomputes including already-digested items.',
+    parameters: { force: { type: 'boolean', description: 'Include already-digested items (default false)' } },
+    output: {
+      schema: { type: 'object', properties: { ok: { type: 'boolean' }, items: { type: 'number' }, degraded: { type: 'boolean' }, error: { type: 'string' } }, additionalProperties: false },
+      render: (_a, v) => text(v.ok ? `regenerated: ${v.items} items${v.degraded ? ' (degraded)' : ''}` : `regen failed: ${v.error}`),
+    },
+    execute: async (args: { force?: boolean }) => svc.regenDigest(!!args.force),
+  })
+}
+
+function newsSearch(svc: NewsService) {
+  return defineTool({
+    name: 'news_search',
+    description: 'Search collected news items by keyword over title+summary.',
+    parameters: {
+      q: { type: 'string', required: true, description: 'keyword' },
+      limit: { type: 'number', description: 'max results (default 20)' },
+    },
+    output: {
+      schema: { type: 'object', properties: { ok: { type: 'boolean' }, items: { type: 'array', items: { type: 'object', additionalProperties: true } } }, additionalProperties: false },
+      render: (_a, v) => text((v.items ?? []).map((i: { title?: string; topic?: string }) => `• ${i.title}（${i.topic}）`).join('\n') || 'no match'),
+    },
+    execute: async (args: { q: string; limit?: number }) => ({ ok: true, items: svc.searchItems(args.q, args.limit) }),
+  })
+}
+
+function newsFeedback(svc: NewsService) {
+  return defineTool({
+    name: 'news_feedback',
+    description: 'Mark an item like/dislike/read to tune future digests.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'item id' },
+      action: { type: 'string', required: true, description: 'like|dislike|unlike|read|unread|hide|unhide' },
+    },
+    output: {
+      schema: { type: 'object', properties: { ok: { type: 'boolean' }, error: { type: 'string' }, learned: strArr }, additionalProperties: false },
+      render: (_a, v) => text(v.ok ? `recorded${v.learned?.length ? `; learned: ${v.learned.join(', ')}` : ''}` : `feedback failed: ${v.error}`),
+    },
+    execute: async (args: { id: string; action: string }) => svc.feedback(args.id, args.action),
+  })
+}
+
 /** 注册全部 news_* 工具；返回 disposer。 */
 export function registerTools(ctx: Context, svc: NewsService): () => void {
   const ds = [
@@ -243,6 +308,10 @@ export function registerTools(ctx: Context, svc: NewsService): () => void {
     ctx.tools.register(newsImport(svc)),
     ctx.tools.register(newsExport(svc)),
     ctx.tools.register(newsTune(svc)),
+    ctx.tools.register(newsDigest(svc)),
+    ctx.tools.register(newsRegen(svc)),
+    ctx.tools.register(newsSearch(svc)),
+    ctx.tools.register(newsFeedback(svc)),
   ]
   return () => ds.forEach((d) => d())
 }

@@ -21,6 +21,8 @@ export interface DigestRenderOptions {
   includeItemLinks: boolean
   /** 采集源状态行（成功/失败/冷却），可选——追加为第三节 */
   sourcesStatus?: string[]
+  /** 降级标注（铁律③失败可见）：总结段降级原因，写入正文 */
+  degradedNote?: string
 }
 
 const LABELS: Record<DigestLanguage, { title: string; sources: string; items: string; generated: string }> = {
@@ -84,9 +86,10 @@ export function renderDigest(options: DigestRenderOptions): string {
   const summary = [
     `## ${SECTION_SUMMARY[options.language]}`,
     '',
+    options.degradedNote ? `> ⚠ 总结段降级：${options.degradedNote}` : '',
     options.summaryText.trim() === '' ? '—' : options.summaryText,
     '',
-  ].join('\n')
+  ].filter((l) => l !== '').join('\n')
 
   const lines = options.items.map((item, index) => {
     const source = options.sourceTitles.get(item.sourceId) ?? item.sourceId

@@ -46,6 +46,13 @@
     <div class="toolbar">
       <input type="url" id="newSrcUrl" placeholder="https://…/feed.xml">
       <input type="text" id="newSrcTitle" placeholder="名称（可选）">
+      <select id="newSrcCat">
+        <option value="">分类…</option>
+        <option>AI</option><option>科技</option><option>开发</option><option>开源</option>
+        <option>产品</option><option>商业</option><option>财经</option><option>国际</option>
+        <option>科学</option><option>健康</option><option>环境</option><option>社会</option>
+        <option>人文</option><option>独立博客</option>
+      </select>
       <button id="btnAddSrc">＋ 添加</button>
       <button id="btnOpmlExport">⇩ 导出 OPML</button>
       <label class="filebtn">⇧ 导入 OPML<input type="file" id="opmlFile" accept=".opml,.xml" hidden></label>

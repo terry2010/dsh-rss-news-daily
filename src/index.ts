@@ -31,6 +31,11 @@ import type { LlmClient } from './summarizer.js'
 import { mountApi } from './api.js'
 import { parseTune } from './core/tune.js'
 import { execFile } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import { digestFileName } from './digest.js'
+import { normalizeUrl } from './service.js'
+import { learnFromFeedback } from './core/tune.js'
+import { zonedDayKey } from './core/time.js'
 
 export { Config }
 
@@ -105,6 +110,57 @@ export function apply(ctx: Context, config: ConfigType) {
       if (r.patch) prefs.applyTune(text, r.actions.map((a) => `${a.kind}:${a.target}`), r.patch)
       return { ok: true, actions: r.actions.map((a) => `${a.kind}:${a.target}${a.factor ? `×${a.factor}` : ''}`) }
     },
+    getDigest: async (day) => {
+      const d = day || zonedDayKey(new Date(), config.timezone || undefined)
+      try {
+        const markdown = await readFile(join(dataDir, 'digests', digestFileName(d, 'zh')), 'utf8')
+        return { ok: true, day: d, markdown }
+      } catch {
+        return { ok: false, day: d, error: `no digest for ${d}` }
+      }
+    },
+    regenDigest: async (force) => {
+      const doc = await digestNow(force)
+      return { ok: true, items: doc.itemCount, degraded: doc.degraded }
+    },
+    searchItems: (q, limit = 20) => {
+      const needle = q.toLowerCase()
+      return store.items
+        .filter((i) => !i.state.hidden && `${i.title} ${i.summary}`.toLowerCase().includes(needle))
+        .sort((a, b) => b.fetchedAt.localeCompare(a.fetchedAt))
+        .slice(0, Math.max(1, limit))
+        .map((i) => ({ id: i.id, title: i.title, link: i.link, topic: i.topic, fetchedAt: i.fetchedAt, digestedDay: i.digestedDay }))
+    },
+    feedback: async (id, action) => {
+      const item = store.items.find((i) => i.id === id)
+      if (!item) return { ok: false, error: 'item not found' }
+      switch (action) {
+        case 'read': item.state.read = true; break
+        case 'unread': item.state.read = false; break
+        case 'like': item.state.liked = 1; break
+        case 'dislike': item.state.liked = -1; break
+        case 'unlike': item.state.liked = 0; break
+        case 'hide': item.state.hidden = true; break
+        case 'unhide': item.state.hidden = false; break
+        default: return { ok: false, error: `unknown action: ${action}` }
+      }
+      await store.save()
+      if (action === 'like' || action === 'dislike') {
+        const { patch, learned } = learnFromFeedback(prefs.get(), item, action)
+        prefs.save(patch)
+        return { ok: true, learned }
+      }
+      return { ok: true }
+    },
+    retrySource: async (urlOrId) => {
+      const list = effectiveSources(config.sources, store)
+      const nid = normalizeUrl(urlOrId)
+      const src = list.find((s) => s.id === nid || s.url === urlOrId || s.id === urlOrId)
+      if (!src) return
+      const h = store.getHealth(src.id) ?? { ok: 0, fail: 0, avgMs: 0 }
+      store.setHealth(src.id, { ok: h.ok, fail: h.fail, avgMs: h.avgMs, cooldownUntil: '', failStreak: 0, lastError: '' })
+      await store.save()
+    },
     status: () => {
       const list = effectiveSources(config.sources, store)
       const failures = list.filter((s) => s.health.lastError).map((s) => ({ name: s.title, error: s.health.lastError! }))
@@ -120,7 +176,7 @@ export function apply(ctx: Context, config: ConfigType) {
   }
 
   let llmClient: LlmClient | undefined
-  const digestNow = () => runDailyDigest({
+  const digestNow = (force = false) => runDailyDigest({
     store,
     configSources: config.sources,
     llmClient,
@@ -138,6 +194,8 @@ export function apply(ctx: Context, config: ConfigType) {
     timezone: config.timezone,
     digestsDir: join(dataDir, 'digests'),
     prefs: prefs.get(), // 每次取当前值：M5 调教立即生效于下一次打分
+    penaltyWindowDays: config.dedupe.windowDays,
+    force,
     log,
   }).then((doc) => {
     log.info(`digest written: ${doc.date} ${doc.itemCount} items degraded=${doc.degraded}`)
@@ -149,6 +207,7 @@ export function apply(ctx: Context, config: ConfigType) {
         `display notification ${JSON.stringify(`${doc.itemCount} 条精选 ${top.slice(0, 120)}`)} with title ${JSON.stringify(doc.title)}`],
         () => {})
     }
+    return doc
   })
 
   let disposed = false

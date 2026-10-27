@@ -24,8 +24,13 @@ export async function resolveDshRoute(
   llm: LlmRuntime,
   route: DshLlmRoute,
 ): Promise<{ provider: string; model: string }> {
+  // 成对校验：只填一个视为都未配置（走宿主默认路由，不猜半个配置）
   let provider = route.provider
   let model = route.model
+  if (provider === '' || model === '') {
+    provider = ''
+    model = ''
+  }
   if (provider === '') {
     const providers = llm.listProviders()
     const first = providers[0]

@@ -149,6 +149,7 @@ function renderSources() {
         ${s.health?.lastError ? `<div class="src-err">✗ ${esc(s.health.lastError)}${s.health.cooldownUntil ? ' · 冷却中' : ''}</div>` : `<div class="src-ok">✓ ${s.health?.ok || 0} 次成功${s.health?.avgMs ? ` · ${Math.round(s.health.avgMs)}ms` : ''}</div>`}
       </div>
       <div class="src-actions">
+        ${s.health?.cooldownUntil ? `<button data-src-act="retry" data-id="${esc(s.url)}">↻ 重试</button>` : ''}
         <button data-src-act="toggle" data-id="${esc(s.url)}" data-en="${s.enabled ? 0 : 1}">${s.enabled ? '停用' : '启用'}</button>
         ${s.builtin ? '' : `<button data-src-act="del" data-id="${esc(s.url)}">删除</button>`}
       </div>
@@ -162,6 +163,9 @@ $('#srcList').addEventListener('click', async (e) => {
   try {
     if (btn.dataset.srcAct === 'toggle') {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: btn.dataset.en === '1' }) })
+    } else if (btn.dataset.srcAct === 'retry') {
+      await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'retry' }) })
+      toast('已清除冷却，下次抓取重试该源')
     } else {
       await api(`/sources/${id}`, { method: 'DELETE' })
     }
@@ -174,7 +178,7 @@ $('#btnAddSrc').addEventListener('click', async () => {
   if (!url) return toast('请输入 feed URL')
   toast('校验并添加中…')
   try {
-    await post('/sources', { url, title: $('#newSrcTitle').value.trim() || undefined })
+    await post('/sources', { url, title: $('#newSrcTitle').value.trim() || undefined, category: $('#newSrcCat').value || undefined })
     $('#newSrcUrl').value = ''; $('#newSrcTitle').value = ''
     toast('已添加'); loadSources()
   } catch (e) { toast(`添加失败: ${e.message}`) }

@@ -76,6 +76,8 @@ export interface ScoreOptions {
   now?: Date
   /** 单主题在精选里的上限；0=不限 */
   perTopicLimit?: number
+  /** 跨日降权窗口（天）：digestedDay 距今 ≤N 才罚；0=不罚（默认 3） */
+  penaltyWindowDays?: number
 }
 
 /** 给候选集打分排序并取 top-N（含 perTopicLimit 主题平衡）。写回 score/reasons。 */
@@ -102,9 +104,13 @@ export function scoreAndSelect(
     if (heatS > 0.3) reasons.push('热度')
 
     let score = fresh * 0.4 + srcS * 0.3 + prefS * 0.3 + heatS * 0.2
-    if (item.digestedDay && item.digestedDay !== opts.digestDay) {
-      score *= 0.2
-      reasons.push('跨日已推降权')
+    const win = opts.penaltyWindowDays ?? 3
+    if (win > 0 && item.digestedDay && item.digestedDay !== opts.digestDay) {
+      const daysAgo = Math.abs((Date.parse(opts.digestDay) - Date.parse(item.digestedDay)) / 86400e3)
+      if (daysAgo <= win) {
+        score *= 0.2
+        reasons.push('跨日已推降权')
+      }
     }
     if (item.state.liked === 1) { score *= 1.3; reasons.push('已赞') }
     if (item.state.liked === -1) { score *= 0.5; reasons.push('已踩') }

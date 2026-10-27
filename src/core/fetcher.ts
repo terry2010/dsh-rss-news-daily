@@ -47,7 +47,9 @@ const CHARSET_PROBE_BYTES = 512
 
 /** Whether an HTTP status is worth retrying (5xx/429/408). */
 function isTransient(status: number): boolean {
-  return status === 408 || status === 429 || status >= 500
+  // status=0 = 网络层故障（DNS/connreset/超时前断开）——最常见的瞬时故障，纳入重试；
+  // 显式 retryable:false 的错误（SSRF/重定向链断）在上游已短路，到不了这里
+  return status === 0 || status === 408 || status === 429 || status >= 500
 }
 
 function delay(ms: number): Promise<void> {

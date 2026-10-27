@@ -5,7 +5,7 @@
  * 铁律 2：任何一条/一段 LLM 失败只降级该处，日报永远产出。
  */
 
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile, readFile, access } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { DigestDocument, DigestLanguage, FeedItem, LogSink } from './core/types.js'
@@ -45,6 +45,10 @@ export interface DigestPipelineOptions {
   now?: Date
   /** 候选池 = 最近 N 小时内的条目；0=不限 */
   candidateHours?: number
+  /** 跨日降权的窗口天数（dedupe.windowDays；0=不罚） */
+  penaltyWindowDays?: number
+  /** force 重跑：纳入当日已推条目重算（news_regen /api/digest-run force 语义） */
+  force?: boolean
 }
 
 function toSummarizable(item: FeedItem, sourceTitle: string): SummarizableItem {
@@ -105,7 +109,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   // 候选池：今日未推过 + 未隐藏；candidateHours>0 时限近 N 小时
   const cutoff = (opts.candidateHours ?? 0) > 0 ? now.getTime() - opts.candidateHours! * 3600e3 : 0
   const candidates = opts.store.items.filter((i) =>
-    i.digestedDay !== day && !i.state.hidden
+    (opts.force || i.digestedDay !== day) && !i.state.hidden
     && (!cutoff || new Date(i.fetchedAt).getTime() >= cutoff),
   )
   const picked = scoreAndSelect(candidates, sourcesById, opts.digestItems, {
@@ -113,6 +117,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     digestDay: day,
     now,
     perTopicLimit: opts.perTopicLimit,
+    penaltyWindowDays: opts.penaltyWindowDays,
   })
 
   // 逐条摘要（仅当有可用 LLM）
@@ -141,6 +146,20 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
       return `- ${s.title}: ${state}${s.health.lastError ? ` — ${s.health.lastError}` : ''}`
     })
 
+  const degraded = sum.source !== 'llm'
+  const note = degraded ? `summary degraded: ${sum.error ?? 'llm unavailable'}` : ''
+
+  // 幂等保护：非 force 重跑若选出 0 条且当日已有日报，不覆盖旧文件
+  const file = join(opts.digestsDir, digestFileName(day, opts.language))
+  if (picked.length === 0 && !opts.force) {
+    try {
+      await access(file)
+      const markdown = await readFile(file, 'utf8')
+      log.warn(`digest ${day}: 0 candidates; kept existing digest file`)
+      return { title: `RSS 简报 · ${day}`, date: day, language: opts.language, markdown, itemCount: 0, itemIds: [], summarySource: sum.source, degraded: true, note: 'no candidates; kept existing digest' }
+    } catch { /* no existing file — fall through and write empty digest */ }
+  }
+
   const markdown = renderDigest({
     date: day,
     language: opts.language,
@@ -149,10 +168,10 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     summaryText: sum.text,
     includeItemLinks: true,
     sourcesStatus: statusLines,
+    degradedNote: degraded ? note.replace('summary degraded: ', '') : undefined,
   })
 
   await mkdir(opts.digestsDir, { recursive: true })
-  const file = join(opts.digestsDir, digestFileName(day, opts.language))
   await writeFile(file, markdown, 'utf8')
 
   opts.store.markDigested(picked.map((i) => i.id), day)
@@ -160,8 +179,17 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   opts.store.meta.lastDigestAt = now.toISOString()
   await opts.store.save()
 
-  const degraded = sum.source !== 'llm'
-  const note = degraded ? `summary degraded: ${sum.error ?? 'llm unavailable'}` : ''
+  // digests/index.json：历史日报索引（§4 契约，供 API/外部列历史）
+  const indexFile = join(opts.digestsDir, 'index.json')
+  let index: Array<{ date: string; items: number; degraded: boolean; note: string }> = []
+  try { index = JSON.parse(await readFile(indexFile, 'utf8')) } catch { /* first run */ }
+  const entry = { date: day, items: picked.length, degraded, note }
+  const i = index.findIndex((e) => e.date === day)
+  if (i >= 0) index[i] = entry
+  else index.push(entry)
+  index.sort((a, b) => b.date.localeCompare(a.date))
+  await writeFile(indexFile, JSON.stringify(index.slice(0, 90), null, 2), 'utf8')
+
   log.info(`digest ${day}: ${picked.length} items, summary=${sum.source}${note ? ` (${note})` : ''} -> ${file}`)
 
   return {

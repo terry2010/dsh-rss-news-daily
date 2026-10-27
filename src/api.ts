@@ -78,7 +78,7 @@ export interface ApiDeps {
   configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean }>
   timezone: string
   readerPageSize: number
-  runDigest: () => Promise<unknown>
+  runDigest: (force?: boolean) => Promise<unknown>
 }
 
 // === API 端点 ===
@@ -110,7 +110,7 @@ function apiItems(deps: ApiDeps) {
       pageSize,
       items: sorted.slice((page - 1) * pageSize, page * pageSize).map((i) => ({
         id: i.id, title: i.title, link: i.link, summary: i.summary,
-        aiSummary: i.aiSummary, publishedAt: i.publishedAt, fetchedAt: i.fetchedAt,
+        aiSummary: i.aiSummary, aiSummaryError: i.aiSummaryError, publishedAt: i.publishedAt, fetchedAt: i.fetchedAt,
         sourceId: i.sourceId, topic: i.topic, score: i.score, reasons: i.reasons,
         state: i.state, digestedDay: i.digestedDay,
       })),
@@ -181,7 +181,11 @@ function apiSources(deps: ApiDeps) {
     }
     const id = decodeURIComponent((sub || '').split('?')[0])
     if (method === 'PATCH') {
-      const body = await readBody(req) as { enabled?: boolean; title?: string }
+      const body = await readBody(req) as { enabled?: boolean; title?: string; action?: string }
+      if (body.action === 'retry') {
+        await deps.svc.retrySource(id) // 冷却源手动复活：清 cooldownUntil + failStreak
+        return sendJson(res, 200, { ok: true })
+      }
       if (typeof body.enabled === 'boolean') await deps.svc.setEnabled(id, body.enabled)
       return sendJson(res, 200, { ok: true })
     }
@@ -278,8 +282,18 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     }
     sendJson(r, res2.ok ? 200 : 400, { ok: res2.ok, error: res2.error, actions: res2.actions.map((a) => `${a.kind}:${a.target}${a.factor ? `×${a.factor}` : ''}`), prefs: deps.prefs.get() })
   }) }))
-  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch`, handler: guard(async (_q, r) => { const res = await deps.svc.runFetch(); sendJson(r, 200, { ok: true, added: res.totalAdded, errors: res.errors }) }) }))
-  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-run`, handler: guard(async (_q, r) => { await deps.runDigest(); sendJson(r, 200, { ok: true }) }) }))
+  const postOnly = (q: Req): boolean => String(q.method || 'GET').toUpperCase() === 'POST'
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch`, handler: guard(async (q, r) => {
+    if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
+    const res = await deps.svc.runFetch()
+    sendJson(r, 200, { ok: true, added: res.totalAdded, errors: res.errors })
+  }) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-run`, handler: guard(async (q, r) => {
+    if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
+    const body = await readBody(q) as { force?: boolean }
+    const doc = await deps.runDigest(!!body?.force)
+    sendJson(r, 200, { ok: true, doc })
+  }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/status`, handler: guard((_q, r) => sendJson(r, 200, { ok: true, ...deps.svc.status() })) }))
 
   return () => disposers.forEach((d) => d())
