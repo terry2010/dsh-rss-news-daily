@@ -380,12 +380,22 @@ async function loadPrefs() {
     state.prefs = r.prefs
     renderPrefs()
     $('#proxyUrl').value = r.prefs.proxyUrl || ''
+    const d = r.prefs.digestOpts || {}
+    for (const [id, k] of [['dItems','digestItems'],['dPerTopic','perTopicLimit'],['dMinScore','minLlmScore'],['dScoreN','llmScoreCandidates'],['dCandH','candidateHours']]) $(`#${id}`).value = d[k] ?? ''
   } catch { /* ignore */ }
 }
 $('#btnProxySave').addEventListener('click', async () => {
   try {
     await post('/prefs', { proxyUrl: $('#proxyUrl').value.trim() || undefined })
     toast('全局代理已保存，下次抓取生效')
+  } catch (e) { toast(`保存失败: ${e.message}`) }
+})
+$('#btnDigestOptsSave').addEventListener('click', async () => {
+  const num = (id) => { const v = $(`#${id}`).value.trim(); return v === '' ? undefined : Number(v) }
+  try {
+    const r = await post('/prefs', { digestOpts: { digestItems: num('dItems'), perTopicLimit: num('dPerTopic'), minLlmScore: num('dMinScore'), llmScoreCandidates: num('dScoreN'), candidateHours: num('dCandH') } })
+    state.prefs = r.prefs
+    toast('日报参数已保存，下次生成生效')
   } catch (e) { toast(`保存失败: ${e.message}`) }
 })
 $('#btnFetchTest').addEventListener('click', async () => {
