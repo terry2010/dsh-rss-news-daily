@@ -72,7 +72,7 @@ export interface SummarySectionConfig {
 }
 
 export interface DigestSectionConfig {
-  /** 每日精选条数（用户核心诉求，无隐藏硬顶） */
+  /** 每日精选条数（用户核心诉求；schema 上限仅为输入校验护栏，业务逻辑无隐藏硬顶） */
   digestItems: number
   /** 单一主题在精选里最多几条；0=不限 */
   perTopicLimit: number

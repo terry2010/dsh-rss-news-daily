@@ -21,8 +21,9 @@ export { Config }
 
 export const name = 'rss-news-daily'
 
-/** 静态依赖：定时调度、模型工具、阅读器路由——缺了任何一项核心功能不成立 */
-export const inject = ['timer', 'tools', 'webServer']
+/** 静态依赖：定时调度与模型工具——缺了核心不成立。
+ *  webServer/llm 走 ctx.inject 可选声明（无 webServer 的 headless profile 也要能加载）。 */
+export const inject = ['timer', 'tools']
 
 interface BuiltinSourcesFile {
   schema: number
@@ -63,5 +64,8 @@ export function apply(ctx: Context, config: ConfigType): void {
   // 可选能力按服务逐项声明：有就用、没有就降级，绝不因缺服务而拒载。
   ctx.inject(['llm'], () => {
     log.info('llm service available: LLM summaries enabled')
+  })
+  ctx.inject(['webServer'], () => {
+    log.info('webServer available: reader page will mount at /dsh-rss-news-daily/')
   })
 }

@@ -6,5 +6,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 mkdirSync(join(root, 'lib'), { recursive: true })
-copyFileSync(join(root, 'src/sources.builtin.json'), join(root, 'lib/sources.builtin.json'))
-console.log('copied: src/sources.builtin.json -> lib/')
+for (const f of ['sources.builtin.json', 'client.js']) {
+  copyFileSync(join(root, 'src', f), join(root, 'lib', f))
+  console.log(`copied: src/${f} -> lib/`)
+}
