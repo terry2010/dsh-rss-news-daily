@@ -83,6 +83,49 @@ test('scheduler: 补跑逻辑——今日无日报且已过点且在窗口内→
   assert.equal(digestRan, 1)
 })
 
+test('removeSource: 落盘（重启后不再复活）', async () => {
+  const { removeSource } = await import('../lib/service.js')
+  const { Store } = await import('../lib/core/store.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-rm-'))
+  const file = join(dir, 's.json')
+  const st = new Store({ path: file })
+  await st.load()
+  const { addSource } = await import('../lib/service.js')
+  await addSource(async (u) => ({ url: u, status: 200, body: RSS2 }), st, { url: 'https://rm.example/f' })
+  assert.equal(await removeSource(st, 'https://rm.example/f'), true)
+  const st2 = new Store({ path: file })
+  await st2.load()
+  assert.equal(st2.sources.length, 0, '删除必须持久化')
+})
+
+test('setSourceEnabled: 不传 builtinMeta 时自动查内置目录（标题不退化为 URL）', async () => {
+  const { setSourceEnabled, effectiveSources, normalizeUrl } = await import('../lib/service.js')
+  const store = await mkStore()
+  const url = 'https://www.ruanyifeng.com/blog/atom.xml'
+  await setSourceEnabled(store, url, false) // 不传 meta
+  const overlay = store.sources.find((s) => normalizeUrl(s.url) === normalizeUrl(url))
+  assert.ok(overlay && !overlay.title.includes('http'), `overlay title degraded: ${overlay?.title}`)
+})
+
+test('importOpml: 判重（内置+已有）与明细', async () => {
+  const { importOpml } = await import('../lib/service.js')
+  const store = await mkStore()
+  const opml = `<?xml version="1.0"?><opml version="2.0"><body>
+    <outline type="rss" text="New" xmlUrl="https://fresh.example/feed"/>
+    <outline type="rss" text="Dup" xmlUrl="https://www.ruanyifeng.com/blog/atom.xml"/>
+    <outline type="rss" text="Bad" xmlUrl="ftp://x/f"/>
+  </body></opml>`
+  const r = await importOpml(store, opml, [])
+  assert.equal(r.added, 1)
+  assert.equal(r.duplicated, 1)
+  assert.equal(r.skipped, 1)
+  assert.equal(store.sources.length, 1)
+  // 再导一次 → 变 duplicated
+  const r2 = await importOpml(store, opml, [])
+  assert.equal(r2.added, 0)
+  assert.equal(r2.duplicated, 2)
+})
+
 test('scheduler: 今日日报已存在→不补跑', async () => {
   const { startScheduler } = await import('../lib/scheduler.js')
   const { zonedDayKey } = await import('../lib/core/time.js')

@@ -20,7 +20,7 @@ import { Config } from './config.js'
 import type { Config as ConfigType } from './config.js'
 import { Store } from './core/store.js'
 import { createFetcher } from './core/fetcher.js'
-import { effectiveSources, runFetchCycle, addSource, removeSource, setSourceEnabled, normalizeUrl } from './service.js'
+import { effectiveSources, runFetchCycle, addSource, removeSource, setSourceEnabled, importOpml, exportOpml, normalizeUrl } from './service.js'
 import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
@@ -88,6 +88,8 @@ export function apply(ctx: Context, config: ConfigType) {
     addSource: (o) => addSource(fetcher, store, o),
     setEnabled: (id, en) => setSourceEnabled(store, id, en),
     removeSource: (id) => removeSource(store, id),
+    importOpml: (text) => importOpml(store, text, config.sources),
+    exportOpml: () => exportOpml(store, config.sources),
     runFetch,
     status: () => {
       const list = effectiveSources(config.sources, store)
@@ -104,11 +106,12 @@ export function apply(ctx: Context, config: ConfigType) {
   }
 
   let disposed = false
+  const disposers: Array<() => void> = []
   void store.load()
     .then(() => {
       if (disposed) return
-      registerTools(ctx, svc)
-      startScheduler(ctx as unknown as TimerSeam, {
+      disposers.push(registerTools(ctx, svc))
+      disposers.push(startScheduler(ctx as unknown as TimerSeam, {
         fetch: config.fetch,
         dailyTime: config.dailyTime,
         timezone: config.timezone,
@@ -118,7 +121,7 @@ export function apply(ctx: Context, config: ConfigType) {
         runFetchCycle: runFetch,
         runDailyDigest: async () => { log.info('daily digest: M3 pipeline not wired yet') },
         log,
-      })
+      }))
       log.info('tools registered, scheduler armed')
     })
     .catch((e) => log.error('store load failed; plugin degraded to inert', e))
@@ -130,4 +133,12 @@ export function apply(ctx: Context, config: ConfigType) {
   ctx.inject(['webServer'], () => {
     log.info('webServer available: reader page will mount at /dsh-rss-news-daily/')
   })
+
+  // apply 返回值即 cordis 插件 disposer：卸载时停调度、反注册工具。
+  return () => {
+    disposed = true
+    for (const d of disposers.splice(0)) {
+      try { d() } catch { /* 清理失败不拖垮卸载 */ }
+    }
+  }
 }

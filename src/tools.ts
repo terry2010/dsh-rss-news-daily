@@ -13,7 +13,9 @@ export interface NewsService {
   listSources(): FeedSource[]
   addSource(opts: { url: string; title?: string; category?: string }): Promise<FeedSource>
   setEnabled(urlOrId: string, enabled: boolean): Promise<void>
-  removeSource(urlOrId: string): boolean
+  removeSource(urlOrId: string): Promise<boolean>
+  importOpml(opmlText: string): Promise<{ added: number; duplicated: number; skipped: number }>
+  exportOpml(): Promise<string>
   runFetch(): Promise<FetchCycleResult>
   status(): { sources: number; enabled: number; items: number; lastFetchAt: string; lastDigestDay: string; failures: Array<{ name: string; error: string }> }
 }
@@ -99,7 +101,7 @@ function newsRemove(svc: NewsService) {
     execute: async (args: { url: string; disable_only?: boolean }) => {
       try {
         if (args.disable_only) await svc.setEnabled(args.url, false)
-        else if (!svc.removeSource(args.url)) return { ok: false, error: 'not found (内置源请用 disable_only)' }
+        else if (!await svc.removeSource(args.url)) return { ok: false, error: 'not found (内置源请用 disable_only)' }
         return { ok: true }
       } catch (e) {
         return { ok: false, error: err(e) }
@@ -156,6 +158,56 @@ function newsStatus(svc: NewsService) {
   })
 }
 
+function newsImport(svc: NewsService) {
+  return defineTool({
+    name: 'news_import',
+    description: 'Import OPML subscription text. Dedups against builtin catalog and existing sources; returns added/duplicated/skipped counts. Sources are not fetched during import — health is handled by the fetch cycle.',
+    parameters: {
+      opml: { type: 'string', required: true, description: 'OPML 2.0 document text' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        properties: { ok: { type: 'boolean' }, error: { type: 'string' }, added: { type: 'integer' }, duplicated: { type: 'integer' }, skipped: { type: 'integer' } },
+        additionalProperties: false,
+      },
+      render: (_a, v) => v.ok
+        ? text(`Imported: +${v.added} added, ${v.duplicated} duplicated, ${v.skipped} skipped`)
+        : text(`Import failed: ${v.error}`),
+    },
+    execute: async (args: { opml: string }) => {
+      try {
+        return { ok: true, ...(await svc.importOpml(args.opml)) }
+      } catch (e) {
+        return { ok: false, error: err(e) }
+      }
+    },
+  })
+}
+
+function newsExport(svc: NewsService) {
+  return defineTool({
+    name: 'news_export',
+    description: 'Export enabled sources as OPML 2.0 text (grouped by category).',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        properties: { ok: { type: 'boolean' }, error: { type: 'string' }, opml: { type: 'string' } },
+        additionalProperties: false,
+      },
+      render: (_a, v) => text(v.ok ? (v.opml ?? '') : `Export failed: ${v.error}`),
+    },
+    execute: async () => {
+      try {
+        return { ok: true, opml: await svc.exportOpml() }
+      } catch (e) {
+        return { ok: false, error: err(e) }
+      }
+    },
+  })
+}
+
 /** 注册全部 news_* 工具；返回 disposer。 */
 export function registerTools(ctx: Context, svc: NewsService): () => void {
   const ds = [
@@ -164,6 +216,8 @@ export function registerTools(ctx: Context, svc: NewsService): () => void {
     ctx.tools.register(newsRemove(svc)),
     ctx.tools.register(newsFetch(svc)),
     ctx.tools.register(newsStatus(svc)),
+    ctx.tools.register(newsImport(svc)),
+    ctx.tools.register(newsExport(svc)),
   ]
   return () => ds.forEach((d) => d())
 }

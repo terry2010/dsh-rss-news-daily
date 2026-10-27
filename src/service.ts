@@ -253,13 +253,16 @@ export async function addSource(
   return src
 }
 
-/** 移除源（连带其条目）。内置源只支持停用不支持删除——停用走 store 覆盖层。 */
-export function removeSource(store: Store, urlOrId: string): boolean {
+/** 移除源（连带其条目）并落盘。内置源只支持停用不支持删除——停用走 store 覆盖层。 */
+export async function removeSource(store: Store, urlOrId: string): Promise<boolean> {
   const id = normalizeUrl(urlOrId)
-  return store.removeSource(id) || store.removeSource(urlOrId)
+  const removed = store.removeSource(id) || store.removeSource(urlOrId)
+  if (removed) await store.save()
+  return removed
 }
 
-/** 启用/停用源：内置源在 store 写覆盖层，用户源直接改记录。 */
+/** 启用/停用源：内置源在 store 写覆盖层，用户源直接改记录。
+ *  builtinMeta 不传时自动查内置目录，防显示名退化为 URL。 */
 export async function setSourceEnabled(
   store: Store,
   urlOrId: string,
@@ -267,17 +270,71 @@ export async function setSourceEnabled(
   builtinMeta?: { title: string; category: string },
 ): Promise<void> {
   const id = normalizeUrl(urlOrId)
+  const builtin = builtinCatalog().find((s) => normalizeUrl(s.url) === id)
+    ?? builtinCatalog().find((s) => s.url === urlOrId)
+  const metaTitle = builtinMeta?.title ?? builtin?.name
+  const metaCategory = builtinMeta?.category ?? builtin?.category
   const existing = store.sources.find((s) => s.id === id || normalizeUrl(s.url) === id)
   if (existing) {
     existing.enabled = enabled
   } else {
-    // 内置源停用：写一条覆盖层记录（builtin=false 标记位由 effectiveSources 以 URL 命中内置后纠正）
+    // 内置源停用：写一条覆盖层记录（builtin 标记由 effectiveSources 以 URL 命中内置后纠正）
     store.addSource(toFeedSource({
-      url: urlOrId, title: builtinMeta?.title || urlOrId,
-      category: builtinMeta?.category, enabled,
+      url: urlOrId, title: metaTitle || urlOrId,
+      category: metaCategory, enabled,
     }))
   }
   await store.save()
+}
+
+export interface OpmlImportResult {
+  added: number
+  duplicated: number
+  skipped: number
+  details: Array<{ url: string; action: 'added' | 'duplicated' | 'skipped'; reason?: string }>
+}
+
+/** OPML 导入编排：规范化去重 + 判重（store∪builtin∪config），明细可核对。
+ *  批量导入不做逐源抓取校验（数十源的串行校验太慢）——健康度由后续 fetch 循环接管。 */
+export async function importOpml(
+  store: Store,
+  opmlText: string,
+  configSources: Array<{ url: string }> = [],
+): Promise<OpmlImportResult> {
+  const { parseOpml } = await import('./core/opml.js')
+  const entries = parseOpml(opmlText) // 非 OPML 抛错，调用方兜底
+  const known = new Set([
+    ...builtinCatalog().map((s) => normalizeUrl(s.url)),
+    ...configSources.map((s) => normalizeUrl(s.url)),
+    ...store.sources.map((s) => normalizeUrl(s.url)),
+  ])
+  const r: OpmlImportResult = { added: 0, duplicated: 0, skipped: 0, details: [] }
+  for (const e of entries) {
+    const key = normalizeUrl(e.xmlUrl)
+    if (!e.xmlUrl || !/^https?:/i.test(e.xmlUrl)) {
+      r.skipped++; r.details.push({ url: e.xmlUrl, action: 'skipped', reason: '非 http(s) URL' })
+      continue
+    }
+    if (known.has(key)) {
+      r.duplicated++; r.details.push({ url: e.xmlUrl, action: 'duplicated' })
+      continue
+    }
+    known.add(key)
+    store.addSource(toFeedSource({ url: e.xmlUrl, title: e.title, category: e.category }))
+    r.added++; r.details.push({ url: e.xmlUrl, action: 'added' })
+  }
+  if (r.added > 0) await store.save()
+  return r
+}
+
+/** OPML 导出：生效源表 → opml 文本。 */
+export async function exportOpml(store: Store, configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean }>): Promise<string> {
+  const { generateOpml } = await import('./core/opml.js')
+  return generateOpml(
+    effectiveSources(configSources, store)
+      .filter((s) => s.enabled)
+      .map((s) => ({ title: s.title, url: s.url, category: s.category })),
+  )
 }
 
 /** 跑一轮抓取；单源失败就地标注不影响其它源（铁律 2）。 */
