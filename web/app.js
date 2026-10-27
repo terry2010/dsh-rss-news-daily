@@ -459,10 +459,16 @@ const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/
 function timeRow(value, isFirst) {
   const row = document.createElement('div'); row.className = 'sched-row'
   const inp = document.createElement('input'); inp.type = 'time'; inp.value = value || ''
-  const b = document.createElement('button')
-  if (isFirst) { b.textContent = '＋'; b.title = '新增时刻'; b.onclick = () => row.parentElement.appendChild(timeRow('', false)) }
-  else { b.textContent = '−'; b.title = '删除该时刻'; b.onclick = () => row.remove() }
-  row.append(inp, b)
+  const add = document.createElement('button')
+  add.textContent = '＋'; add.title = '新增时刻'
+  add.onclick = () => row.parentElement.appendChild(timeRow('', false))
+  row.append(inp, add)
+  if (!isFirst) { // 第二行起同时有 ＋ 和 −
+    const del = document.createElement('button')
+    del.textContent = '−'; del.title = '删除该时刻'
+    del.onclick = () => row.remove()
+    row.append(del)
+  }
   return row
 }
 function fillTimeRows(sel, values) {
