@@ -14,11 +14,11 @@
 
   window.__ModuleLoader__.load({
     id: 'dsh-rss-news-daily',
-    factory: (require, module) => {
+    factory: (require) => {
       const React = require('react')
       const h = React.createElement
 
-      const inject = []
+      const inject = ['slots', 'sidebarRightTabs']
 
       function apply(ctx) {
         const log = (ctx && ctx.logger ? ctx.logger('rss-news-daily') : console)
@@ -57,22 +57,23 @@
           }
         })
 
-        ctx.inject(['settingsPlugins'], (scoped) => {
+        // settings 卡：真实契约是 slots.register({name:'settings.plugins.tab'})，不是独立服务
+        ctx.inject(['slots'], (scoped) => {
           try {
-            scoped.settingsPlugins.register?.({
-              id: TAB_ID,
-              title: 'RSS 新闻日报',
-              description: '每日精选（总结+N条）· 全量阅读器 · 偏好调教',
-              order: 60,
-            })
+            const Card = () => h('div', { style: { padding: 12 } }, [
+              h('h4', { key: 't' }, 'RSS 新闻日报'),
+              h('p', { key: 'd', style: { color: '#888' } }, '每日精选（今日总结+N条）· 全量阅读器 · 偏好调教 · 不占用会话上下文'),
+              h('a', { key: 'l', href: READER_URL, target: '_blank', rel: 'noopener' }, '打开阅读器 →'),
+            ])
+            scoped.slots.inject('settings.plugins.tab', () =>
+              scoped.slots.register({ name: 'settings.plugins.tab', key: TAB_ID }, Card))
           } catch (e) {
             log.warn(`settings card failed (non-fatal): ${String(e)}`)
           }
         })
       }
 
-      module.exports = { inject, apply }
-      return module.exports
+      return { inject, apply }
     },
   })
 })()

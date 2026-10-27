@@ -197,6 +197,28 @@ test('api: serveStatic 路径消毒——../ 与不存在返回 404', async () =
   assert.equal(res.statusCode, 404)
 })
 
+test('client.js: classic-script 形态，factory(require) 单参调用返回 {inject,apply}', async () => {
+  const { readFileSync } = await import('node:fs')
+  const { join: pjoin, dirname } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const root = pjoin(dirname(fileURLToPath(import.meta.url)), '..')
+  const src = readFileSync(pjoin(root, 'lib/client.js'), 'utf8')
+  // 不能含 ESM 语法（宿主 classic script 加载）
+  assert.doesNotThrow(() => new Function(src), 'client.js must parse as classic script')
+  // stub __ModuleLoader__ + react，按宿主方式单参调用 factory
+  let registered = null
+  globalThis.window = { __ModuleLoader__: { load: (o) => { registered = o } } }
+  new Function(src)()
+  assert.equal(registered.id, 'dsh-rss-news-daily')
+  const exports2 = registered.factory((spec) => {
+    assert.equal(spec, 'react')
+    return { createElement: () => null }
+  })
+  assert.ok(Array.isArray(exports2.inject), 'returns {inject,apply}')
+  assert.equal(typeof exports2.apply, 'function')
+  assert.ok(exports2.inject.includes('sidebarRightTabs'))
+})
+
 test('api: cross-site 请求被 403', async () => {
   const { mountApi } = await import('../lib/api.js')
   const deps = await mkDeps()
