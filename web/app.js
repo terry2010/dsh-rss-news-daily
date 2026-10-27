@@ -68,7 +68,7 @@ function itemHtml(i) {
         ${(() => { if (state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div style="color:var(--acc)">${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
         <a href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
-      <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(() => {
+      <div class="item-meta">${esc(i.topic)} · ${(() => { const d = new Date(i.publishedAt || i.fetchedAt); const p = (n) => String(n).padStart(2, '0'); return isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}` })()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(() => {
         const t = i.title + (i.summary || '')
         const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length
         if (cjk * 2 > t.replace(/\s/g, '').length) return ''
