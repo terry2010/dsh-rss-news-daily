@@ -83,10 +83,10 @@ export function apply(ctx: Context, config: ConfigType) {
     + `dailyTime=${config.dailyTime} tz=${config.timezone || 'host-local'} dataDir=${dataDir}`,
   )
 
-  const runFetch = () => runFetchCycle({
+  const runFetch = (sources?: ReturnType<typeof effectiveSources>) => runFetchCycle({
     fetch: fetcher,
     store,
-    sources: effectiveSources(config.sources, store), // 每轮重取：用户改源/健康度实时生效
+    sources: sources ?? effectiveSources(config.sources, store), // 每轮重取：用户改源/健康度实时生效
     maxItemsPerSource: config.fetch.maxItemsPerSource,
     storeContentChars: config.fetch.storeContentChars,
     concurrency: config.fetch.concurrency,
@@ -164,6 +164,8 @@ export function apply(ctx: Context, config: ConfigType) {
       const h = store.getHealth(src.id) ?? { ok: 0, fail: 0, avgMs: 0 }
       store.setHealth(src.id, { ok: h.ok, fail: h.fail, avgMs: h.avgMs, cooldownUntil: '', failStreak: 0, lastError: '' })
       await store.save()
+      // 清完锁立刻单抓这个源：成功 health.ok 立涨，用户不用等下一轮 interval
+      await runFetch([src]).catch((e) => log.warn(`retry fetch failed for ${src.id}: ${String(e)}`))
       return true
     },
     status: () => {
