@@ -61,7 +61,7 @@ export function ssrfRejectReason(rawUrl: string): string | null {
     return `协议不允许: ${url.protocol}`
   }
   if (url.username || url.password) return 'URL 不允许内嵌凭据'
-  const host = url.hostname.toLowerCase().replace(/\.$/, '') // 尾点 FQDN 归一
+  const host = url.hostname.toLowerCase().replace(/\.+$/, '') // 尾点(可多枚) FQDN 归一
   if (PRIVATE_HOSTNAMES.has(host) || PRIVATE_HOST_RE.test(host)) return `内网主机名: ${host}`
   if (isPrivateIpv4(host) || isPrivateIpv6(host)) return `内网/保留 IP: ${host}`
   return null

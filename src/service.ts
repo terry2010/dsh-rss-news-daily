@@ -193,19 +193,20 @@ async function fetchOne(
     if ('error' in doc) throw new Error(doc.error)
     const feed = parseFeedDocument(doc.body)
     const seen = new Set(opts.store.items.map((i) => i.id))
+    const seenHash = new Set(opts.store.items.map((i) => i.hash)) // exact-hash 全量，不随窗口
     const windowMs = (opts.dedupeWindowDays ?? 0) * 86400e3
     const cutoff = windowMs > 0 ? now.getTime() - windowMs : 0
     const known = opts.store.items
       .filter((i) => !cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
-      .map((i) => ({ title: i.title, hash: i.hash }))
+      .map((i) => ({ title: i.title, hash: '' })) // 窗口内只做标题 Jaccard，exact 由 seenHash 管
     const fresh: FeedItem[] = []
     for (const p of feed.items.slice(0, opts.maxItemsPerSource)) {
       const item = toItem(src, p, now, opts.storeContentChars)
-      if (seen.has(item.id)
-        || findDuplicate({ title: item.title, hash: item.hash }, known, {
+      if (seen.has(item.id) || seenHash.has(item.hash)
+        || findDuplicate({ title: item.title, hash: '__never__' }, known, {
           threshold: opts.dedupeThreshold, compareContent: false,
         })) { res.duplicated += 1; continue }
-      seen.add(item.id); known.push({ title: item.title, hash: item.hash })
+      seen.add(item.id); seenHash.add(item.hash); known.push({ title: item.title, hash: '' })
       fresh.push(item)
     }
     res.fetched = feed.items.length
