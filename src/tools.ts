@@ -18,6 +18,10 @@ export interface NewsService {
   importOpml(opmlText: string): Promise<{ added: number; duplicated: number; skipped: number; details?: Array<{ url: string; action: string; reason?: string }> }>
   exportOpml(): Promise<string>
   runFetch(force?: boolean, onlyFailed?: boolean): Promise<FetchCycleResult>
+  /** 抓取进度（{running,done,total}），供 UI 轮询 */
+  fetchProgress?(): Promise<{ running: boolean; done: number; total: number }>
+  /** 中止进行中的抓取 */
+  cancelFetch?(): Promise<unknown>
   status(): { sources: number; enabled: number; items: number; lastFetchAt: string; lastDigestDay: string; failures: Array<{ name: string; error: string }> }
   tune(text: string): Promise<{ ok: boolean; actions: string[]; error?: string }>
   getDigest(day?: string): Promise<{ ok: boolean; day: string; markdown?: string; error?: string }>

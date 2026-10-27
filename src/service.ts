@@ -20,6 +20,10 @@ import type { createFetcher } from './core/fetcher.js'
 export interface FetchCycleOptions {
   /** 手动抓取：绕过 24h 冷却重试失败源（调度路径不传） */
   force?: boolean
+  /** 中止信号：取消后 worker 不再领取新源（在飞的抓完收尾） */
+  signal?: AbortSignal
+  /** 每完成一个源回调一次（进度上报） */
+  onSourceDone?: () => void
   fetch: ReturnType<typeof createFetcher>
   store: Store
   sources: FeedSource[]
@@ -380,6 +384,7 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
   const nowFn = opts.now || (() => new Date())
   const workers = Array.from({ length: Math.max(1, opts.concurrency) }, async () => {
     for (;;) {
+      if (opts.signal?.aborted) return
       const src = queue.shift()
       if (!src) return
       const r = await fetchOne(src, opts, now)
@@ -387,6 +392,7 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
       result.totalFetched += r.fetched
       result.totalAdded += r.added
       if (r.error) result.errors += 1
+      opts.onSourceDone?.()
     }
   })
   await Promise.all(workers)

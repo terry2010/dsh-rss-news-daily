@@ -160,13 +160,28 @@ $('#btnDigestRun').addEventListener('click', async () => {
   } catch (e) { toast(`生成失败: ${e.message}`) }
   finally { btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
 })
+let retryPoll = 0
+async function refreshRetryBtn() {
+  const btn = $('#btnRetryAll')
+  try {
+    const p = await api('/fetch-progress')
+    if (p.running) btn.textContent = `重试中(${p.done}/${p.total})`
+    else { btn.textContent = '↻ 重试全部失败源'; if (retryPoll) { clearInterval(retryPoll); retryPoll = 0 } loadSources(); loadStatus() }
+  } catch { btn.textContent = '↻ 重试全部失败源' }
+}
 $('#btnRetryAll').addEventListener('click', async () => {
+  try {
+    const p = await api('/fetch-progress')
+    if (p.running) { await post('/fetch-cancel', {}); toast('已请求取消，在飞的源收尾后停止'); return }
+  } catch { /* progress 不可达则按未运行处理 */ }
   toast('重试全部失败源中…')
+  retryPoll = setInterval(refreshRetryBtn, 800)
   try {
     const r = await post('/fetch', { force: true, onlyFailed: true })
     toast(`重试完成: +${r.added} 条${r.errors ? ` · ${r.errors} 仍失败` : ''}`)
     loadSources(); loadStatus()
   } catch (e) { toast(`重试失败: ${e.message}`) }
+  finally { if (retryPoll) { clearInterval(retryPoll); retryPoll = 0 } $('#btnRetryAll').textContent = '↻ 重试全部失败源' }
 })
 $('#btnDigestStop').addEventListener('click', async () => {
   try { await post('/digest-stop', {}); toast('已请求停止，正在降级收尾…') }

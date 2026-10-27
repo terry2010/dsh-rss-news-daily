@@ -347,6 +347,8 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     const res = await deps.svc.runFetch(!!body?.force, !!body?.onlyFailed)
     sendJson(r, 200, { ok: true, added: res.totalAdded, errors: res.errors })
   }) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.fetchProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-cancel`, handler: guard(async (q, r) => { if (q.method !== 'POST') { r.statusCode = 405; r.end(); return } sendJson(r, 200, { ok: true, result: await deps.svc.cancelFetch?.() }) }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-run`, handler: guard(async (q, r) => {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
     const body = await readBody(q) as { force?: boolean }

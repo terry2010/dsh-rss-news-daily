@@ -95,12 +95,18 @@ export function apply(ctx: Context, config: ConfigType) {
     log,
   })
   const runFetch = () => runFetchCycle(makeFetchOpts()) // scheduler 回调签名 (signal?)=>…，不带参
+  let fetchProg = { running: false, done: 0, total: 0 }
+  let fetchAbort: AbortController | undefined
   const runFetchForce = (force = false, onlyFailed = false) => {
     // onlyFailed：只重试失败/冷却中的启用源（「重试全部失败源」按钮）；否则默认全量
     const failedOnly = onlyFailed
       ? effectiveSources(config.sources, store).filter((s) => s.enabled && (s.health.lastError || (s.health.cooldownUntil && new Date(s.health.cooldownUntil).getTime() > Date.now())))
       : undefined
-    return runFetchCycle({ ...makeFetchOpts(failedOnly), force })
+    const all = failedOnly ?? effectiveSources(config.sources, store)
+    fetchProg = { running: true, done: 0, total: all.filter((s) => s.enabled).length }
+    fetchAbort = new AbortController()
+    return runFetchCycle({ ...makeFetchOpts(failedOnly), force, signal: fetchAbort.signal, onSourceDone: () => { fetchProg.done += 1 } })
+      .finally(() => { fetchProg = { running: false, done: 0, total: 0 }; fetchAbort = undefined })
   } // svc/api：手动抓取可带 force 绕冷却
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => runFetchCycle(makeFetchOpts(sources))
 
@@ -117,6 +123,8 @@ export function apply(ctx: Context, config: ConfigType) {
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),
     runFetch: runFetchForce,
+    fetchProgress: async () => ({ ...fetchProg }),
+    cancelFetch: async () => { fetchAbort?.abort(); return true },
     tune: async (text) => {
       const r = parseTune(text, prefs.get())
       if (!r.ok) return { ok: false, actions: [], error: r.error }
