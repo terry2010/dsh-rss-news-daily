@@ -16,6 +16,8 @@ export interface PrefsFile extends Prefs {
   tuningHistory?: Array<{ at: string; text: string; actions: string[] }>
   /** UI 指定的日报模型覆盖；两个都非空才生效（成对校验同 config） */
   llm?: { provider: string; model: string }
+  /** UI 指定的多时间点调度覆盖；digestTimes 空=回 dailyTime */
+  schedule?: { digestTimes: string[]; fetchTimes: string[] }
 }
 
 function numMapOf(v: unknown): Record<string, number> {
@@ -35,6 +37,9 @@ function strListOf(v: unknown): string[] {
 export function normalizePrefs(value: unknown): PrefsFile {
   const r = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>
   const llm = (typeof r.llm === 'object' && r.llm !== null ? r.llm : {}) as Record<string, unknown>
+  const sched = (typeof r.schedule === 'object' && r.schedule !== null ? r.schedule : {}) as Record<string, unknown>
+  const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/
+  const times = (v: unknown) => strListOf(v).filter((t) => TIME_RE.test(t))
   return {
     topics: numMapOf(r.topics),
     keywords: numMapOf(r.keywords),
@@ -43,6 +48,9 @@ export function normalizePrefs(value: unknown): PrefsFile {
     tuningHistory: Array.isArray(r.tuningHistory) ? r.tuningHistory as PrefsFile['tuningHistory'] : [],
     llm: typeof llm.provider === 'string' && typeof llm.model === 'string'
       ? { provider: llm.provider, model: llm.model }
+      : undefined,
+    schedule: Array.isArray(sched.digestTimes) || Array.isArray(sched.fetchTimes)
+      ? { digestTimes: times(sched.digestTimes), fetchTimes: times(sched.fetchTimes) }
       : undefined,
   }
 }

@@ -352,6 +352,80 @@ test('prefs: llm 覆盖字段落盘往返（PrefsStore）', async () => {
   assert.deepEqual(p2.get().llm, { provider: 'deepseek', model: 'chat' })
 })
 
+test('scheduler: 多时间点取最近一跳；同刻 fetch 先于 digest', async () => {
+  const { startScheduler } = await import('../lib/scheduler.js')
+  const armed = []
+  const ctx = { timeout: (fn, ms) => { armed.push({ fn, ms }); return () => {} }, interval: () => () => {} }
+  const calls = []
+  startScheduler(ctx, {
+    fetch: { enabled: false, intervalMinutes: 0, onStartup: false },
+    dailyTime: '08:00', timezone: '', catchUpHours: 0, enabled: true,
+    lastDigestDay: () => new Date().toISOString().slice(0, 10),
+    runFetchCycle: async () => { calls.push('fetch'); return {} },
+    runDailyDigest: async () => { calls.push('digest') },
+    // 四个时刻同为 08:00 → 最近一跳必在 08:00 且两表都含 → fetch+digest 都跑且先 fetch
+    getSchedule: () => ({ digestTimes: ['08:00', '08:00'], fetchTimes: ['08:00'] }),
+  })
+  assert.equal(armed.length, 1, 'exactly one timer armed')
+  armed[0].fn() // 手动触发最近一跳（08:00 两表共含）
+  await new Promise((r) => setTimeout(r, 20))
+  assert.deepEqual(calls, ['fetch', 'digest'], 'same-tick fires fetch then digest')
+})
+
+test('prefs: schedule 消毒过滤非法时刻；/api/schedule GET/POST/clear', async () => {
+  const { PrefsStore } = await import('../lib/core/prefs.js')
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  deps.configSchedule = { digestTimes: ['08:00'], fetchTimes: [] }
+  deps.prefs.save({ schedule: { digestTimes: ['08:00', 'bad', '25:00'], fetchTimes: ['12:00'] } })
+  assert.deepEqual(deps.prefs.get().schedule, { digestTimes: ['08:00'], fetchTimes: ['12:00'] })
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  const sched = findHandler(regs, '/dsh-rss-news-daily/api/schedule')
+  let res = mkRes()
+  await sched(mkReq('GET', '/dsh-rss-news-daily/api/schedule'), res)
+  assert.equal(JSON.parse(res.body).effective, 'ui')
+  res = mkRes()
+  await sched(mkReq('POST', '/dsh-rss-news-daily/api/schedule', { clear: true }), res)
+  assert.equal(deps.prefs.get().schedule, undefined)
+  res = mkRes()
+  await sched(mkReq('GET', '/dsh-rss-news-daily/api/schedule'), res)
+  assert.equal(JSON.parse(res.body).effective, 'config')
+})
+
+test('source summarize: PATCH 持久化 + digest 跳过该源的 AI 摘要', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const { setSourceSummarize } = await import('../lib/service.js')
+  const { runDailyDigest } = await import('../lib/digest-pipeline.js')
+  const deps = await mkDeps()
+  // 造一个 summarize=false 的用户源 + 一条属于它的条目
+  deps.store.addSource({ id: 'https://x/feed', url: 'https://x/feed', title: 'X源', enabled: true, addedAt: '', category: '科技', tier: 1, lang: 'zh', method: 'direct', builtin: false, weight: 1, summarize: true, health: { ok: 0, fail: 0, failStreak: 0, avgMs: 0 } })
+  deps.store.items[0].sourceId = 'https://x/feed'
+  await setSourceSummarize(deps.store, 'https://x/feed', false)
+  assert.equal(deps.store.sources.find((s) => s.url === 'https://x/feed').summarize, false)
+  // API PATCH 也通
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  deps.svc.setSummarize = async (id, s) => setSourceSummarize(deps.store, id, s)
+  const res = mkRes()
+  await findHandler(regs, '/dsh-rss-news-daily/api/sources/')(mkReq('PATCH', '/dsh-rss-news-daily/api/sources/https%3A%2F%2Fx%2Ffeed', { summarize: true }), res)
+  assert.equal(deps.store.sources.find((s) => s.url === 'https://x/feed').summarize, true)
+  await setSourceSummarize(deps.store, 'https://x/feed', false)
+  // digest: 该源条目不生成 aiSummary（feed 原摘要回落）
+  const dgDir = mkdtempSync(join(tmpdir(), 'rnd-dgs-'))
+  const doc = await runDailyDigest({
+    store: deps.store, configSources: [], llmEnabled: true, summaryEnabled: true,
+    llmClient: { generateText: async () => 'AI-summ' },
+    summaryMaxItems: 10, summaryConcurrency: 2, summaryMaxLength: 50,
+    llmTimeoutMs: 60000, llmMaxTokens: 4096,
+    digestItems: 5, perTopicLimit: 0, digestMaxLength: 800,
+    language: 'zh', timezone: '', digestsDir: dgDir, log: { info() {}, warn() {}, error() {} },
+  })
+  const item = deps.store.items[0]
+  assert.equal(item.aiSummary, undefined, 'summarize=false source item must skip AI summary')
+  assert.equal(item.aiSummaryError, undefined, 'skipped ≠ error — 不写 aiSummaryError')
+})
+
 test('api: cross-site 请求被 403', async () => {
   const { mountApi } = await import('../lib/api.js')
   const deps = await mkDeps()

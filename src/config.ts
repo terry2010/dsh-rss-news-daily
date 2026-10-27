@@ -47,6 +47,13 @@ export interface DedupeSectionConfig {
   threshold: number
 }
 
+export interface ScheduleSectionConfig {
+  /** 每日日报生成时刻列表（HH:MM）；空=回落 [dailyTime] */
+  digestTimes: string[]
+  /** 墙钟定点抓取时刻列表（HH:MM）；与 intervalMinutes 轮询并存 */
+  fetchTimes: string[]
+}
+
 export interface LlmSectionConfig {
   /** 是否调用 LLM；false 时总结段走抽取式、逐条摘要关闭 */
   enabled: boolean
@@ -106,6 +113,7 @@ export interface Config {
   llm: LlmSectionConfig
   summary: SummarySectionConfig
   digest: DigestSectionConfig
+  schedule: ScheduleSectionConfig
 }
 
 const FeedSourceSchema = Schema.object({
@@ -113,6 +121,7 @@ const FeedSourceSchema = Schema.object({
   title: Schema.string().description('显示名。'),
   category: Schema.string().description('分类（见 SOURCES.md §3）。'),
   enabled: Schema.boolean().default(true),
+  summarize: Schema.boolean().default(true).description('该源条目是否生成 AI 逐条摘要。'),
 })
 
 const FetchSectionSchema = Schema.object({
@@ -155,12 +164,20 @@ const DigestSectionSchema = Schema.object({
   maxLength: Schema.natural().min(50).max(3000).default(800),
 }).description('日报格式。')
 
+const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/
+
+const ScheduleSectionSchema = Schema.object({
+  digestTimes: Schema.array(Schema.string().pattern(TIME_RE)).default([]).description('每日日报生成时刻列表（HH:MM）；空=用 dailyTime。'),
+  fetchTimes: Schema.array(Schema.string().pattern(TIME_RE)).default([]).description('墙钟定点抓取时刻列表（HH:MM）；与 intervalMinutes 轮询并存。'),
+}).description('多时间点定时。')
+
 export const Config: Schema<Config> = Schema.object({
   enabled: Schema.boolean().default(true),
   dataDir: Schema.string().default('').description('数据目录；空=~/.dsh/rss-news-daily。'),
   dailyTime: Schema.string().pattern(/^([01]?\d|2[0-3]):[0-5]\d$/).default('08:00'),
   timezone: Schema.string().default('').description('IANA 时区（如 Asia/Shanghai）；空=主机本地。'),
   catchUpHours: Schema.natural().min(0).max(72).default(12),
+  schedule: ScheduleSectionSchema,
   sources: Schema.array(FeedSourceSchema).default([]),
   archiveAfterDays: Schema.natural().min(0).default(60),
   readerPageSize: Schema.natural().min(10).max(200).default(50),

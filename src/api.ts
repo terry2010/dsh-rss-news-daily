@@ -84,6 +84,8 @@ export interface ApiDeps {
   getLlm?: () => { listProviders(): Array<{ id: string }>; listModels(p: string): Promise<Array<{ id: string }>> } | undefined
   /** config 层的 llm 路由对（用于 effective 判定展示） */
   configLlm?: { provider: string; model: string }
+  /** config 层的调度默认（UI 覆盖的回落） */
+  configSchedule?: { digestTimes: string[]; fetchTimes: string[] }
 }
 
 // === API 端点 ===
@@ -169,7 +171,7 @@ function apiSources(deps: ApiDeps) {
         ok: true,
         sources: deps.svc.listSources().map((s) => ({
           id: s.id, url: s.url, title: s.title, category: s.category, tier: s.tier,
-          enabled: s.enabled, builtin: s.builtin, health: s.health,
+          enabled: s.enabled, builtin: s.builtin, summarize: s.summarize, health: s.health,
         })),
       })
     }
@@ -184,12 +186,13 @@ function apiSources(deps: ApiDeps) {
     }
     const id = decodeURIComponent((sub || '').split('?')[0])
     if (method === 'PATCH') {
-      const body = await readBody(req) as { enabled?: boolean; title?: string; action?: string }
+      const body = await readBody(req) as { enabled?: boolean; title?: string; action?: string; summarize?: boolean }
       if (body.action === 'retry') {
         const found = await deps.svc.retrySource(id) // 冷却源手动复活：清 cooldownUntil + failStreak
         return sendJson(res, found ? 200 : 404, { ok: found })
       }
       if (typeof body.enabled === 'boolean') await deps.svc.setEnabled(id, body.enabled)
+      if (typeof body.summarize === 'boolean') await deps.svc.setSummarize(id, body.summarize)
       return sendJson(res, 200, { ok: true })
     }
     if (method === 'DELETE') {
@@ -310,6 +313,23 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/opml`, handler: guard(apiOpml(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/prefs`, handler: guard(apiPrefs(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/llm`, handler: guard(apiLlm(deps)) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/schedule`, handler: guard(async (q, r) => {
+    const method = String(q.method || 'GET').toUpperCase()
+    const ui = deps.prefs.get().schedule
+    const def = deps.configSchedule ?? { digestTimes: [], fetchTimes: [] }
+    if (method === 'GET') {
+      return sendJson(r, 200, { ok: true, effective: ui ? 'ui' : 'config', schedule: ui ?? def })
+    }
+    if (method === 'POST') {
+      const body = await readBody(q) as { digestTimes?: string[]; fetchTimes?: string[]; clear?: boolean }
+      if (body.clear) deps.prefs.save({ schedule: undefined })
+      else {
+        deps.prefs.save({ schedule: { digestTimes: Array.isArray(body.digestTimes) ? body.digestTimes : [], fetchTimes: Array.isArray(body.fetchTimes) ? body.fetchTimes : [] } })
+      }
+      return sendJson(r, 200, { ok: true, schedule: deps.prefs.get().schedule ?? def })
+    }
+    sendJson(r, 405, { ok: false, error: `unsupported ${method}` })
+  }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/tune`, handler: guard(async (q, r) => {
     const body = await readBody(q) as { text?: string }
     const res2 = parseTune(String(body.text || ''), deps.prefs.get())

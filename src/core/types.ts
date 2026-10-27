@@ -35,6 +35,8 @@ export interface FeedSource {
   builtin: boolean
   /** 用户权重微调（prefs.sourceWeight 合并结果，默认 1） */
   weight: number
+  /** 该源条目是否生成 AI 逐条摘要（默认 true；false=日报里用 feed 原摘要） */
+  summarize: boolean
   health: SourceHealth
 }
 

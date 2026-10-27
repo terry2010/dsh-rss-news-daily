@@ -21,7 +21,7 @@ import type { Config as ConfigType } from './config.js'
 import { Store } from './core/store.js'
 import { PrefsStore } from './core/prefs.js'
 import { createFetcher } from './core/fetcher.js'
-import { effectiveSources, runFetchCycle, addSource, removeSource, setSourceEnabled, importOpml, exportOpml } from './service.js'
+import { effectiveSources, runFetchCycle, addSource, removeSource, setSourceEnabled, setSourceSummarize, importOpml, exportOpml } from './service.js'
 import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
@@ -100,6 +100,7 @@ export function apply(ctx: Context, config: ConfigType) {
     listSources: () => effectiveSources(config.sources, store),
     addSource: (o) => addSource(fetcher, store, o),
     setEnabled: (id, en) => setSourceEnabled(store, id, en),
+    setSummarize: (id, s) => setSourceSummarize(store, id, s),
     removeSource: (id) => removeSource(store, id),
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),
@@ -227,6 +228,10 @@ export function apply(ctx: Context, config: ConfigType) {
       disposers.push(startScheduler(ctx as unknown as TimerSeam, {
         fetch: config.fetch,
         dailyTime: config.dailyTime,
+        getSchedule: () => prefs.get().schedule ?? {
+          digestTimes: config.schedule.digestTimes.length ? config.schedule.digestTimes : [config.dailyTime],
+          fetchTimes: config.schedule.fetchTimes,
+        },
         timezone: config.timezone,
         catchUpHours: config.catchUpHours,
         enabled: true,
@@ -261,6 +266,10 @@ export function apply(ctx: Context, config: ConfigType) {
         runDigest: digestNow,
         getLlm: () => llmRuntime,
         configLlm: { provider: config.llm.provider, model: config.llm.model },
+        configSchedule: {
+          digestTimes: config.schedule.digestTimes.length ? config.schedule.digestTimes : [config.dailyTime],
+          fetchTimes: config.schedule.fetchTimes,
+        },
       }))
       log.info('reader mounted at /dsh-rss-news-daily/')
     }

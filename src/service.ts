@@ -78,7 +78,7 @@ function sourceIdOf(url: string): string {
 
 function toFeedSource(raw: {
   url: string; title: string; category?: string; tier?: number; lang?: 'zh' | 'en'
-  method?: string; enabled?: boolean; builtin?: boolean; addedAt?: string
+  method?: string; enabled?: boolean; builtin?: boolean; addedAt?: string; summarize?: boolean
 }): FeedSource {
   return {
     id: sourceIdOf(raw.url),
@@ -92,13 +92,14 @@ function toFeedSource(raw: {
     method: raw.method || 'direct',
     builtin: raw.builtin === true,
     weight: 1,
+    summarize: raw.summarize !== false,
     health: emptyHealth(),
   }
 }
 
 /** 生效源表：内置 ∪ config 预置 ∪ store 用户源，按规范化 URL 合并（用户覆盖内置）。 */
 export function effectiveSources(
-  configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean }>,
+  configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean; summarize?: boolean }>,
   store: Store,
 ): FeedSource[] {
   const byUrl = new Map<string, FeedSource>()
@@ -116,7 +117,7 @@ export function effectiveSources(
     byUrl.set(key, toFeedSource({
       url: s.url, title: s.title || prev?.title || s.url, category: s.category || prev?.category,
       tier: prev?.tier, lang: prev?.lang, enabled: s.enabled !== false,
-      builtin: prev?.builtin,
+      builtin: prev?.builtin, summarize: s.summarize !== false,
     }))
   }
   // store 用户源：含运行时新增 + 对内置源的状态/改名覆盖（改名以用户为准）
@@ -124,7 +125,7 @@ export function effectiveSources(
     const key = normalizeUrl(s.url)
     const prev = byUrl.get(key)
     if (prev && prev.builtin) {
-      byUrl.set(key, { ...prev, title: s.title || prev.title, enabled: s.enabled, weight: s.weight ?? prev.weight })
+      byUrl.set(key, { ...prev, title: s.title || prev.title, enabled: s.enabled, weight: s.weight ?? prev.weight, summarize: s.summarize ?? prev.summarize })
     } else {
       byUrl.set(key, { ...s, builtin: s.builtin === true })
     }
@@ -282,6 +283,23 @@ export async function setSourceEnabled(
     store.addSource(toFeedSource({
       url: urlOrId, title: metaTitle || urlOrId,
       category: metaCategory, enabled,
+    }))
+  }
+  await store.save()
+}
+
+/** 切换源级 AI 摘要开关（summarize=false 的源，日报里用 feed 原摘要、不调 LLM）。 */
+export async function setSourceSummarize(store: Store, urlOrId: string, summarize: boolean): Promise<void> {
+  const id = normalizeUrl(urlOrId)
+  const builtin = builtinCatalog().find((s) => normalizeUrl(s.url) === id)
+    ?? builtinCatalog().find((s) => s.url === urlOrId)
+  const existing = store.sources.find((s) => s.id === id || normalizeUrl(s.url) === id)
+  if (existing) {
+    existing.summarize = summarize
+  } else {
+    store.addSource(toFeedSource({
+      url: urlOrId, title: builtin?.name || urlOrId,
+      category: builtin?.category, enabled: true, summarize,
     }))
   }
   await store.save()

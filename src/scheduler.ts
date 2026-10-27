@@ -20,6 +20,8 @@ export interface SchedulerOptions {
   lastDigestDay: () => string
   runFetchCycle: (signal?: AbortSignal) => Promise<FetchCycleResult>
   runDailyDigest: () => Promise<unknown>
+  /** 生效时间表：digestTimes 空则回落 [dailyTime]；每次 arm 时重读（UI 改动下一跳生效） */
+  getSchedule?: () => { digestTimes: string[]; fetchTimes: string[] }
   log?: LogSink
 }
 
@@ -55,26 +57,42 @@ export function startScheduler(ctx: TimerSeam, options: SchedulerOptions): () =>
     disposers.push(ctx.interval(cycle, options.fetch.intervalMinutes * 60_000))
   }
 
-  // ---- 每日日报 ----
+  // ---- 多时间点定时（fetch + digest 统一挂钟；同刻先 fetch 后 digest） ----
   if (options.enabled) {
-    let digestRunning = false
-    const fire = (): void => {
-      if (digestRunning) return
-      digestRunning = true
-      void options
-        .runDailyDigest()
-        .catch((error) => log.error('scheduled digest failed', error))
-        .finally(() => {
-          digestRunning = false
-          armNext()
-        })
+    let scheduledRunning = false
+    const fire = (doFetch: boolean, doDigest: boolean): void => {
+      if (scheduledRunning) return
+      scheduledRunning = true
+      void (async () => {
+        if (doFetch) await options.runFetchCycle().catch((e) => log.error('scheduled fetch failed', e))
+        if (doDigest) await options.runDailyDigest().catch((e) => log.error('scheduled digest failed', e))
+      })().finally(() => {
+        scheduledRunning = false
+        armNext()
+      })
     }
 
     const armNext = (): void => {
       try {
         nextTimer?.() // 先清旧句柄：catch-up 路径会重复 armNext，防双挂钟
-        const { secondsUntil } = nextZonedOccurrence(options.dailyTime, options.timezone || undefined, new Date())
-        nextTimer = ctx.timeout(fire, secondsUntil * 1000)
+        const sched = options.getSchedule?.() ?? { digestTimes: [options.dailyTime], fetchTimes: [] }
+        const digestTimes = sched.digestTimes.length ? sched.digestTimes : [options.dailyTime]
+        const fetchTimes = sched.fetchTimes
+        // 取两表所有时刻里最近的下一跳
+        const now = new Date()
+        let best: { t: string; secs: number } | undefined
+        for (const t of [...digestTimes, ...fetchTimes]) {
+          try {
+            const { secondsUntil } = nextZonedOccurrence(t, options.timezone || undefined, now)
+            if (!best || secondsUntil < best.secs) best = { t, secs: secondsUntil }
+          } catch {
+            log.warn(`invalid schedule time skipped: ${t}`)
+          }
+        }
+        if (!best) return
+        const doDigest = digestTimes.includes(best.t)
+        const doFetch = fetchTimes.includes(best.t)
+        nextTimer = ctx.timeout(() => fire(doFetch, doDigest), best.secs * 1000)
       } catch (error) {
         log.error(`digest scheduler not armed (invalid dailyTime/timezone): ${String(error)}`)
       }
@@ -91,7 +109,7 @@ export function startScheduler(ctx: TimerSeam, options: SchedulerOptions): () =>
         const secondsSinceLast = 86400 - secondsUntil
         if (secondsSinceLast > 0 && secondsSinceLast <= options.catchUpHours * 3600) {
           log.info(`catch-up: today's digest missing (${Math.round(secondsSinceLast / 60)}min late), firing in ${CATCHUP_DELAY_MS / 1000}s`)
-          disposers.push(ctx.timeout(fire, CATCHUP_DELAY_MS))
+          disposers.push(ctx.timeout(() => fire(false, true), CATCHUP_DELAY_MS))
         }
       }
     } catch (error) {

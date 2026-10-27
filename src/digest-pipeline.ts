@@ -62,14 +62,14 @@ function toSummarizable(item: FeedItem, sourceTitle: string): SummarizableItem {
   }
 }
 
-/** 逐条一句话摘要：并发受限、单条失败只写 aiSummaryError 不丢条目。 */
+/** 逐条一句话摘要：并发受限、单条失败只写 aiSummaryError 不丢条目；summarize=false 的源跳过（用 feed 原摘要）。 */
 async function itemSummaries(
   items: FeedItem[],
-  sourcesById: Map<string, string>,
+  sourcesById: ReadonlyMap<string, { title: string; summarize: boolean }>,
   client: LlmClient,
   opts: DigestPipelineOptions,
 ): Promise<void> {
-  const targets = items.slice(0, opts.summaryMaxItems)
+  const targets = items.filter((i) => sourcesById.get(i.sourceId)?.summarize !== false).slice(0, opts.summaryMaxItems)
   const queue = [...targets]
   const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency) }, async () => {
     for (;;) {
@@ -78,7 +78,7 @@ async function itemSummaries(
       try {
         const r = await summarize(
           {
-            items: [toSummarizable(item, sourcesById.get(item.sourceId) ?? item.sourceId)],
+            items: [toSummarizable(item, sourcesById.get(item.sourceId)?.title ?? item.sourceId)],
             language: opts.language,
             mode: 'single',
             maxLength: opts.summaryMaxLength,
@@ -120,9 +120,9 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     penaltyWindowDays: opts.penaltyWindowDays,
   })
 
-  // 逐条摘要（仅当有可用 LLM）
+  // 逐条摘要（仅当有可用 LLM）；summarize=false 的源在 itemSummaries 内跳过
   if (opts.summaryEnabled && opts.llmEnabled && opts.llmClient) {
-    await itemSummaries(picked, new Map(sources.map((s) => [s.id, s.title])), opts.llmClient, opts)
+    await itemSummaries(picked, sourcesById, opts.llmClient, opts)
   }
 
   // 整体总结（summarize 内部已含抽取降级）

@@ -151,6 +151,7 @@ function renderSources() {
       <div class="src-actions">
         ${s.health?.cooldownUntil ? `<button data-src-act="retry" data-id="${esc(s.url)}">↻ 重试</button>` : ''}
         <button data-src-act="toggle" data-id="${esc(s.url)}" data-en="${s.enabled ? 0 : 1}">${s.enabled ? '停用' : '启用'}</button>
+        <button data-src-act="sum" data-id="${esc(s.url)}" data-sum="${s.summarize !== false ? 0 : 1}" title="该源条目是否生成 AI 摘要">${s.summarize !== false ? '摘要✓' : '摘要✗'}</button>
         ${s.builtin ? '' : `<button data-src-act="del" data-id="${esc(s.url)}">删除</button>`}
       </div>
     </div>`).join('')
@@ -166,6 +167,8 @@ $('#srcList').addEventListener('click', async (e) => {
     } else if (btn.dataset.srcAct === 'retry') {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'retry' }) })
       toast('已清除冷却，下次抓取重试该源')
+    } else if (btn.dataset.srcAct === 'sum') {
+      await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ summarize: btn.dataset.sum === '1' }) })
     } else {
       await api(`/sources/${id}`, { method: 'DELETE' })
     }
@@ -280,6 +283,31 @@ $('#btnLlmClear').addEventListener('click', async () => {
   loadLlm()
 })
 
+// ---- 定时调度 ----
+
+async function loadSchedule() {
+  try {
+    const r = await api('/schedule')
+    $('#schedDigest').value = (r.schedule.digestTimes || []).join(', ')
+    $('#schedFetch').value = (r.schedule.fetchTimes || []).join(', ')
+    $('#schedInfo').textContent = `生效来源: ${r.effective === 'ui' ? '界面指定' : '配置默认'}；同一时刻若两表都含，先抓取后生成日报`
+  } catch (e) { $('#schedInfo').textContent = `调度信息不可用: ${esc(e.message)}` }
+}
+const parseTimes = (s) => s.split(/[,，\s]+/).map((t) => t.trim()).filter((t) => /^([01]?\d|2[0-3]):[0-5]\d$/.test(t))
+
+$('#btnSchedSave').addEventListener('click', async () => {
+  const digestTimes = parseTimes($('#schedDigest').value)
+  const fetchTimes = parseTimes($('#schedFetch').value)
+  await post('/schedule', { digestTimes, fetchTimes })
+  toast('调度已保存，下一次挂钟生效')
+  loadSchedule()
+})
+$('#btnSchedClear').addEventListener('click', async () => {
+  await post('/schedule', { clear: true })
+  toast('已恢复配置默认')
+  loadSchedule()
+})
+
 // ---- 初始化 ----
 
 document.querySelectorAll('.tab').forEach((btn) => {
@@ -289,7 +317,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
     $(`#tab-${btn.dataset.tab}`).hidden = false
     if (btn.dataset.tab === 'digest') loadDigest()
     if (btn.dataset.tab === 'sources') loadSources()
-    if (btn.dataset.tab === 'prefs') { loadPrefs(); loadLlm() }
+    if (btn.dataset.tab === 'prefs') { loadPrefs(); loadLlm(); loadSchedule() }
   })
 })
 

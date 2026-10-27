@@ -13,6 +13,7 @@ export interface NewsService {
   listSources(): FeedSource[]
   addSource(opts: { url: string; title?: string; category?: string }): Promise<FeedSource>
   setEnabled(urlOrId: string, enabled: boolean): Promise<void>
+  setSummarize(urlOrId: string, summarize: boolean): Promise<void>
   removeSource(urlOrId: string): Promise<boolean>
   importOpml(opmlText: string): Promise<{ added: number; duplicated: number; skipped: number; details?: Array<{ url: string; action: string; reason?: string }> }>
   exportOpml(): Promise<string>
