@@ -22,6 +22,8 @@ export interface NewsService {
   fetchProgress?(): Promise<{ running: boolean; done: number; total: number }>
   /** 中止进行中的抓取 */
   cancelFetch?(): Promise<unknown>
+  /** 连通性测试：真实 fetcher 路径抓 url，返回 status/body 片段（验证出口/代理） */
+  testFetch?(url: string, proxy?: string | boolean): Promise<{ status?: number; body?: string; error?: string }>
   status(): { sources: number; enabled: number; items: number; lastFetchAt: string; lastDigestDay: string; failures: Array<{ name: string; error: string }> }
   tune(text: string): Promise<{ ok: boolean; actions: string[]; error?: string }>
   getDigest(day?: string): Promise<{ ok: boolean; day: string; markdown?: string; error?: string }>

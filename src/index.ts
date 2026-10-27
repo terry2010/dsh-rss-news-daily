@@ -126,6 +126,10 @@ export function apply(ctx: Context, config: ConfigType) {
     exportOpml: () => exportOpml(store, config.sources),
     runFetch: runFetchForce,
     fetchProgress: async () => ({ ...fetchProg }),
+    testFetch: async (url, proxy) => {
+      const d = await fetcher(url, undefined, { proxy })
+      return 'error' in d ? { error: d.error } : { status: d.status, body: d.body.slice(0, 600) }
+    },
     cancelFetch: async () => { fetchAbort?.abort(); return true },
     tune: async (text) => {
       const r = parseTune(text, prefs.get())

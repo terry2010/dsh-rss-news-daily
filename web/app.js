@@ -318,6 +318,16 @@ $('#btnProxySave').addEventListener('click', async () => {
     toast('全局代理已保存，下次抓取生效')
   } catch (e) { toast(`保存失败: ${e.message}`) }
 })
+$('#btnFetchTest').addEventListener('click', async () => {
+  const out = $('#fetchTestOut')
+  out.hidden = false; out.textContent = '测试中…'
+  try {
+    const u = encodeURIComponent($('#testUrl').value.trim())
+    const p = $('#testProxy').checked ? '1' : '0'
+    const r = await api(`/fetch-test?url=${u}&proxy=${p}`)
+    out.textContent = r.error ? `失败: ${r.error}` : `status ${r.status}\n${r.body || ''}`
+  } catch (e) { out.textContent = `请求失败: ${e.message}` }
+})
 
 function renderPrefs() {
   const p = state.prefs || {}

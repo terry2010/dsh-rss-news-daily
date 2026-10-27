@@ -80,6 +80,13 @@
       <input type="text" id="proxyUrl" placeholder="http://127.0.0.1:7890（留空=跟随环境变量）">
       <button id="btnProxySave">保存</button>
     </div>
+    <h3>连通测试</h3>
+    <div class="toolbar">
+      <input type="text" id="testUrl" placeholder="https://ip.zhuikan.com" value="https://ip.zhuikan.com">
+      <label><input type="checkbox" id="testProxy"> 走代理</label>
+      <button id="btnFetchTest">测试</button>
+    </div>
+    <pre id="fetchTestOut" class="hist" hidden></pre>
     <h3>日报模型</h3>
     <div class="toolbar">
       <select id="llmProvider"><option value="">provider…</option></select>

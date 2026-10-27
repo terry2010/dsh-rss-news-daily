@@ -354,6 +354,14 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     sendJson(r, 200, { ok: true, added: res.totalAdded, errors: res.errors })
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.fetchProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-test`, handler: guard(async (q, r) => {
+    const u = new URL(q.url, 'http://x').searchParams
+    const url = u.get('url') || ''
+    if (!/^https?:\/\//.test(url)) { sendJson(r, 400, { ok: false, error: '需要 http(s) URL' }); return }
+    const pv = u.get('proxy')
+    const res = await deps.svc.testFetch!(url, pv === '1' || pv === 'true' ? true : undefined)
+    sendJson(r, 200, { ok: !('error' in res) || res.error === undefined, ...res })
+  }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-cancel`, handler: guard(async (q, r) => { if (q.method !== 'POST') { r.statusCode = 405; r.end(); return } sendJson(r, 200, { ok: true, result: await deps.svc.cancelFetch?.() }) }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-run`, handler: guard(async (q, r) => {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
