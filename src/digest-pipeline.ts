@@ -32,6 +32,8 @@ export interface DigestPipelineOptions {
   summaryMaxLength: number
   /** LLM 单次调用超时（流挂起兜底，防 digestRunning 闩锁） */
   llmTimeoutMs: number
+  /** 外部取消信号（「停止生成」）；与 llmTimeoutMs 合并为任一触发即停 */
+  signal?: AbortSignal
   /** LLM maxTokens（config 透传，不再用 summarizer 内算值） */
   llmMaxTokens: number
   digestItems: number
@@ -83,7 +85,7 @@ async function itemSummaries(
             mode: 'single',
             maxLength: opts.summaryMaxLength,
             maxTokens: opts.llmMaxTokens,
-            signal: AbortSignal.timeout(opts.llmTimeoutMs),
+            signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
           },
           client,
           true,
@@ -132,7 +134,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
       items: summaryItems, language: opts.language, mode: 'batch',
       maxLength: opts.digestMaxLength,
       maxTokens: opts.llmMaxTokens,
-      signal: AbortSignal.timeout(opts.llmTimeoutMs),
+      signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
     },
     opts.llmClient,
     opts.llmEnabled && !!opts.llmClient,
@@ -206,5 +208,6 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     summarySource: sum.source,
     degraded,
     note,
+    tokens: (() => { const u = (opts.llmClient as { usage?: { inputTokens: number; outputTokens: number } } | undefined)?.usage; return u && (u.inputTokens + u.outputTokens) > 0 ? { inputTokens: u.inputTokens, outputTokens: u.outputTokens } : undefined })(),
   }
 }

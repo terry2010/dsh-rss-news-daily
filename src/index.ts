@@ -173,6 +173,7 @@ export function apply(ctx: Context, config: ConfigType) {
       await runFetchFor([src]).catch((e) => log.warn(`retry fetch failed for ${src.id}: ${String(e)}`))
       return true
     },
+    stopDigest: async () => { digestAbort?.abort(); return true },
     status: () => {
       const list = effectiveSources(config.sources, store)
       const failures = list.filter((s) => s.health.lastError).map((s) => ({ name: s.title, error: s.health.lastError! }))
@@ -194,10 +195,12 @@ export function apply(ctx: Context, config: ConfigType) {
     return { provider: config.llm.provider, model: config.llm.model }
   }
   let digestBusy = false // 服务端防重入：调度与手动 /api/digest-run 并发会竞态落盘
+  let digestAbort: AbortController | undefined // 「停止生成」：中止在飞的 LLM 调用（流逐条失败→降级收尾，不落半文件）
   const digestNow = (force = false) => {
-    if (digestBusy) return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'none' as const, degraded: true, note: 'digest already running' })
+    if (digestBusy) return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'extractive' as const, degraded: true, note: 'digest already running' })
     digestBusy = true
-    return digestRun(force).finally(() => { digestBusy = false })
+    digestAbort = new AbortController()
+    return digestRun(force).finally(() => { digestBusy = false; digestAbort = undefined })
   }
   const digestRun = (force: boolean) => runDailyDigest({
     store,
@@ -213,6 +216,7 @@ export function apply(ctx: Context, config: ConfigType) {
     perTopicLimit: config.digest.perTopicLimit,
     digestMaxLength: config.digest.maxLength,
     llmTimeoutMs: config.llm.timeoutMs,
+    signal: digestAbort?.signal,
     llmMaxTokens: config.llm.maxTokens,
     language: 'zh',
     timezone: config.timezone,

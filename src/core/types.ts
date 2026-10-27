@@ -101,6 +101,8 @@ export interface DigestDocument {
   summarySource: 'llm' | 'extractive'
   degraded: boolean
   note: string
+  /** 本次日报的 LLM token 用量（无 LLM/未上报时为 undefined） */
+  tokens?: { inputTokens: number; outputTokens: number; estimated?: boolean }
 }
 
 export interface ParsedFeedItem {

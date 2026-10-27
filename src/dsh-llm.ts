@@ -52,10 +52,17 @@ export async function resolveDshRoute(
   return { provider, model }
 }
 
-/** Accumulate a stream into plain text, surfacing terminal failures. */
-export async function collectText(stream: AsyncIterable<StreamChunk>): Promise<string> {
+/** Accumulate a stream into plain text, surfacing terminal failures. usage 传入对象则原地累计 token 用量（流中 usage 为累计值，取最新）。 */
+export async function collectText(stream: AsyncIterable<StreamChunk>, usage?: { inputTokens: number; outputTokens: number; _seen?: number; _seenOut?: number }): Promise<string> {
   let text = ''
   for await (const chunk of stream) {
+    const u = (chunk as { usage?: { inputTokens?: number; outputTokens?: number } }).usage
+    if (usage && u) {
+      if (typeof u.inputTokens === 'number') usage.inputTokens += u.inputTokens - (usage._seen ?? 0) // 累计值取增量
+      if (typeof u.outputTokens === 'number') usage.outputTokens += u.outputTokens - (usage._seenOut ?? 0)
+      if (typeof u.inputTokens === 'number') usage._seen = u.inputTokens
+      if (typeof u.outputTokens === 'number') usage._seenOut = u.outputTokens
+    }
     switch (chunk.type) {
       case 'text-delta':
         text += chunk.text
@@ -84,6 +91,8 @@ export class DshLlmClient implements LlmClient {
   private readonly route: DshLlmRoute
   private readonly log: LogSink
   private resolution?: { provider: string; model: string }
+  /** 本 client 生命周期内的累计 token 用量（pipeline 每次 digest 新建实例 → 即单次日报用量） */
+  readonly usage: { inputTokens: number; outputTokens: number; _seen?: number; _seenOut?: number } = { inputTokens: 0, outputTokens: 0 }
 
   constructor(llm: LlmRuntime, route: DshLlmRoute, log: LogSink) {
     this.llm = llm
@@ -107,6 +116,6 @@ export class DshLlmClient implements LlmClient {
       temperature: request.temperature,
       ...(request.signal !== undefined ? { signal: request.signal } : {}),
     })
-    return collectText(stream)
+    return collectText(stream, this.usage)
   }
 }

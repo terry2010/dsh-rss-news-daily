@@ -308,6 +308,7 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/items`, handler: guard(apiItems(deps)) }))
   disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/api/digest`, handler: guard((q, r) => apiDigest(deps)(q, r, ((q.url || '').split('/').pop() || '').split('?')[0] || zonedDayKey(new Date(), deps.timezone))) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest`, handler: guard((q, r) => apiDigest(deps)(q, r, zonedDayKey(new Date(), deps.timezone))) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-stop`, handler: guard(async (q, r) => { if (q.method !== 'POST') { r.statusCode = 405; r.end(); return } sendJson(r, 200, { ok: true, result: await deps.svc.stopDigest?.() }) }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/feedback`, handler: guard(apiFeedback(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/sources`, handler: guard((q, r) => apiSources(deps)(q, r, '')) }))
   disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/api/sources`, handler: guard((q, r) => apiSources(deps)(q, r, (q.url || '').replace(`${BASE}/api/sources`, '').replace(/^\//, ''))) }))
