@@ -95,6 +95,8 @@
       <select id="tlModel"><option value="">model…</option></select>
       <button id="btnTlSave">保存</button>
     </div>
+    <label style="font-size:13px"><input type="checkbox" id="autoTranslate"> 自动翻译所有外文新闻</label>
+    <div id="autoTlWarn" hidden style="color:#e5534b;font-size:12px;margin:4px 0 8px">⚠ 开启后每轮抓取都会给全部外文条目调翻译模型——按条计费，量大时 token/费用消耗显著，请确认再开启。</div>
     <div id="tlInfo" class="hist"></div>
     <h3>日报模型</h3>
     <div class="toolbar">

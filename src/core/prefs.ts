@@ -20,6 +20,8 @@ export interface PrefsFile extends Prefs {
   schedule?: { digestTimes: string[]; fetchTimes: string[] }
   /** UI 全局代理 URL（fetcher 每次解析：UI 覆盖 > config.fetch.proxyUrl > 环境变量） */
   proxyUrl?: string
+  /** 抓取后自动翻译所有外文条目（按条调翻译模型，成本高） */
+  autoTranslate?: boolean
   /** UI 翻译模型覆盖（独立于日报模型 llm） */
   translateLlm?: { provider: string; model: string }
 }
@@ -57,6 +59,7 @@ export function normalizePrefs(value: unknown): PrefsFile {
       ? { digestTimes: times(sched.digestTimes), fetchTimes: times(sched.fetchTimes) }
       : undefined,
     proxyUrl: typeof r.proxyUrl === 'string' && r.proxyUrl ? r.proxyUrl : undefined,
+    autoTranslate: r.autoTranslate === true ? true : undefined,
     translateLlm: (() => { const t = (typeof r.translateLlm === 'object' && r.translateLlm !== null ? r.translateLlm : {}) as Record<string, unknown>; return typeof t.provider === 'string' && typeof t.model === 'string' && t.provider && t.model ? { provider: t.provider, model: t.model } : undefined })(),
   }
 }

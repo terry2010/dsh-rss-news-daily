@@ -141,6 +141,12 @@ $('#btnFetch').addEventListener('click', async () => {
   catch (e) { toast(`抓取失败: ${e.message}`) }
 })
 
+$('#autoTranslate').addEventListener('change', async (e) => {
+  $('#autoTlWarn').hidden = !e.target.checked
+  try { await post('/prefs', { autoTranslate: e.target.checked }); toast(e.target.checked ? '已开启自动翻译' : '已关闭自动翻译') }
+  catch (err) { toast(`保存失败: ${err.message}`) }
+})
+
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms) } }
 
 // ---- 今日精选日报 ----
@@ -423,6 +429,8 @@ async function loadLlm() {
       `<option value="${esc(p.id)}" ${p.id === (t?.provider || r.current.provider) ? 'selected' : ''}>${esc(p.id)}</option>`).join('')
     await loadTlModels(t?.provider || r.current.provider || r.providers[0]?.id || '', t?.model || '')
     $('#tlInfo').textContent = t?.provider && t?.model ? `翻译模型: ${t.provider}/${t.model}` : '翻译模型: 跟随日报模型'
+    $('#autoTranslate').checked = !!state.prefs?.autoTranslate
+    $('#autoTlWarn').hidden = !$('#autoTranslate').checked
   } catch (e) { $('#llmInfo').textContent = `模型信息不可用: ${esc(e.message)}` }
 }
 

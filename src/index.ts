@@ -99,6 +99,23 @@ export function apply(ctx: Context, config: ConfigType) {
   let fetchProg = { running: false, done: 0, total: 0 }
   let digestProg = { running: false, done: 0, total: 0 }
   let fetchAbort: AbortController | undefined
+  // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
+  const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string } }) => {
+    const client = new DshLlmClient(llmRuntime!, pickTranslateRoute(), log)
+    const text = await client.generateText({
+      system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
+      prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
+      maxTokens: 1200,
+    })
+    const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
+    item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
+  }
+  const isForeign = (i: { title: string; summary?: string }) => {
+    const t = i.title + (i.summary || '')
+    const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length
+    return cjk * 2 <= t.replace(/\s/g, '').length
+  }
+
   const runFetchForce = (force = false, onlyFailed = false, filter?: { source?: string; category?: string }) => {
     // onlyFailed：只重试失败/冷却中的启用源（「重试全部失败源」按钮）；否则默认全量
     let pool = effectiveSources(config.sources, store)
@@ -108,7 +125,20 @@ export function apply(ctx: Context, config: ConfigType) {
     else if (filter?.category) pool = pool.filter((s) => s.category === filter.category)
     fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length }
     fetchAbort = new AbortController()
+    const cycleStart = new Date().toISOString()
     return runFetchCycle({ ...makeFetchOpts(pool), force, signal: fetchAbort.signal, onSourceDone: () => { fetchProg.done += 1 } })
+      .then(async (result) => {
+        // 自动翻译：本轮新入库的外文条目逐条调翻译模型（用户勾选后开启，按条计费）
+        if (prefs.get().autoTranslate && llmRuntime) {
+          const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && isForeign(i))
+          for (const it of fresh) {
+            try { await translateItemCore(it) }
+            catch (e) { it.state.translationError = e instanceof Error ? e.message : String(e) }
+          }
+          if (fresh.length) { await store.save(); log.info(`autoTranslate: ${fresh.length} items translated`) }
+        }
+        return result
+      })
       .finally(() => { fetchProg = { running: false, done: 0, total: 0 }; fetchAbort = undefined })
   } // svc/api：手动抓取可带 force 绕冷却
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => runFetchCycle(makeFetchOpts(sources))
@@ -132,17 +162,9 @@ export function apply(ctx: Context, config: ConfigType) {
       const item = store.items.find((i) => i.id === id)
       if (!item) return { ok: false, error: 'item not found' }
       if (!llmRuntime) return { ok: false, error: 'LLM 不可用' }
-      const client = new DshLlmClient(llmRuntime, pickTranslateRoute(), log)
-      const text = await client.generateText({
-        system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
-        prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
-        maxTokens: 1200,
-      })
-      // 标签协议解析 → 统一存 '标题\n\n正文'；标签缺失时回退原样（渲染层另有 trim+split 兜底）
-      const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
-      item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
+      await translateItemCore(item)
       await store.save()
-      return { ok: true, translation: text }
+      return { ok: true, translation: item.state.translation }
     },
     digestProgress: async () => ({ ...digestProg }),
     testFetch: async (url, proxy) => {
