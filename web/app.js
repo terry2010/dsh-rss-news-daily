@@ -239,8 +239,10 @@ $('#srcList').addEventListener('click', async (e) => {
     if (btn.dataset.srcAct === 'toggle') {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: btn.dataset.en === '1' }) })
     } else if (btn.dataset.srcAct === 'retry') {
+      toast('重试中（抓取可能需几秒）…')
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'retry' }) })
-      toast('已清除冷却，下次抓取重试该源')
+      const s2 = (await api('/sources')).sources.find((x) => encodeURIComponent(x.url) === id)
+      toast(s2?.health?.lastError ? `仍失败: ${s2.health.lastError.slice(0, 60)}` : `已恢复: ✓ ${s2?.health?.ok ?? 0} 次成功`)
     } else if (btn.dataset.srcAct === 'sum') {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ summarize: btn.dataset.sum === '1' }) })
     } else if (btn.dataset.srcAct === 'edit') {
