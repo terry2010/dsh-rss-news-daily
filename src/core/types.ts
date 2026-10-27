@@ -37,6 +37,10 @@ export interface FeedSource {
   weight: number
   /** 该源条目是否生成 AI 逐条摘要（默认 true；false=日报里用 feed 原摘要） */
   summarize: boolean
+  /** 该源走代理：'url'=指定代理，true=走全局 fetch.proxyUrl，缺省=直连 */
+  proxy?: string | boolean
+  /** 源级最小冷却小时数（覆盖默认 24h），连续失败时按它锁 */
+  cooldownHours?: number
   health: SourceHealth
 }
 

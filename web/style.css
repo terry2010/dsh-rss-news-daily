@@ -35,6 +35,9 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 .src-url { font-size: 12px; color: var(--dim); word-break: break-all; }
 .src-err { color: var(--err); font-size: 12px; }
 .src-ok { color: var(--ok); font-size: 12px; }
+.src-edit { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 10px; margin-top: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; }
+.src-edit label { display: inline-flex; align-items: center; gap: 4px; color: var(--dim); }
+.src-edit input[type="text"], .src-edit input[type="url"], .src-edit input[type="number"], .src-edit input:not([type]), .src-edit select { padding: 3px 8px; font-size: 12px; }
 .tag { font-size: 11px; background: var(--tagbg); color: var(--acc); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
 .tag.dim { color: var(--dim); background: var(--tagbg2); }
 .busybar { display: inline-block; background: var(--acc); color: #fff; font-weight: 600; padding: 5px 14px; border-radius: 8px; margin-left: 8px; }

@@ -211,7 +211,24 @@ function renderSources() {
         ${s.health?.cooldownUntil ? `<button data-src-act="retry" data-id="${esc(s.url)}">↻ 重试</button>` : ''}
         <button data-src-act="toggle" data-id="${esc(s.url)}" data-en="${s.enabled ? 0 : 1}">${s.enabled ? '停用' : '启用'}</button>
         <button data-src-act="sum" data-id="${esc(s.url)}" data-sum="${s.summarize !== false ? 0 : 1}" title="该源条目是否生成 AI 摘要">${s.summarize !== false ? '摘要✓' : '摘要✗'}</button>
+        <button data-src-act="edit" data-id="${esc(s.url)}" title="编辑源属性">⚙</button>
         ${s.builtin ? '' : `<button data-src-act="del" data-id="${esc(s.url)}">删除</button>`}
+      </div>
+      ${state.editing === s.id ? `
+      <div class="src-edit">
+        <label>名称 <input data-f="title" value="${esc(s.title)}"></label>
+        <label>分类 <input data-f="category" value="${esc(s.category)}"></label>
+        <label><input type="checkbox" data-f="enabled" ${s.enabled ? 'checked' : ''}> 启用</label>
+        <label><input type="checkbox" data-f="summarize" ${s.summarize !== false ? 'checked' : ''}> AI 摘要</label>
+        <label>代理 <select data-f="proxy">
+          <option value=""${s.proxy === undefined || s.proxy === false ? ' selected' : ''}>直连</option>
+          <option value="global"${s.proxy === true ? ' selected' : ''}>跟随全局</option>
+          <option value="custom"${typeof s.proxy === 'string' ? ' selected' : ''}>自定义</option>
+        </select><input data-f="proxyUrl" placeholder="http://127.0.0.1:7890" value="${typeof s.proxy === 'string' ? esc(s.proxy) : ''}"${typeof s.proxy === 'string' ? '' : ' hidden'}></label>
+        <label>最小冷却小时 <input type="number" min="0" step="1" data-f="cooldownHours" value="${s.cooldownHours ?? ''}" placeholder="24"></label>
+        <button data-src-act="save" data-id="${esc(s.url)}">保存</button>
+        <button data-src-act="cancel">取消</button>
+      </div>` : ''}
       </div>
     </div>`).join('')
 }
@@ -228,11 +245,35 @@ $('#srcList').addEventListener('click', async (e) => {
       toast('已清除冷却，下次抓取重试该源')
     } else if (btn.dataset.srcAct === 'sum') {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ summarize: btn.dataset.sum === '1' }) })
+    } else if (btn.dataset.srcAct === 'edit') {
+      state.editing = btn.dataset.id; renderSources(); return
+    } else if (btn.dataset.srcAct === 'cancel') {
+      state.editing = null; renderSources(); return
+    } else if (btn.dataset.srcAct === 'save') {
+      const panel = btn.closest('.src-edit')
+      const g = (n) => panel.querySelector(`[data-f="${n}"]`)
+      const pv = g('proxy').value
+      await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        title: g('title').value.trim() || undefined,
+        category: g('category').value.trim() || undefined,
+        enabled: g('enabled').checked,
+        summarize: g('summarize').checked,
+        proxy: pv === 'global' ? true : pv === 'custom' ? (g('proxyUrl').value.trim() || null) : null,
+        cooldownHours: g('cooldownHours').value === '' ? null : Number(g('cooldownHours').value),
+      }) })
+      state.editing = null; toast('已保存')
     } else {
       await api(`/sources/${id}`, { method: 'DELETE' })
     }
     loadSources()
   } catch (err) { toast(`操作失败: ${err.message}`) }
+})
+// 代理选「自定义」才显示 URL 输入框
+$('#srcList').addEventListener('change', (e) => {
+  if (e.target.dataset?.f === 'proxy') {
+    const inp = e.target.parentElement.querySelector('[data-f="proxyUrl"]')
+    if (inp) inp.hidden = e.target.value !== 'custom'
+  }
 })
 
 $('#btnAddSrc').addEventListener('click', async () => {

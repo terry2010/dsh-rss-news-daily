@@ -21,7 +21,7 @@ import type { Config as ConfigType } from './config.js'
 import { Store } from './core/store.js'
 import { PrefsStore } from './core/prefs.js'
 import { createFetcher } from './core/fetcher.js'
-import { effectiveSources, runFetchCycle, addSource, removeSource, setSourceEnabled, setSourceSummarize, importOpml, exportOpml } from './service.js'
+import { effectiveSources, runFetchCycle, addSource, removeSource, setSourceEnabled, setSourceSummarize, updateSource, importOpml, exportOpml } from './service.js'
 import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
@@ -72,6 +72,7 @@ export function apply(ctx: Context, config: ConfigType) {
   const store = new Store({ path: join(dataDir, 'store.json'), maxItems: config.fetch.maxStoredItems, log })
   const prefs = new PrefsStore(join(dataDir, 'prefs.json'), log)
   const fetcher = createFetcher({
+    proxyUrl: config.fetch.proxyUrl,
     timeoutMs: config.fetch.requestTimeoutMs,
     sizeLimitBytes: config.fetch.sizeLimitBytes,
     retries: config.fetch.retries,
@@ -120,6 +121,7 @@ export function apply(ctx: Context, config: ConfigType) {
       return setSourceSummarize(store, id, s, cur?.enabled ?? true)
     },
     removeSource: (id) => removeSource(store, id),
+    updateSource: (id, patch) => updateSource(store, id, patch as Parameters<typeof updateSource>[2]),
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),
     runFetch: runFetchForce,

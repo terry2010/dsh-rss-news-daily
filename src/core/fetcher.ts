@@ -37,6 +37,8 @@ export interface FetcherOptions {
   userAgent?: string
   /** Injectable fetch for tests / transports. */
   fetchImpl?: typeof fetch
+  /** 全局代理（http://…），源级 proxy:true 时使用；SOCKS5 不支持（undici ProxyAgent 仅 HTTP CONNECT） */
+  proxyUrl?: string
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000
@@ -148,6 +150,21 @@ async function readBody(
   }
 }
 
+/** 惰性加载 undici 的代理 agent（profile 运行时可用；repo 测试环境无此包时返回 null 降级直连） */
+type UndiciModule = { ProxyAgent?: new (uri: string) => unknown; EnvHttpProxyAgent?: new () => unknown }
+let undiciMod: UndiciModule | null | undefined
+const agents = new Map<string, unknown>()
+async function resolveDispatcher(proxy: string | boolean | undefined, globalProxyUrl?: string): Promise<unknown> {
+  if (!proxy) return undefined
+  // @ts-expect-error undici 仅存在于 profile 运行时依赖树（repo 无此包）——惰性导入，失败降级直连
+  undiciMod ??= await import('undici').then((m) => m as unknown as UndiciModule).catch(() => null)
+  if (!undiciMod) return undefined
+  const target = typeof proxy === 'string' ? proxy : (globalProxyUrl || '')
+  if (!target && undiciMod.EnvHttpProxyAgent) return agents.get('__env__') ?? agents.set('__env__', new undiciMod.EnvHttpProxyAgent()).get('__env__')
+  if (!target) return undefined
+  return agents.get(target) ?? agents.set(target, new undiciMod.ProxyAgent!(target)).get(target)
+}
+
 /** Create a fetch function with the given policies. */
 export function createFetcher(options: FetcherOptions = {}) {
   const fetchImpl: typeof fetch = options.fetchImpl ?? globalThis.fetch
@@ -156,7 +173,8 @@ export function createFetcher(options: FetcherOptions = {}) {
   const retries = options.retries ?? DEFAULT_RETRIES
   const userAgent = options.userAgent ?? DEFAULT_USER_AGENT
 
-  const fetchOne = async (url: string, signal?: AbortSignal): Promise<FetchedDocument | FetchFailure> => {
+  const fetchOne = async (url: string, signal?: AbortSignal, init?: { proxy?: string | boolean }): Promise<FetchedDocument | FetchFailure> => {
+    const dispatcher = await resolveDispatcher(init?.proxy, options.proxyUrl)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     const combined = signal === undefined
@@ -176,7 +194,8 @@ export function createFetcher(options: FetcherOptions = {}) {
           },
           redirect: 'manual',
           signal: combined,
-        })
+          ...(dispatcher !== undefined ? { dispatcher } : {}),
+        } as RequestInit)
         if (response.status >= 300 && response.status < 400) {
           const loc = response.headers.get('location')
           if (!loc) break
@@ -214,9 +233,9 @@ export function createFetcher(options: FetcherOptions = {}) {
    * Fetch a URL, returning a document or a structured failure. `signal`
    * aborts the whole attempt chain; only transient failures are retried.
    */
-  return async function fetchDocument(url: string, signal?: AbortSignal): Promise<FetchedDocument | FetchFailure> {
+  return async function fetchDocument(url: string, signal?: AbortSignal, init?: { proxy?: string | boolean }): Promise<FetchedDocument | FetchFailure> {
     for (let attempt = 0; attempt <= retries; attempt += 1) {
-      const result = await fetchOne(url, signal)
+      const result = await fetchOne(url, signal, init)
       if (!('error' in result)) return result
       const retryable = (result.retryable ?? true) && isTransient(result.status)
       if (attempt === retries || !retryable || (signal !== undefined && signal.aborted)) {

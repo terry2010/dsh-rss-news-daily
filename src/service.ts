@@ -84,7 +84,7 @@ function sourceIdOf(url: string): string {
 
 function toFeedSource(raw: {
   url: string; title: string; category?: string; tier?: number; lang?: 'zh' | 'en'
-  method?: string; enabled?: boolean; builtin?: boolean; addedAt?: string; summarize?: boolean
+  method?: string; enabled?: boolean; builtin?: boolean; addedAt?: string; summarize?: boolean; proxy?: string | boolean; cooldownHours?: number
 }): FeedSource {
   return {
     id: sourceIdOf(raw.url),
@@ -99,13 +99,15 @@ function toFeedSource(raw: {
     builtin: raw.builtin === true,
     weight: 1,
     summarize: raw.summarize !== false,
+    proxy: raw.proxy,
+    cooldownHours: raw.cooldownHours,
     health: emptyHealth(),
   }
 }
 
 /** 生效源表：内置 ∪ config 预置 ∪ store 用户源，按规范化 URL 合并（用户覆盖内置）。 */
 export function effectiveSources(
-  configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean; summarize?: boolean }>,
+  configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean; summarize?: boolean; proxy?: string | boolean; cooldownHours?: number }>,
   store: Store,
 ): FeedSource[] {
   const byUrl = new Map<string, FeedSource>()
@@ -124,6 +126,7 @@ export function effectiveSources(
       url: s.url, title: s.title || prev?.title || s.url, category: s.category || prev?.category,
       tier: prev?.tier, lang: prev?.lang, enabled: s.enabled !== false,
       builtin: prev?.builtin, summarize: s.summarize !== false,
+      proxy: s.proxy, cooldownHours: s.cooldownHours,
     }))
   }
   // store 用户源：含运行时新增 + 对内置源的状态/改名覆盖（改名以用户为准）
@@ -131,7 +134,7 @@ export function effectiveSources(
     const key = normalizeUrl(s.url)
     const prev = byUrl.get(key)
     if (prev && prev.builtin) {
-      byUrl.set(key, { ...prev, title: s.title || prev.title, enabled: s.enabled, weight: s.weight ?? prev.weight, summarize: s.summarize ?? prev.summarize })
+      byUrl.set(key, { ...prev, title: s.title || prev.title, enabled: s.enabled, weight: s.weight ?? prev.weight, summarize: s.summarize ?? prev.summarize, proxy: s.proxy ?? prev.proxy, cooldownHours: s.cooldownHours ?? prev.cooldownHours })
     } else {
       byUrl.set(key, { ...s, builtin: s.builtin === true })
     }
@@ -165,7 +168,7 @@ function recordHealth(src: FeedSource, ok: boolean, ms: number, err: string | un
     // 错误文本消毒：剥 HTML 标签 + 压空白 + 截断——拦页/错误页的原始 HTML 不进健康表
     h.lastError = (err || 'unknown').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
     if (h.failStreak >= HEALTH_FAIL_COOLDOWN_STREAK) {
-      h.cooldownUntil = new Date(now.getTime() + COOLDOWN_MS).toISOString()
+      h.cooldownUntil = new Date(now.getTime() + (src.cooldownHours ? src.cooldownHours * 3600e3 : COOLDOWN_MS)).toISOString()
     }
   }
 }
@@ -197,7 +200,7 @@ async function fetchOne(
   const t0 = performance.now()
   const res: SourceFetchResult = { sourceId: src.id, sourceUrl: src.url, fetched: 0, added: 0, duplicated: 0 }
   try {
-    const doc = await opts.fetch(src.url)
+    const doc = await opts.fetch(src.url, undefined, { proxy: src.proxy })
     if ('error' in doc) throw new Error(doc.error)
     const feed = parseFeedDocument(doc.body)
     const seen = new Set(opts.store.items.map((i) => i.id))
@@ -297,6 +300,32 @@ export async function setSourceEnabled(
 
 /** 切换源级 AI 摘要开关（summarize=false 的源，日报里用 feed 原摘要、不调 LLM）。
  *  currentEnabled 传当前生效 enabled——写覆盖层时保留，避免误复活被 config 停用的源。 */
+/** 更新源的任意可编辑属性（title/category/proxy/cooldownHours 走 override；enabled/summarize 由专门开关管，但这里一并兜住）。 */
+export async function updateSource(store: Store, urlOrId: string, patch: {
+  title?: string; category?: string; enabled?: boolean; summarize?: boolean
+  proxy?: string | boolean | null; cooldownHours?: number | null
+}, currentEnabled = true): Promise<void> {
+  const id = normalizeUrl(urlOrId)
+  const builtin = builtinCatalog().find((s) => normalizeUrl(s.url) === id)
+    ?? builtinCatalog().find((s) => s.url === urlOrId)
+  const existing = store.sources.find((s) => s.id === id || normalizeUrl(s.url) === id)
+  if (existing) {
+    if (patch.title !== undefined) existing.title = patch.title
+    if (patch.category !== undefined) existing.category = patch.category
+    if (patch.enabled !== undefined) existing.enabled = patch.enabled
+    if (patch.summarize !== undefined) existing.summarize = patch.summarize
+    if (patch.proxy !== undefined) (existing as { proxy?: string | boolean }).proxy = patch.proxy === null ? undefined : patch.proxy
+    if (patch.cooldownHours !== undefined) (existing as { cooldownHours?: number }).cooldownHours = patch.cooldownHours === null ? undefined : patch.cooldownHours
+  } else {
+    store.addSource(toFeedSource({
+      url: urlOrId, title: patch.title || builtin?.name || urlOrId, category: patch.category ?? builtin?.category,
+      enabled: patch.enabled ?? currentEnabled, summarize: patch.summarize ?? true,
+      proxy: patch.proxy === null ? undefined : patch.proxy, cooldownHours: patch.cooldownHours === null ? undefined : patch.cooldownHours,
+    }))
+  }
+  await store.save()
+}
+
 export async function setSourceSummarize(store: Store, urlOrId: string, summarize: boolean, currentEnabled = true): Promise<void> {
   const id = normalizeUrl(urlOrId)
   const builtin = builtinCatalog().find((s) => normalizeUrl(s.url) === id)

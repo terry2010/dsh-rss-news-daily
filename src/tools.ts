@@ -29,6 +29,8 @@ export interface NewsService {
   searchItems(q: string, limit?: number): Array<{ id: string; title: string; link: string; topic: string; fetchedAt: string; digestedDay: string }>
   feedback(id: string, action: string): Promise<{ ok: boolean; learned?: string[]; error?: string }>
   retrySource(urlOrId: string): Promise<boolean>
+  /** 编辑源属性（title/category/enabled/summarize/proxy/cooldownHours） */
+  updateSource(urlOrId: string, patch: Record<string, unknown>): Promise<unknown>
   /** 中止进行中的日报生成（LLM 流逐条失败→降级收尾） */
   stopDigest?(): Promise<unknown>
 }

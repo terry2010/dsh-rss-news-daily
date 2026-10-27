@@ -186,13 +186,14 @@ function apiSources(deps: ApiDeps) {
     }
     const id = decodeURIComponent((sub || '').split('?')[0])
     if (method === 'PATCH') {
-      const body = await readBody(req) as { enabled?: boolean; title?: string; action?: string; summarize?: boolean }
+      const body = await readBody(req) as { enabled?: boolean; title?: string; action?: string; summarize?: boolean; category?: string; proxy?: string | boolean | null; cooldownHours?: number | null }
       if (body.action === 'retry') {
         const found = await deps.svc.retrySource(id) // 冷却源手动复活：清 cooldownUntil + failStreak
         return sendJson(res, found ? 200 : 404, { ok: found })
       }
       if (typeof body.enabled === 'boolean') await deps.svc.setEnabled(id, body.enabled)
       if (typeof body.summarize === 'boolean') await deps.svc.setSummarize(id, body.summarize)
+      await deps.svc.updateSource(id, body as Record<string, unknown>)
       return sendJson(res, 200, { ok: true })
     }
     if (method === 'DELETE') {
