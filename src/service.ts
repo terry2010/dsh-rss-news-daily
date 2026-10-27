@@ -269,6 +269,7 @@ export async function addSource(
     builtin: false, proxy: viaProxy ? true : undefined,
   })
   store.addSource(src)
+  store.setHealth(src.id, { ok: 1, fail: 0, failStreak: 0 }) // 校验抓取本身算一次成功
   await store.save()
   return src
 }

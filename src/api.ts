@@ -170,7 +170,7 @@ function apiSources(deps: ApiDeps) {
       return sendJson(res, 200, {
         ok: true,
         sources: deps.svc.listSources()
-          .sort((a, b) => (a.builtin === b.builtin ? 0 : a.builtin ? 1 : -1)) // 用户源在最上
+          .sort((a, b) => (a.builtin === b.builtin ? (a.builtin ? 0 : (b.addedAt || '').localeCompare(a.addedAt || '')) : a.builtin ? 1 : -1)) // 用户源在最上且按添加时间倒序
           .map((s) => ({
           id: s.id, url: s.url, title: s.title, category: s.category, tier: s.tier,
           enabled: s.enabled, builtin: s.builtin, summarize: s.summarize, proxy: s.proxy, cooldownHours: s.cooldownHours, health: s.health,
