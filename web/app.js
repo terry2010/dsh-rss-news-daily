@@ -55,15 +55,16 @@ function renderItems() {
   if (!state.items.length) { el.innerHTML = '<p class="empty">没有条目</p>'; return }
   el.innerHTML = state.items.map((i) => {
     const st = i.state || {} // 老数据可能缺 state 字段——防御，防整个渲染挂掉（"翻页没反应"）
+    const folded = state.collapsed?.has(i.id)
     return `
-    <div class="item ${st.read ? 'read' : ''} ${st.liked === 1 ? 'liked' : ''}">
+    <div class="item ${st.read ? 'read' : ''} ${st.liked === 1 ? 'liked' : ''} ${folded ? 'collapsed' : ''}">
       <div class="item-head">
         <a href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
       <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}</div>
       <div class="item-lead">${esc((i.aiSummary || i.summary || '').slice(0, 140))}</div>
       <div class="item-actions">
-        <button data-act="${st.read ? 'unread' : 'read'}" data-id="${esc(i.id)}" title="${st.read ? '标为未读' : '标为已读'}">${st.read ? '◉' : '✓'}</button>
+        <button data-act="fold" data-id="${esc(i.id)}" title="${folded ? '展开简介' : '收起简介'}">${folded ? '▸' : '▾'}</button>
         <button data-act="${st.liked === 1 ? 'unlike' : 'like'}" data-id="${esc(i.id)}" title="推荐学习：以后多推同类">👍</button>
         <button data-act="dislike" data-id="${esc(i.id)}" title="少推学习：以后少推同类">👎</button>
         <button data-act="hide" data-id="${esc(i.id)}" title="从列表隐藏">✕</button>
@@ -79,6 +80,16 @@ function renderItems() {
 $('#itemList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-act]')
   if (!btn) return
+  if (btn.dataset.act === 'fold') { // 收起/展开简介：纯前端态，记 Set 里跨重渲染保持
+    state.collapsed ??= new Set()
+    const id = btn.dataset.id
+    const on = !state.collapsed.has(id)
+    on ? state.collapsed.add(id) : state.collapsed.delete(id)
+    btn.closest('.item').classList.toggle('collapsed', on)
+    btn.textContent = on ? '▸' : '▾'
+    btn.title = on ? '展开简介' : '收起简介'
+    return
+  }
   if (btn.dataset.act === 'copy') {
     try { await navigator.clipboard.writeText(btn.dataset.link || ''); toast('链接已复制') }
     catch { toast('复制失败') }
