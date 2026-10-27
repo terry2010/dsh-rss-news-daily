@@ -355,7 +355,7 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.fetchProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-test`, handler: guard(async (q, r) => {
-    const u = new URL(q.url, 'http://x').searchParams
+    const u = new URL(q.url || '/', 'http://x').searchParams
     const url = u.get('url') || ''
     if (!/^https?:\/\//.test(url)) { sendJson(r, 400, { ok: false, error: '需要 http(s) URL' }); return }
     const pv = u.get('proxy')
