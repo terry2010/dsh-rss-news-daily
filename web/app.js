@@ -98,7 +98,9 @@ $('#itemList').addEventListener('click', async (e) => {
     state.translating = btn.dataset.id; renderItems()
     try { await post('/feedback', { id: btn.dataset.id, action: 'translate' }) ; toast('已翻译') }
     catch (err) { toast(`翻译失败: ${err.message}`) }
-    state.translating = null; loadItems()
+    state.translating = null
+    state.tlHidden?.delete(btn.dataset.id) // 重译成功自动取消隐藏，译文直接展示
+    loadItems()
     return
   }
   if (btn.dataset.act === 'hidetl') { (state.tlHidden ||= new Set()).add(btn.dataset.id); renderItems(); return }
