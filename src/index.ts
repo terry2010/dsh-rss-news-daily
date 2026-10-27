@@ -195,7 +195,7 @@ export function apply(ctx: Context, config: ConfigType) {
   }
   let digestBusy = false // 服务端防重入：调度与手动 /api/digest-run 并发会竞态落盘
   const digestNow = (force = false) => {
-    if (digestBusy) return Promise.resolve({ degraded: true, note: 'digest already running' })
+    if (digestBusy) return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'none' as const, degraded: true, note: 'digest already running' })
     digestBusy = true
     return digestRun(force).finally(() => { digestBusy = false })
   }
