@@ -329,6 +329,16 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/sources`, handler: guard((q, r) => apiSources(deps)(q, r, '')) }))
   disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/api/sources`, handler: guard((q, r) => apiSources(deps)(q, r, (q.url || '').replace(`${BASE}/api/sources`, '').replace(/^\//, ''))) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/opml`, handler: guard(apiOpml(deps)) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/opml-export`, handler: guard(async (_q, r) => {
+    // guest webview 会话禁了 will-download——文件落盘是插件侧唯一可靠的"下载"
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    const { join, dirname } = await import('node:path')
+    const dir = join(dirname(deps.store.path), 'exports')
+    await mkdir(dir, { recursive: true })
+    const file = join(dir, `sources-${new Date().toISOString().slice(0, 10)}.opml`)
+    await writeFile(file, await deps.svc.exportOpml(), 'utf8')
+    sendJson(r, 200, { ok: true, path: file })
+  }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/prefs`, handler: guard(apiPrefs(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/llm`, handler: guard(apiLlm(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/schedule`, handler: guard(async (q, r) => {

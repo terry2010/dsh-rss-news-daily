@@ -322,8 +322,16 @@ $('#btnAddSrc').addEventListener('click', async () => {
 $('#btnOpmlExport').addEventListener('click', async () => {
   try {
     const t = await (await fetch(`${API}/opml`)).text()
+    if (window.showSaveFilePicker) { // Electron guest 禁下载但支持 FS Access 原生保存对话框
+      try {
+        const h = await window.showSaveFilePicker({ suggestedName: `sources-${new Date().toISOString().slice(0, 10)}.opml`, types: [{ description: 'OPML 订阅清单', accept: { 'text/xml': ['.opml', '.xml'] } }] })
+        const w = await h.createWritable(); await w.write(t); await w.close()
+        toast('已导出'); return
+      } catch (e) { if (e?.name === 'AbortError') return }
+    }
     await navigator.clipboard.writeText(t)
-    toast('OPML 已复制到剪贴板（粘贴到阅读器/文件即可导入）')
+    const r2 = await post('/opml-export', {})
+    toast(`已导出到 ${r2.path}（OPML 也已复制到剪贴板）`)
   } catch (e) { toast(`导出失败: ${e.message}`) }
 })
 $('#opmlFile').addEventListener('change', async (e) => {
