@@ -156,10 +156,11 @@ export function apply(ctx: Context, config: ConfigType) {
       const list = effectiveSources(config.sources, store)
       const nid = normalizeUrl(urlOrId)
       const src = list.find((s) => s.id === nid || s.url === urlOrId || s.id === urlOrId)
-      if (!src) return
+      if (!src) return false
       const h = store.getHealth(src.id) ?? { ok: 0, fail: 0, avgMs: 0 }
       store.setHealth(src.id, { ok: h.ok, fail: h.fail, avgMs: h.avgMs, cooldownUntil: '', failStreak: 0, lastError: '' })
       await store.save()
+      return true
     },
     status: () => {
       const list = effectiveSources(config.sources, store)
@@ -254,6 +255,7 @@ export function apply(ctx: Context, config: ConfigType) {
         configSources: config.sources,
         timezone: config.timezone,
         readerPageSize: config.readerPageSize,
+        digestsDir: join(dataDir, 'digests'),
         runDigest: digestNow,
       }))
       log.info('reader mounted at /dsh-rss-news-daily/')

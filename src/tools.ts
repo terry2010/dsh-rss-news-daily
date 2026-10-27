@@ -23,7 +23,7 @@ export interface NewsService {
   regenDigest(force: boolean): Promise<{ ok: boolean; items?: number; degraded?: boolean; error?: string }>
   searchItems(q: string, limit?: number): Array<{ id: string; title: string; link: string; topic: string; fetchedAt: string; digestedDay: string }>
   feedback(id: string, action: string): Promise<{ ok: boolean; learned?: string[]; error?: string }>
-  retrySource(urlOrId: string): Promise<void>
+  retrySource(urlOrId: string): Promise<boolean>
 }
 
 const sourceSchema = {

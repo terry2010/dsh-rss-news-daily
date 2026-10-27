@@ -73,7 +73,7 @@ const mkDeps = async () => {
     runFetch: async () => ({ totalAdded: 3, errors: 0 }),
     status: () => ({ sources: 5, enabled: 4, items: store.items.length, lastFetchAt: 'x', lastDigestDay: 'y', failures: [] }),
   }
-  return { store, prefs, svc, configSources: [], timezone: '', readerPageSize: 50, runDigest: async () => {} }
+  return { store, prefs, svc, configSources: [], timezone: '', readerPageSize: 50, digestsDir: mkdtempSync(join(tmpdir(), 'rnd-dg4-')), runDigest: async () => {} }
 }
 
 const findHandler = (regs, path) => regs.find((r) => r.path === path)?.handler
@@ -269,6 +269,40 @@ test('api: /api/tune 真实端点——错误输入不增 history；read/hide �
   res = mkRes()
   await fb(mkReq('POST', '/dsh-rss-news-daily/api/feedback', { id: 'a', action: 'hide' }), res)
   assert.equal(JSON.stringify(deps.prefs.get()), p0, 'read/hide must not touch prefs')
+})
+
+test('api: PATCH action:retry 走 svc.retrySource，未知 id→404；/api/fetch GET→405', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  let retried = null
+  deps.svc.retrySource = async (id) => { retried = id; return id !== 'ghost' }
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  const sub = findHandler(regs, '/dsh-rss-news-daily/api/sources/')
+  let res = mkRes()
+  await sub(mkReq('PATCH', '/dsh-rss-news-daily/api/sources/https%3A%2F%2Fx%2Ff', { action: 'retry' }), res)
+  assert.equal(retried, 'https://x/f')
+  assert.equal(res.statusCode, 200)
+  deps.svc.retrySource = async () => false
+  res = mkRes()
+  await sub(mkReq('PATCH', '/dsh-rss-news-daily/api/sources/ghost', { action: 'retry' }), res)
+  assert.equal(res.statusCode, 404, 'unknown source → 404')
+  const fetchH = findHandler(regs, '/dsh-rss-news-daily/api/fetch')
+  res = mkRes()
+  await fetchH(mkReq('GET', '/dsh-rss-news-daily/api/fetch'), res)
+  assert.equal(res.statusCode, 405, 'GET must not trigger fetch')
+})
+
+test('api: /api/items 投影含 aiSummaryError（铁律③失败可见）', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  deps.store.items[0].aiSummaryError = 'model dead'
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  const res = mkRes()
+  await findHandler(regs, '/dsh-rss-news-daily/api/items')(mkReq('GET', '/dsh-rss-news-daily/api/items'), res)
+  const item = JSON.parse(res.body).items.find((i) => i.id === 'a')
+  assert.equal(item.aiSummaryError, 'model dead')
 })
 
 test('api: cross-site 请求被 403', async () => {

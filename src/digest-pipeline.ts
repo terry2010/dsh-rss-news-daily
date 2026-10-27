@@ -155,6 +155,10 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     try {
       await access(file)
       const markdown = await readFile(file, 'utf8')
+      // 同步 meta 防重启后 catch-up 反复白跑（digest-pipeline.ts:154 早退）
+      opts.store.meta.lastDigestDay = day
+      opts.store.meta.lastDigestAt = now.toISOString()
+      await opts.store.save()
       log.warn(`digest ${day}: 0 candidates; kept existing digest file`)
       return { title: `RSS 简报 · ${day}`, date: day, language: opts.language, markdown, itemCount: 0, itemIds: [], summarySource: sum.source, degraded: true, note: 'no candidates; kept existing digest' }
     } catch { /* no existing file — fall through and write empty digest */ }

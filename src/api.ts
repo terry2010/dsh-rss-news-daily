@@ -78,6 +78,7 @@ export interface ApiDeps {
   configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean }>
   timezone: string
   readerPageSize: number
+  digestsDir: string
   runDigest: (force?: boolean) => Promise<unknown>
 }
 
@@ -121,10 +122,8 @@ function apiItems(deps: ApiDeps) {
 function apiDigest(deps: ApiDeps) {
   return async (_req: Req, res: Res, day: string) => {
     const { readFile: rf } = await import('node:fs/promises')
-    const dir = deps.store.path.replace(/store\.json$/, 'digests')
-    const files = [`${day}-rss-briefing.md`]
     try {
-      const md = await rf(join(dir, files[0]), 'utf8')
+      const md = await rf(join(deps.digestsDir, `${day}-rss-briefing.md`), 'utf8')
       sendJson(res, 200, { ok: true, day, markdown: md })
     } catch {
       sendJson(res, 404, { ok: false, error: `no digest for ${day}` })
@@ -183,8 +182,8 @@ function apiSources(deps: ApiDeps) {
     if (method === 'PATCH') {
       const body = await readBody(req) as { enabled?: boolean; title?: string; action?: string }
       if (body.action === 'retry') {
-        await deps.svc.retrySource(id) // 冷却源手动复活：清 cooldownUntil + failStreak
-        return sendJson(res, 200, { ok: true })
+        const found = await deps.svc.retrySource(id) // 冷却源手动复活：清 cooldownUntil + failStreak
+        return sendJson(res, found ? 200 : 404, { ok: found })
       }
       if (typeof body.enabled === 'boolean') await deps.svc.setEnabled(id, body.enabled)
       return sendJson(res, 200, { ok: true })
