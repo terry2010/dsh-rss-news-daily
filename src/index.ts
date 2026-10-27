@@ -127,6 +127,20 @@ export function apply(ctx: Context, config: ConfigType) {
     exportOpml: () => exportOpml(store, config.sources),
     runFetch: runFetchForce,
     fetchProgress: async () => ({ ...fetchProg }),
+    translateItem: async (id) => {
+      const item = store.items.find((i) => i.id === id)
+      if (!item) return { ok: false, error: 'item not found' }
+      if (!llmRuntime) return { ok: false, error: 'LLM 不可用' }
+      const client = new DshLlmClient(llmRuntime, pickTranslateRoute(), log)
+      const text = await client.generateText({
+        system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文。格式：第一行输出译文标题，空一行输出译文正文。只输出译文，不要解释。',
+        prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
+        maxTokens: 1200,
+      })
+      item.state.translation = text
+      await store.save()
+      return { ok: true, translation: text }
+    },
     digestProgress: async () => ({ ...digestProg }),
     testFetch: async (url, proxy) => {
       const d = await fetcher(url, undefined, { proxy })
@@ -217,6 +231,11 @@ export function apply(ctx: Context, config: ConfigType) {
     const ui = prefs.get().llm
     if (ui?.provider && ui?.model) return ui // UI 覆盖 > config 对 > 自动
     return { provider: config.llm.provider, model: config.llm.model }
+  }
+  const pickTranslateRoute = (): { provider: string; model: string } => {
+    const t = prefs.get().translateLlm
+    if (t?.provider && t?.model) return t // 翻译模型覆盖 > 日报模型 > config
+    return pickRoute()
   }
   let digestBusy = false // 服务端防重入：调度与手动 /api/digest-run 并发会竞态落盘
   let digestAbort: AbortController | undefined // 「停止生成」：中止在飞的 LLM 调用（流逐条失败→降级收尾，不落半文件）

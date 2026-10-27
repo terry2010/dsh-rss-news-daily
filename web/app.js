@@ -62,10 +62,12 @@ function renderItems() {
       </div>
       <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}</div>
       <div class="item-lead">${esc((i.aiSummary || i.summary || '').slice(0, 140))}</div>
+      ${st.translation ? `<div class="item-lead" style="color:var(--acc)">译: ${esc(st.translation.slice(0, 200))}</div>` : ''}
       <div class="item-actions">
         <button data-act="${st.read ? 'unread' : 'read'}" data-id="${esc(i.id)}" title="${st.read ? '标为未读（展开简介）' : '标为已读（收起简介）'}">${st.read ? '◉' : '✓'}</button>
         <button data-act="${st.liked === 1 ? 'unlike' : 'like'}" data-id="${esc(i.id)}" title="推荐学习：以后多推同类">👍</button>
         <button data-act="dislike" data-id="${esc(i.id)}" title="少推学习：以后少推同类">👎</button>
+        ${(state.sources || []).find((x) => x.id === i.sourceId)?.lang === 'en' ? `<button data-act="translate" data-id="${esc(i.id)}" title="翻译成中文">译</button>` : ''}
         <button data-act="hide" data-id="${esc(i.id)}" title="从列表隐藏">✕</button>
         <button data-act="copy" data-id="${esc(i.id)}" data-link="${esc(safeUrl(i.link))}" title="复制链接">⧉</button>
       </div>
@@ -374,8 +376,31 @@ async function loadLlm() {
     $('#llmProvider').innerHTML = r.providers.map((p) =>
       `<option value="${esc(p.id)}" ${p.id === r.current.provider ? 'selected' : ''}>${esc(p.id)}</option>`).join('')
     await loadLlmModels(r.current.provider || r.providers[0]?.id || '', r.current.model)
+    // 翻译模型：独立覆盖，缺省跟随日报模型
+    const t = state.prefs?.translateLlm
+    $('#tlProvider').innerHTML = r.providers.map((p) =>
+      `<option value="${esc(p.id)}" ${p.id === (t?.provider || r.current.provider) ? 'selected' : ''}>${esc(p.id)}</option>`).join('')
+    await loadTlModels(t?.provider || r.current.provider || r.providers[0]?.id || '', t?.model || '')
+    $('#tlInfo').textContent = t?.provider && t?.model ? `翻译模型: ${t.provider}/${t.model}` : '翻译模型: 跟随日报模型'
   } catch (e) { $('#llmInfo').textContent = `模型信息不可用: ${esc(e.message)}` }
 }
+
+async function loadTlModels(provider, selected) {
+  if (!provider) return
+  try {
+    const r = await api(`/llm?provider=${encodeURIComponent(provider)}`)
+    $('#tlModel').innerHTML = r.models.map((m) =>
+      `<option value="${esc(m)}" ${m === selected ? 'selected' : ''}>${esc(m)}</option>`).join('')
+  } catch { /* provider 模型列表拉取失败留空 */ }
+}
+
+$('#tlProvider').addEventListener('change', (e) => loadTlModels(e.target.value, ''))
+$('#btnTlSave').addEventListener('click', async () => {
+  try {
+    await post('/llm', { provider: $('#tlProvider').value, model: $('#tlModel').value, scope: 'translate' })
+    toast('翻译模型已保存'); loadLlm()
+  } catch (e) { toast(`保存失败: ${e.message}`) }
+})
 
 async function loadLlmModels(provider, selected) {
   if (!provider) return

@@ -149,6 +149,11 @@ function apiFeedback(deps: ApiDeps) {
       case 'dislike': item.state.liked = -1; break
       case 'unlike': item.state.liked = 0; break
       case 'hide': item.state.hidden = true; break
+      case 'translate': {
+        const tr = await deps.svc.translateItem!(item.id)
+        if (!tr.ok) return sendJson(res, 400, tr)
+        return sendJson(res, 200, { ok: true, state: item.state, translation: tr.translation })
+      }
       case 'unhide': item.state.hidden = false; break
       default: return sendJson(res, 400, { ok: false, error: `unknown action: ${body.action}` })
     }
@@ -172,7 +177,7 @@ function apiSources(deps: ApiDeps) {
         sources: deps.svc.listSources()
           .sort((a, b) => (a.builtin === b.builtin ? (a.builtin ? 0 : (b.addedAt || '').localeCompare(a.addedAt || '')) : a.builtin ? 1 : -1)) // 用户源在最上且按添加时间倒序
           .map((s) => ({
-          id: s.id, url: s.url, title: s.title, category: s.category, tier: s.tier,
+          id: s.id, url: s.url, title: s.title, category: s.category, tier: s.tier, lang: s.lang,
           enabled: s.enabled, builtin: s.builtin, summarize: s.summarize, proxy: s.proxy, cooldownHours: s.cooldownHours, health: s.health,
         })),
       })
@@ -270,9 +275,14 @@ function apiLlm(deps: ApiDeps) {
       return sendJson(res, 200, { ok: true, available: true, providers, models, current, effective })
     }
     if (method === 'POST') {
-      const body = await readBody(req) as { provider?: string; model?: string }
+      const body = await readBody(req) as { provider?: string; model?: string; scope?: string }
       const provider = String(body.provider || '').trim()
       const model = String(body.model || '').trim()
+      if (body.scope === 'translate') {
+        if (provider && model) deps.prefs.save({ translateLlm: { provider, model } })
+        else deps.prefs.save({ translateLlm: undefined })
+        return sendJson(res, 200, { ok: true, translateLlm: deps.prefs.get().translateLlm })
+      }
       if (provider && model) deps.prefs.save({ llm: { provider, model } })
       else deps.prefs.save({ llm: undefined }) // 空对 = 清除覆盖回自动
       return sendJson(res, 200, { ok: true, llm: deps.prefs.get().llm })

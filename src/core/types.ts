@@ -49,6 +49,8 @@ export interface ItemState {
   hidden: boolean
   /** +1 like / -1 dislike / 0 */
   liked: 1 | -1 | 0
+  /** 中文译文（翻译模型输出） */
+  translation?: string
 }
 
 /** 归一化条目 */
