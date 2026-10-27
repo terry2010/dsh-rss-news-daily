@@ -91,9 +91,10 @@
       <label style="font-size:12px">评分阈值 <input type="number" id="dMinScore" min="0" max="10" style="width:60px" placeholder="5"></label>
       <label style="font-size:12px">LLM评分条数 <input type="number" id="dScoreN" min="0" style="width:60px" placeholder="40"></label>
       <label style="font-size:12px">候选窗口h <input type="number" id="dCandH" min="0" style="width:60px" placeholder="不限"></label>
+      <label style="font-size:12px">写摘要条数 <input type="number" id="dSumN" min="0" style="width:60px" placeholder="20"></label>
       <button id="btnDigestOptsSave">保存</button>
     </div>
-    <div class="hist">留空=跟随配置默认；每类上限 0=不限；LLM评分条数 0=关闭评分；候选窗口 0=不限</div>
+    <div class="hist">留空=跟随配置默认；每类上限 0=不限；LLM评分条数 0=关闭评分；候选窗口 0=不限；写摘要条数 0=不写AI摘要</div>
     <h3>翻译模型</h3>
     <div class="toolbar">
       <select id="tlProvider"><option value="">provider…</option></select>

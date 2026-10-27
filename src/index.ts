@@ -295,7 +295,7 @@ export function apply(ctx: Context, config: ConfigType) {
     translateClient: llmRuntime ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log) : undefined,
     llmEnabled: config.llm.enabled,
     summaryEnabled: config.summary.enabled,
-    summaryMaxItems: config.summary.maxItems,
+    summaryMaxItems: prefs.get().digestOpts?.summaryMaxItems ?? config.summary.maxItems,
     summaryConcurrency: config.summary.concurrency,
     summaryMaxLength: config.summary.maxLength,
     digestItems: prefs.get().digestOpts?.digestItems ?? config.digest.digestItems,
