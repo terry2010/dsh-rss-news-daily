@@ -129,7 +129,9 @@ function mdLite(md) {
 
 $('#digestDay').addEventListener('change', loadDigest)
 $('#btnDigestRun').addEventListener('click', async () => {
-  toast('生成日报中（LLM 总结可能要 1-2 分钟）…')
+  const btn = $('#btnDigestRun')
+  btn.disabled = true // 防重入：并发 digest 会竞态写文件/markDigested
+  $('#statusbar').textContent = '生成日报中（LLM 总结可能要 1-2 分钟）…' // 直写状态栏：不被 toast 的 3s 自动刷新冲掉
   try {
     // force: 手动点 = 现在就要重新生成，含当日已推条目（幂等空跑由 force 绕过）
     const r = await post('/digest-run', { force: true })
@@ -137,6 +139,7 @@ $('#btnDigestRun').addEventListener('click', async () => {
     toast(`日报已生成（${doc.itemCount ?? '?'} 条${doc.degraded ? ' · 总结降级' : ''}）`)
     loadDigest()
   } catch (e) { toast(`生成失败: ${e.message}`) }
+  finally { btn.disabled = false }
 })
 
 // ---- 订阅源管理 ----

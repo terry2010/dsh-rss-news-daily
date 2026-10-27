@@ -193,7 +193,13 @@ export function apply(ctx: Context, config: ConfigType) {
     if (ui?.provider && ui?.model) return ui // UI 覆盖 > config 对 > 自动
     return { provider: config.llm.provider, model: config.llm.model }
   }
-  const digestNow = (force = false) => runDailyDigest({
+  let digestBusy = false // 服务端防重入：调度与手动 /api/digest-run 并发会竞态落盘
+  const digestNow = (force = false) => {
+    if (digestBusy) return Promise.resolve({ degraded: true, note: 'digest already running' })
+    digestBusy = true
+    return digestRun(force).finally(() => { digestBusy = false })
+  }
+  const digestRun = (force: boolean) => runDailyDigest({
     store,
     configSources: config.sources,
     // 每次 digest 现组 client：UI 换模型后下次立即生效（resolution 缓存在 client 实例上）
