@@ -181,7 +181,9 @@ test('api: /api/items 分页与 day 过滤', async () => {
   assert.equal(p1.items.length, 2)
   assert.equal(p1.total, 2, 'hidden 剔除后总数')
   res = mkRes()
-  await items(mkReq('GET', `/dsh-rss-news-daily/api/items?day=${new Date().toISOString().slice(0, 10)}`), res)
+  const ld = new Date()
+  const localDay = `${ld.getFullYear()}-${String(ld.getMonth() + 1).padStart(2, '0')}-${String(ld.getDate()).padStart(2, '0')}`
+  await items(mkReq('GET', `/dsh-rss-news-daily/api/items?day=${localDay}`), res)
   assert.equal(JSON.parse(res.body).items.length, 1, 'day 过滤只留今天的')
 })
 
