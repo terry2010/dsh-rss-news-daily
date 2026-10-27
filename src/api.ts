@@ -389,8 +389,10 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
     const body = await readBody(q) as { force?: boolean; day?: string }
     const day = /^\d{4}-\d{2}-\d{2}$/.test(body?.day || '') ? body!.day : undefined
-    const doc = await deps.runDigest(!!body?.force, day)
-    sendJson(r, 200, { ok: true, doc })
+    // fire-and-forget：大 digestItems 下 LLM 全链路远超 HTTP 请求超时，
+    // 改为立即返回 + 前端轮询 /digest-progress 收尾
+    deps.runDigest(!!body?.force, day).catch(() => { /* 错误经 progress/degraded 可见 */ })
+    sendJson(r, 200, { ok: true, started: true })
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/status`, handler: guard((_q, r) => sendJson(r, 200, { ok: true, ...deps.svc.status() })) }))
 

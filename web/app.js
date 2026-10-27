@@ -187,23 +187,20 @@ $('#btnDigestRun').addEventListener('click', async () => {
   btn.disabled = true; btn.hidden = true // 生成中隐藏入口，防重入
   $('#btnDigestStop').hidden = false
   $('#digestBusy').hidden = false
+  const reset = () => { btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
   const dp = setInterval(async () => {
     try {
       const p = await api('/digest-progress')
-      if (p.running) $('#digestBusy').textContent = `⏳ 日报生成中…${p.total ? ` (${p.done}/${p.total})` : ''}`
-      else { clearInterval(dp) }
+      if (p.running) { $('#digestBusy').textContent = `⏳ 日报生成中…${p.total ? ` (${p.done}/${p.total})` : ''}`; return }
+      clearInterval(dp); reset(); toast('日报生成完成'); loadDigest()
     } catch { /* 进度不可达不影响生成 */ }
   }, 900)
-  $('#digestBusy').textContent = '⏳ 日报生成中…（LLM 总结可能要 1-2 分钟）' // 忙文走 busybar，statusbar 保持状态行
+  $('#digestBusy').textContent = '⏳ 日报生成中…（LLM 总结可能要几分钟）' // 忙文走 busybar，statusbar 保持状态行
   try {
-    // force: 手动点 = 现在就要重新生成，含当日已推条目（幂等空跑由 force 绕过）
-    const r = await post('/digest-run', { force: true, day: $('#digestDay').value.trim() || undefined })
-    const doc = r.doc || {}
-    const tk = doc.tokens ? ` · ${doc.tokens.inputTokens + doc.tokens.outputTokens} tokens` : ''
-    toast(`日报已生成（${doc.itemCount ?? '?'} 条${doc.degraded ? ' · 总结降级' : ''}${tk}）`)
-    loadDigest()
-  } catch (e) { toast(`生成失败: ${e.message}`) }
-  finally { btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
+    // 异步触发：大条数下 LLM 全链路远超 HTTP 请求超时，服务端立即返回，轮询收尾
+    await post('/digest-run', { force: true, day: $('#digestDay').value.trim() || undefined })
+    toast('已开始生成，进度见上方横幅')
+  } catch (e) { toast(`生成失败: ${e.message}`); clearInterval(dp); reset() }
 })
 let retryPoll = 0
 async function refreshRetryBtn() {
