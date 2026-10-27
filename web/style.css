@@ -37,6 +37,7 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 .tag { font-size: 11px; background: var(--tagbg); color: var(--acc); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
 .tag.dim { color: var(--dim); background: var(--tagbg2); }
 .busybar { display: inline-block; background: var(--acc); color: #fff; font-weight: 600; padding: 5px 14px; border-radius: 8px; margin-left: 8px; }
+[hidden] { display: none !important; } /* 类选择器的 display 会覆盖 hidden 属性，必须显式夺回 */
 .empty, .err { color: var(--dim); text-align: center; padding: 30px 0; }
 .err { color: var(--err); }
 .ok { color: var(--ok); }
