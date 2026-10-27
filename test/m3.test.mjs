@@ -114,8 +114,10 @@ test('scorer: perTopicLimit>0 配额截断 + 溢出补齐不空缺', async () =>
     perTopicLimit: 2, digestDay: 'x', now: new Date(),
   })
   const ai = picked.filter((i) => i.topic === 'AI')
-  assert.ok(ai.length === 2 || ai.length <= 5, 'topic quota applied')
-  assert.equal(picked.length, 5, 'overflow 补齐到 n')
+  // 配额只放行 2 条 AI，第 3 条来自溢出补齐（等分时按原序稳定回填 a3）
+  assert.equal(ai.length, 3, '2 quota + 1 overflow backfill')
+  assert.deepEqual(picked.map((i) => i.id), ['a1', 'a2', 't1', 't2', 'a3'])
+  assert.equal(picked.length, 5)
 })
 
 test('digest 渲染: 失败源出现在采集源状态段', async () => {
