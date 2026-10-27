@@ -264,7 +264,7 @@ function renderSources() {
     <div class="src-edit">
       <label class="wide">URL <input data-f="url" value="${esc(s.url)}"></label>
       <label>名称 <input data-f="title" value="${esc(s.title)}"></label>
-      <label>分类 <input data-f="category" list="catDataList" value="${esc(s.category)}"><datalist id="catDataList">${[...new Set(state.sources.map((x) => x.category).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
+      <label>分类 <select data-f="category"><option value="">无分类</option>${[...new Set([s.category, ...state.sources.map((x) => x.category)].filter(Boolean))].map((c) => `<option ${c === s.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}<option value="__new">＋ 自定义…</option></select><input data-f="categoryNew" placeholder="新分类名" hidden></label>
       <label><input type="checkbox" data-f="enabled" ${s.enabled ? 'checked' : ''}> 启用</label>
       <label><input type="checkbox" data-f="summarize" ${s.summarize !== false ? 'checked' : ''}> AI 摘要</label>
       <label><input type="checkbox" data-f="useProxy" ${s.proxy === true || typeof s.proxy === 'string' ? 'checked' : ''}> 使用代理</label>
@@ -275,6 +275,13 @@ function renderSources() {
     </div>`).join('')
 }
 
+document.addEventListener('change', (e) => { // 分类选「＋自定义…」时换出输入框
+  const sel = e.target
+  if (sel.tagName !== 'SELECT' || sel.value !== '__new') return
+  sel.hidden = true
+  const inp = sel.parentElement.querySelector(sel.id === 'newSrcCat' ? '#newSrcCatNew' : 'input[data-f=categoryNew]')
+  if (inp) { inp.hidden = false; inp.focus() }
+})
 $('#srcList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-src-act]')
   if (!btn) return
@@ -299,7 +306,7 @@ $('#srcList').addEventListener('click', async (e) => {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
         url: g('url').value.trim() || undefined,
         title: g('title').value.trim() || undefined,
-        category: g('category').value.trim() || undefined,
+        category: g('categoryNew').value.trim() || g('category').value || undefined,
         enabled: g('enabled').checked,
         summarize: g('summarize').checked,
         proxy: g('useProxy').checked ? true : false,
@@ -319,7 +326,7 @@ $('#btnAddSrc').addEventListener('click', async () => {
   if (!url) return toast('请输入 feed URL')
   toast('校验并添加中…')
   try {
-    await post('/sources', { url, title: $('#newSrcTitle').value.trim() || undefined, category: $('#newSrcCat').value || undefined })
+    await post('/sources', { url, title: $('#newSrcTitle').value.trim() || undefined, category: $('#newSrcCatNew').value.trim() || $('#newSrcCat').value || undefined })
     $('#newSrcUrl').value = ''; $('#newSrcTitle').value = ''
     toast(`已添加${r?.category ? ` · 分类: ${r.category}` : ''}`); loadSources()
   } catch (e) { toast(`添加失败: ${e.message}`) }

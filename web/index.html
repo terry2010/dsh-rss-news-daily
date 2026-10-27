@@ -50,8 +50,8 @@
     <div class="toolbar">
       <input type="url" id="newSrcUrl" placeholder="https://…/feed.xml">
       <input type="text" id="newSrcTitle" placeholder="名称（可选）">
-      <input type="text" id="newSrcCat" list="srcCatList" placeholder="分类…">
-      <datalist id="srcCatList"></datalist>
+      <select id="newSrcCat"><option value="">分类…</option></select>
+      <input type="text" id="newSrcCatNew" placeholder="输入新分类名" hidden>
       <button id="btnAddSrc">＋ 添加</button>
       <button id="btnRetryAll" title="并发重试全部失败/冷却源">↻ 重试全部失败源</button>
       <button id="btnOpmlExport">⇩ 导出 OPML</button>
