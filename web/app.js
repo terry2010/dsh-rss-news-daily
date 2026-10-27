@@ -264,7 +264,7 @@ function renderSources() {
     <div class="src-edit">
       <label class="wide">URL <input data-f="url" value="${esc(s.url)}"></label>
       <label>名称 <input data-f="title" value="${esc(s.title)}"></label>
-      <label>分类 <input data-f="category" value="${esc(s.category)}"></label>
+      <label>分类 <input data-f="category" list="catDataList" value="${esc(s.category)}"><datalist id="catDataList">${[...new Set(state.sources.map((x) => x.category).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
       <label><input type="checkbox" data-f="enabled" ${s.enabled ? 'checked' : ''}> 启用</label>
       <label><input type="checkbox" data-f="summarize" ${s.summarize !== false ? 'checked' : ''}> AI 摘要</label>
       <label><input type="checkbox" data-f="useProxy" ${s.proxy === true || typeof s.proxy === 'string' ? 'checked' : ''}> 使用代理</label>

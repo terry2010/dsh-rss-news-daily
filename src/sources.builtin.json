@@ -1,535 +1,535 @@
 {
- "schema": 1,
- "sources": [
-  {
-   "name": "阮一峰",
-   "url": "https://www.ruanyifeng.com/blog/atom.xml",
-   "category": "独立博客",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 288,
-   "defaultEnabled": true
-  },
-  {
-   "name": "少数派",
-   "url": "https://sspai.com/feed",
-   "category": "科技",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 1069,
-   "defaultEnabled": true
-  },
-  {
-   "name": "极客公园",
-   "url": "https://www.geekpark.net/rss",
-   "category": "科技",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 3171,
-   "defaultEnabled": true
-  },
-  {
-   "name": "InfoQ",
-   "url": "https://www.infoq.cn/feed",
-   "category": "技术",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 855,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Solidot",
-   "url": "https://www.solidot.org/index.rss",
-   "category": "科技",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 727,
-   "defaultEnabled": true
-  },
-  {
-   "name": "钛媒体",
-   "url": "https://www.tmtpost.com/feed",
-   "category": "商业",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 1974,
-   "defaultEnabled": true
-  },
-  {
-   "name": "美团技术",
-   "url": "https://tech.meituan.com/feed/",
-   "category": "技术",
-   "tier": 1,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 13380,
-   "defaultEnabled": false
-  },
-  {
-   "name": "HackerNews",
-   "url": "https://hnrss.org/frontpage",
-   "category": "国际",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 6120,
-   "defaultEnabled": true
-  },
-  {
-   "name": "TheVerge",
-   "url": "https://www.theverge.com/rss/index.xml",
-   "category": "国际",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 261,
-   "defaultEnabled": true
-  },
-  {
-   "name": "ArsTechnica",
-   "url": "https://feeds.arstechnica.com/arstechnica/index",
-   "category": "国际",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 263,
-   "defaultEnabled": true
-  },
-  {
-   "name": "量子位",
-   "url": "https://www.qbitai.com/feed",
-   "category": "AI",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 1774,
-   "defaultEnabled": true
-  },
-  {
-   "name": "IT之家",
-   "url": "https://www.ithome.com/rss/",
-   "category": "科技",
-   "tier": 3,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 5633,
-   "defaultEnabled": true
-  },
-  {
-   "name": "雷峰网",
-   "url": "https://www.leiphone.com/feed/",
-   "category": "科技",
-   "tier": 3,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 1394,
-   "defaultEnabled": true
-  },
-  {
-   "name": "TheDecoder",
-   "url": "https://the-decoder.com/feed/",
-   "category": "AI",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 1827,
-   "defaultEnabled": true
-  },
-  {
-   "name": "TechCrunch-AI",
-   "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
-   "category": "AI",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 285,
-   "defaultEnabled": true
-  },
-  {
-   "name": "MIT科技评论",
-   "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed",
-   "category": "AI",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 303,
-   "defaultEnabled": true
-  },
-  {
-   "name": "aihot",
-   "url": "https://aihot.virxact.com/rss",
-   "category": "AI",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 2757,
-   "defaultEnabled": true
-  },
-  {
-   "name": "VentureBeat-AI",
-   "url": "https://venturebeat.com/category/ai/feed/",
-   "category": "AI",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": null,
-   "defaultEnabled": false
-  },
-  {
-   "name": "ScienceDaily-AI",
-   "url": "https://www.sciencedaily.com/rss/computers_math/artificial_intelligence.xml",
-   "category": "AI",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 1140,
-   "defaultEnabled": true
-  },
-  {
-   "name": "爱范儿",
-   "url": "https://www.ifanr.com/feed",
-   "category": "科技",
-   "tier": 3,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 684,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Engadget",
-   "url": "https://www.engadget.com/rss.xml",
-   "category": "国际",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 365,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Wired",
-   "url": "https://www.wired.com/feed/rss",
-   "category": "国际",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 251,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Nature",
-   "url": "https://www.nature.com/nature.rss",
-   "category": "科学",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 2049,
-   "defaultEnabled": true
-  },
-  {
-   "name": "arXiv-csAI",
-   "url": "https://export.arxiv.org/rss/cs.AI",
-   "category": "研究",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 307,
-   "defaultEnabled": true
-  },
-  {
-   "name": "ProductHunt",
-   "url": "https://www.producthunt.com/feed",
-   "category": "产品",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 268,
-   "defaultEnabled": true
-  },
-  {
-   "name": "华尔街见闻",
-   "url": "https://dedicated.wallstreetcn.com/rss.xml",
-   "category": "财经",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 2724,
-   "defaultEnabled": true
-  },
-  {
-   "name": "CNBC商业",
-   "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001147",
-   "category": "财经",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 498,
-   "defaultEnabled": true
-  },
-  {
-   "name": "NPR",
-   "url": "https://feeds.npr.org/1001/rss.xml",
-   "category": "国际",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 324,
-   "defaultEnabled": true
-  },
-  {
-   "name": "CBS",
-   "url": "https://www.cbsnews.com/latest/rss/main",
-   "category": "国际",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 830,
-   "defaultEnabled": true
-  },
-  {
-   "name": "TechCrunch",
-   "url": "https://techcrunch.com/feed/",
-   "category": "科技",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 279,
-   "defaultEnabled": true
-  },
-  {
-   "name": "CNET",
-   "url": "https://www.cnet.com/rss/news/",
-   "category": "科技",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 323,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Quanta",
-   "url": "https://api.quantamagazine.org/feed/",
-   "category": "科学",
-   "tier": 1,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 1158,
-   "defaultEnabled": true
-  },
-  {
-   "name": "PhysOrg",
-   "url": "https://phys.org/rss-feed/",
-   "category": "科学",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 837,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Science期刊",
-   "url": "https://www.science.org/action/showFeed?jc=science&type=etoc&feed=rss",
-   "category": "科学",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 482,
-   "defaultEnabled": true
-  },
-  {
-   "name": "SciDaily-科学",
-   "url": "https://www.sciencedaily.com/rss/top/science.xml",
-   "category": "科学",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 966,
-   "defaultEnabled": true
-  },
-  {
-   "name": "SciDaily-健康",
-   "url": "https://www.sciencedaily.com/rss/top/health.xml",
-   "category": "健康",
-   "tier": 3,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 985,
-   "defaultEnabled": true
-  },
-  {
-   "name": "SciDaily-环境",
-   "url": "https://www.sciencedaily.com/rss/top/environment.xml",
-   "category": "环境",
-   "tier": 3,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 943,
-   "defaultEnabled": true
-  },
-  {
-   "name": "SciDaily-社会",
-   "url": "https://www.sciencedaily.com/rss/top/society.xml",
-   "category": "社会",
-   "tier": 3,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 790,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Ars-科学",
-   "url": "https://feeds.arstechnica.com/arstechnica/science",
-   "category": "科学",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 924,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Aeon",
-   "url": "https://aeon.co/feed.rss",
-   "category": "人文",
-   "tier": 2,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 513,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Nautilus",
-   "url": "https://nautil.us/feed/",
-   "category": "人文",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 970,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Smithsonian",
-   "url": "https://www.smithsonianmag.com/rss/latest_articles/",
-   "category": "人文",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 474,
-   "defaultEnabled": true
-  },
-  {
-   "name": "GitHub博客",
-   "url": "https://github.blog/feed/",
-   "category": "开发",
-   "tier": 2,
-   "lang": "zh",
-   "method": "direct",
-   "avgMs": 327,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Lobsters",
-   "url": "https://lobste.rs/rss",
-   "category": "开发",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 864,
-   "defaultEnabled": true
-  },
-  {
-   "name": "Phoronix",
-   "url": "https://www.phoronix.com/rss.php",
-   "category": "开发",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 416,
-   "defaultEnabled": true
-  },
-  {
-   "name": "LWN",
-   "url": "https://lwn.net/headlines/rss",
-   "category": "开发",
-   "tier": 3,
-   "lang": "en",
-   "method": "direct",
-   "avgMs": 1059,
-   "defaultEnabled": true
-  },
-  {
-   "name": "arXiv cs.AI",
-   "url": "https://rss.arxiv.org/rss/cs.AI",
-   "category": "AI",
-   "tier": 2,
-   "lang": "en",
-   "avgMs": null,
-   "defaultEnabled": true,
-   "method": "direct"
-  },
-  {
-   "name": "OpenAI 博客",
-   "url": "https://openai.com/news/rss.xml",
-   "category": "AI",
-   "tier": 2,
-   "lang": "en",
-   "avgMs": null,
-   "defaultEnabled": true,
-   "method": "direct"
-  },
-  {
-   "name": "Google DeepMind",
-   "url": "https://deepmind.google/blog/rss.xml",
-   "category": "AI",
-   "tier": 2,
-   "lang": "en",
-   "avgMs": null,
-   "defaultEnabled": true,
-   "method": "direct"
-  },
-  {
-   "name": "Hugging Face 博客",
-   "url": "https://huggingface.co/blog/feed.xml",
-   "category": "AI",
-   "tier": 2,
-   "lang": "en",
-   "avgMs": null,
-   "defaultEnabled": true,
-   "method": "direct"
-  },
-  {
-   "name": "机器之心",
-   "url": "https://www.jiqizhixin.com/rss",
-   "category": "AI",
-   "tier": 2,
-   "lang": "zh",
-   "avgMs": null,
-   "defaultEnabled": true,
-   "method": "direct"
-  },
-  {
-   "name": "LinuxDo 热门",
-   "url": "https://linux.do/top.rss",
-   "category": "开发",
-   "tier": 3,
-   "lang": "zh",
-   "avgMs": null,
-   "defaultEnabled": true,
-   "method": "direct"
-  },
-  {
-   "name": "V2EX 最热",
-   "url": "https://www.v2ex.com/feed/tab/hot.xml",
-   "category": "开发",
-   "tier": 3,
-   "lang": "zh",
-   "avgMs": null,
-   "defaultEnabled": true,
-   "method": "direct"
-  }
- ]
+  "schema": 1,
+  "sources": [
+    {
+      "name": "阮一峰",
+      "url": "https://www.ruanyifeng.com/blog/atom.xml",
+      "category": "开发",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 288,
+      "defaultEnabled": true
+    },
+    {
+      "name": "少数派",
+      "url": "https://sspai.com/feed",
+      "category": "科技",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 1069,
+      "defaultEnabled": true
+    },
+    {
+      "name": "极客公园",
+      "url": "https://www.geekpark.net/rss",
+      "category": "科技",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 3171,
+      "defaultEnabled": true
+    },
+    {
+      "name": "InfoQ",
+      "url": "https://www.infoq.cn/feed",
+      "category": "科技",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 855,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Solidot",
+      "url": "https://www.solidot.org/index.rss",
+      "category": "科技",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 727,
+      "defaultEnabled": true
+    },
+    {
+      "name": "钛媒体",
+      "url": "https://www.tmtpost.com/feed",
+      "category": "财经",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 1974,
+      "defaultEnabled": true
+    },
+    {
+      "name": "美团技术",
+      "url": "https://tech.meituan.com/feed/",
+      "category": "科技",
+      "tier": 1,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 13380,
+      "defaultEnabled": false
+    },
+    {
+      "name": "HackerNews",
+      "url": "https://hnrss.org/frontpage",
+      "category": "国际",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 6120,
+      "defaultEnabled": true
+    },
+    {
+      "name": "TheVerge",
+      "url": "https://www.theverge.com/rss/index.xml",
+      "category": "国际",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 261,
+      "defaultEnabled": true
+    },
+    {
+      "name": "ArsTechnica",
+      "url": "https://feeds.arstechnica.com/arstechnica/index",
+      "category": "国际",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 263,
+      "defaultEnabled": true
+    },
+    {
+      "name": "量子位",
+      "url": "https://www.qbitai.com/feed",
+      "category": "AI",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 1774,
+      "defaultEnabled": true
+    },
+    {
+      "name": "IT之家",
+      "url": "https://www.ithome.com/rss/",
+      "category": "科技",
+      "tier": 3,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 5633,
+      "defaultEnabled": true
+    },
+    {
+      "name": "雷峰网",
+      "url": "https://www.leiphone.com/feed/",
+      "category": "科技",
+      "tier": 3,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 1394,
+      "defaultEnabled": true
+    },
+    {
+      "name": "TheDecoder",
+      "url": "https://the-decoder.com/feed/",
+      "category": "AI",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 1827,
+      "defaultEnabled": true
+    },
+    {
+      "name": "TechCrunch-AI",
+      "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+      "category": "AI",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 285,
+      "defaultEnabled": true
+    },
+    {
+      "name": "MIT科技评论",
+      "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed",
+      "category": "AI",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 303,
+      "defaultEnabled": true
+    },
+    {
+      "name": "aihot",
+      "url": "https://aihot.virxact.com/rss",
+      "category": "AI",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 2757,
+      "defaultEnabled": true
+    },
+    {
+      "name": "VentureBeat-AI",
+      "url": "https://venturebeat.com/category/ai/feed/",
+      "category": "AI",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": null,
+      "defaultEnabled": false
+    },
+    {
+      "name": "ScienceDaily-AI",
+      "url": "https://www.sciencedaily.com/rss/computers_math/artificial_intelligence.xml",
+      "category": "AI",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 1140,
+      "defaultEnabled": true
+    },
+    {
+      "name": "爱范儿",
+      "url": "https://www.ifanr.com/feed",
+      "category": "科技",
+      "tier": 3,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 684,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Engadget",
+      "url": "https://www.engadget.com/rss.xml",
+      "category": "国际",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 365,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Wired",
+      "url": "https://www.wired.com/feed/rss",
+      "category": "国际",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 251,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Nature",
+      "url": "https://www.nature.com/nature.rss",
+      "category": "科学",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 2049,
+      "defaultEnabled": true
+    },
+    {
+      "name": "arXiv-csAI",
+      "url": "https://export.arxiv.org/rss/cs.AI",
+      "category": "AI",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 307,
+      "defaultEnabled": true
+    },
+    {
+      "name": "ProductHunt",
+      "url": "https://www.producthunt.com/feed",
+      "category": "产品",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 268,
+      "defaultEnabled": true
+    },
+    {
+      "name": "华尔街见闻",
+      "url": "https://dedicated.wallstreetcn.com/rss.xml",
+      "category": "财经",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 2724,
+      "defaultEnabled": true
+    },
+    {
+      "name": "CNBC商业",
+      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001147",
+      "category": "财经",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 498,
+      "defaultEnabled": true
+    },
+    {
+      "name": "NPR",
+      "url": "https://feeds.npr.org/1001/rss.xml",
+      "category": "国际",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 324,
+      "defaultEnabled": true
+    },
+    {
+      "name": "CBS",
+      "url": "https://www.cbsnews.com/latest/rss/main",
+      "category": "国际",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 830,
+      "defaultEnabled": true
+    },
+    {
+      "name": "TechCrunch",
+      "url": "https://techcrunch.com/feed/",
+      "category": "科技",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 279,
+      "defaultEnabled": true
+    },
+    {
+      "name": "CNET",
+      "url": "https://www.cnet.com/rss/news/",
+      "category": "科技",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 323,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Quanta",
+      "url": "https://api.quantamagazine.org/feed/",
+      "category": "科学",
+      "tier": 1,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 1158,
+      "defaultEnabled": true
+    },
+    {
+      "name": "PhysOrg",
+      "url": "https://phys.org/rss-feed/",
+      "category": "科学",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 837,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Science期刊",
+      "url": "https://www.science.org/action/showFeed?jc=science&type=etoc&feed=rss",
+      "category": "科学",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 482,
+      "defaultEnabled": true
+    },
+    {
+      "name": "SciDaily-科学",
+      "url": "https://www.sciencedaily.com/rss/top/science.xml",
+      "category": "科学",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 966,
+      "defaultEnabled": true
+    },
+    {
+      "name": "SciDaily-健康",
+      "url": "https://www.sciencedaily.com/rss/top/health.xml",
+      "category": "社会·人文",
+      "tier": 3,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 985,
+      "defaultEnabled": true
+    },
+    {
+      "name": "SciDaily-环境",
+      "url": "https://www.sciencedaily.com/rss/top/environment.xml",
+      "category": "科学",
+      "tier": 3,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 943,
+      "defaultEnabled": true
+    },
+    {
+      "name": "SciDaily-社会",
+      "url": "https://www.sciencedaily.com/rss/top/society.xml",
+      "category": "社会·人文",
+      "tier": 3,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 790,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Ars-科学",
+      "url": "https://feeds.arstechnica.com/arstechnica/science",
+      "category": "科学",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 924,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Aeon",
+      "url": "https://aeon.co/feed.rss",
+      "category": "社会·人文",
+      "tier": 2,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 513,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Nautilus",
+      "url": "https://nautil.us/feed/",
+      "category": "社会·人文",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 970,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Smithsonian",
+      "url": "https://www.smithsonianmag.com/rss/latest_articles/",
+      "category": "社会·人文",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 474,
+      "defaultEnabled": true
+    },
+    {
+      "name": "GitHub博客",
+      "url": "https://github.blog/feed/",
+      "category": "开发",
+      "tier": 2,
+      "lang": "zh",
+      "method": "direct",
+      "avgMs": 327,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Lobsters",
+      "url": "https://lobste.rs/rss",
+      "category": "开发",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 864,
+      "defaultEnabled": true
+    },
+    {
+      "name": "Phoronix",
+      "url": "https://www.phoronix.com/rss.php",
+      "category": "开发",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 416,
+      "defaultEnabled": true
+    },
+    {
+      "name": "LWN",
+      "url": "https://lwn.net/headlines/rss",
+      "category": "开发",
+      "tier": 3,
+      "lang": "en",
+      "method": "direct",
+      "avgMs": 1059,
+      "defaultEnabled": true
+    },
+    {
+      "name": "arXiv cs.AI",
+      "url": "https://rss.arxiv.org/rss/cs.AI",
+      "category": "AI",
+      "tier": 2,
+      "lang": "en",
+      "avgMs": null,
+      "defaultEnabled": true,
+      "method": "direct"
+    },
+    {
+      "name": "OpenAI 博客",
+      "url": "https://openai.com/news/rss.xml",
+      "category": "AI",
+      "tier": 2,
+      "lang": "en",
+      "avgMs": null,
+      "defaultEnabled": true,
+      "method": "direct"
+    },
+    {
+      "name": "Google DeepMind",
+      "url": "https://deepmind.google/blog/rss.xml",
+      "category": "AI",
+      "tier": 2,
+      "lang": "en",
+      "avgMs": null,
+      "defaultEnabled": true,
+      "method": "direct"
+    },
+    {
+      "name": "Hugging Face 博客",
+      "url": "https://huggingface.co/blog/feed.xml",
+      "category": "AI",
+      "tier": 2,
+      "lang": "en",
+      "avgMs": null,
+      "defaultEnabled": true,
+      "method": "direct"
+    },
+    {
+      "name": "机器之心",
+      "url": "https://www.jiqizhixin.com/rss",
+      "category": "AI",
+      "tier": 2,
+      "lang": "zh",
+      "avgMs": null,
+      "defaultEnabled": true,
+      "method": "direct"
+    },
+    {
+      "name": "LinuxDo 热门",
+      "url": "https://linux.do/top.rss",
+      "category": "开发",
+      "tier": 3,
+      "lang": "zh",
+      "avgMs": null,
+      "defaultEnabled": true,
+      "method": "direct"
+    },
+    {
+      "name": "V2EX 最热",
+      "url": "https://www.v2ex.com/feed/tab/hot.xml",
+      "category": "开发",
+      "tier": 3,
+      "lang": "zh",
+      "avgMs": null,
+      "defaultEnabled": true,
+      "method": "direct"
+    }
+  ]
 }
