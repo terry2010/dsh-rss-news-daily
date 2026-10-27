@@ -385,18 +385,54 @@ $('#btnFetchTest').addEventListener('click', async () => {
   } catch (e) { out.textContent = `请求失败: ${e.message}` }
 })
 
+// 权重面板:结构化编辑——三段行式(名称×权重+✕删+＋增) + 屏蔽词chip,保存统一落盘
+const WT_TABLES = [['topics', '主题'], ['keywords', '关键词'], ['sourceWeight', '源权重']]
 function renderPrefs() {
   const p = state.prefs || {}
-  const rows = []
-  for (const [k, v] of Object.entries(p.topics || {})) rows.push(`<div class="pref">主题 <b>${esc(k)}</b> × ${v}</div>`)
-  for (const [k, v] of Object.entries(p.keywords || {})) rows.push(`<div class="pref">关键词 <b>${esc(k)}</b> × ${v}</div>`)
-  for (const k of p.bannedKeywords || []) rows.push(`<div class="pref ban">屏蔽 <b>${esc(k)}</b></div>`)
-  $('#prefsView').innerHTML = rows.length ? rows.join('') : '<p class="empty">暂无偏好记录——用上方的调教输入或在条目上点 👍👎 开始学习。</p>'
-  const hist = (p.tuningHistory || []).slice(-5)
-  if (hist.length) {
-    $('#prefsView').innerHTML += '<h4>最近调教</h4>' + hist.map((h) => `<div class="hist">${esc(h.at?.slice(0, 16))} — ${esc(h.text)} <i>${(h.actions || []).join('; ')}</i></div>`).join('')
+  const sec = (table, label) => {
+    const rows = Object.entries(p[table] || {}).map(([k, v]) =>
+      `<div class="pref"><b>${esc(k)}</b> × <input type="number" step="0.05" min="0" data-wt="${table}" data-k="${esc(k)}" value="${v}" style="width:70px"> <button data-wt-del="${table}" data-k="${esc(k)}" title="删除该权重">✕</button></div>`).join('')
+    return `<h4>${label}</h4>${rows}<div class="pref"><input data-wt-new="${table}" placeholder="新增${label}名" style="width:140px"> <button data-wt-add="${table}">＋</button></div>`
   }
+  const bans = (p.bannedKeywords || []).map((k) =>
+    `<span class="pref ban" data-ban-live="${esc(k)}"><b>${esc(k)}</b> <button data-ban-del="${esc(k)}" title="解除屏蔽">✕</button></span>`).join('')
+  const hist = (p.tuningHistory || []).slice(-5)
+  $('#prefsView').innerHTML = WT_TABLES.map(([t, l]) => sec(t, l)).join('')
+    + `<h4>屏蔽词</h4>${bans}<div class="pref"><input id="banNew" placeholder="新增屏蔽词" style="width:140px"> <button id="banAdd">＋</button></div>`
+    + '<button id="btnWeightsSave" style="margin-top:8px">保存权重</button>'
+    + (hist.length ? '<h4>最近调教</h4>' + hist.map((h) => `<div class="hist">${esc(h.at?.slice(0, 16))} — ${esc(h.text)} <i>${(h.actions || []).join('; ')}</i></div>`).join('') : '')
 }
+// 采集面板当前编辑值（加删前收割，保住未保存的输入）
+const harvestWeights = () => {
+  const w = { topics: {}, keywords: {}, sourceWeight: {}, bannedKeywords: [] }
+  document.querySelectorAll('#prefsView input[data-wt]').forEach((inp) => {
+    const n = parseFloat(inp.value)
+    if (!isNaN(n) && inp.dataset.k) w[inp.dataset.wt][inp.dataset.k] = n
+  })
+  document.querySelectorAll('#prefsView [data-ban-live]').forEach((el) => w.bannedKeywords.push(el.dataset.banLive))
+  return w
+}
+$('#prefsView').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button')
+  if (!btn) return
+  const w = harvestWeights()
+  if (btn.dataset.wtDel) { delete w[btn.dataset.wtDel][btn.dataset.k]; state.prefs = { ...state.prefs, ...w }; renderPrefs(); return }
+  if (btn.dataset.wtAdd) {
+    const name = btn.parentElement.querySelector('input').value.trim()
+    if (!name) return
+    w[btn.dataset.wtAdd][name] = 1.0; state.prefs = { ...state.prefs, ...w }; renderPrefs(); return
+  }
+  if (btn.dataset.banDel) { w.bannedKeywords = w.bannedKeywords.filter((k) => k !== btn.dataset.banDel); state.prefs = { ...state.prefs, ...w }; renderPrefs(); return }
+  if (btn.id === 'banAdd') {
+    const v = $('#banNew').value.trim()
+    if (v && !w.bannedKeywords.includes(v)) w.bannedKeywords.push(v)
+    state.prefs = { ...state.prefs, ...w }; renderPrefs(); return
+  }
+  if (btn.id === 'btnWeightsSave') {
+    try { const r = await post('/prefs', w); state.prefs = r.prefs || state.prefs; renderPrefs(); toast('权重已保存') }
+    catch (err) { toast(`保存失败: ${err.message}`) }
+  }
+})
 
 $('#btnTune').addEventListener('click', async () => {
   const text = $('#tuneText').value.trim()
