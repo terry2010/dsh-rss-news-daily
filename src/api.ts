@@ -245,7 +245,7 @@ function apiPrefs(deps: ApiDeps) {
       const patch = Object.fromEntries(Object.entries({
         topics: body.topics, keywords: body.keywords,
         bannedKeywords: body.bannedKeywords, sourceWeight: body.sourceWeight,
-        proxyUrl: body.proxyUrl,
+        proxyUrl: body.proxyUrl, autoTranslate: body.autoTranslate,
       }).filter(([, v]) => v !== undefined))
       deps.prefs.save(patch)
       return sendJson(res, 200, { ok: true, prefs: deps.prefs.get() })
