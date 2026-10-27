@@ -4,6 +4,8 @@ const API = '/dsh-rss-news-daily/api'
 const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', total: 0, pageSize: 50 }
 const $ = (sel) => document.querySelector(sel)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+/** 输出链接白名单：只放行 http(s)，javascript:/data: 一律清空 */
+const safeUrl = (u) => (/^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : '')
 
 async function api(path, opts) {
   const res = await fetch(`${API}${path}`, opts)
@@ -49,7 +51,7 @@ function renderItems() {
   el.innerHTML = state.items.map((i) => `
     <div class="item ${i.state.read ? 'read' : ''} ${i.state.liked === 1 ? 'liked' : ''}">
       <div class="item-head">
-        <a href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.title)}</a>
+        <a href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
       <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}</div>
       <div class="item-lead">${esc((i.aiSummary || i.summary || '').slice(0, 140))}</div>
@@ -58,6 +60,7 @@ function renderItems() {
         <button data-act="${i.state.liked === 1 ? 'unlike' : 'like'}" data-id="${esc(i.id)}">👍</button>
         <button data-act="dislike" data-id="${esc(i.id)}">👎</button>
         <button data-act="hide" data-id="${esc(i.id)}" title="隐藏">✕</button>
+        <button data-act="copy" data-id="${esc(i.id)}" data-link="${esc(safeUrl(i.link))}" title="复制链接">⧉</button>
       </div>
     </div>`).join('')
   $('#pageInfo').textContent = `第 ${state.page} 页 / 共 ${state.total} 条`
@@ -66,6 +69,11 @@ function renderItems() {
 $('#itemList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-act]')
   if (!btn) return
+  if (btn.dataset.act === 'copy') {
+    try { await navigator.clipboard.writeText(btn.dataset.link || ''); toast('链接已复制') }
+    catch { toast('复制失败') }
+    return
+  }
   try {
     await post('/feedback', { id: btn.dataset.id, action: btn.dataset.act })
     loadItems()
@@ -172,6 +180,9 @@ $('#btnAddSrc').addEventListener('click', async () => {
   } catch (e) { toast(`添加失败: ${e.message}`) }
 })
 
+$('#btnOpmlExport').addEventListener('click', () => {
+  window.open(`${API}/opml`, '_blank')
+})
 $('#opmlFile').addEventListener('change', async (e) => {
   const f = e.target.files?.[0]
   if (!f) return
@@ -238,4 +249,11 @@ document.querySelectorAll('.tab').forEach((btn) => {
   })
 })
 
+$('#btnResetPrefs').addEventListener('click', async () => {
+  if (!confirm('重置全部偏好权重与调教历史？')) return
+  await post('/tune', { text: '重置' })
+  loadPrefs()
+})
+
 loadStatus(); loadSources().then(loadItems)
+setInterval(loadStatus, 2000) // 未读计数 2s 轮询

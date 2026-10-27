@@ -121,6 +121,82 @@ test('api: /api/tune 应用 parseTune 并落 prefs', async () => {
   assert.ok(deps.prefs.get().tuningHistory.length >= 1)
 })
 
+test('api: /api/sources POST 走 svc.addSource 校验；PATCH/DELETE 生效', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  let added = null, toggled = null, removed = null
+  deps.svc.addSource = async (o) => { added = o; return { id: 'x', url: o.url, title: 'T' } }
+  deps.svc.setEnabled = async (id, en) => { toggled = { id, en } }
+  deps.svc.removeSource = async (id) => { removed = id; return true }
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  const srcs = findHandler(regs, '/dsh-rss-news-daily/api/sources')
+  const srcsSub = findHandler(regs, '/dsh-rss-news-daily/api/sources/')
+  let res = mkRes()
+  await srcs(mkReq('POST', '/dsh-rss-news-daily/api/sources', { url: 'https://n/feed' }), res)
+  assert.equal(added.url, 'https://n/feed')
+  res = mkRes()
+  await srcsSub(mkReq('PATCH', '/dsh-rss-news-daily/api/sources/https%3A%2F%2Fx%2Ff', { enabled: false }), res)
+  assert.deepEqual(toggled, { id: 'https://x/f', en: false })
+  res = mkRes()
+  await srcsSub(mkReq('DELETE', '/dsh-rss-news-daily/api/sources/https%3A%2F%2Fx%2Ff'), res)
+  assert.equal(removed, 'https://x/f')
+})
+
+test('api: /api/opml GET 导出 + POST 导入走 svc；/api/prefs GET/POST；/api/status', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  let res = mkRes()
+  await findHandler(regs, '/dsh-rss-news-daily/api/opml')(mkReq('GET', '/dsh-rss-news-daily/api/opml'), res)
+  assert.equal(res.body, '<opml/>')
+  res = mkRes()
+  await findHandler(regs, '/dsh-rss-news-daily/api/opml')(mkReq('POST', '/dsh-rss-news-daily/api/opml', { opml: '<x/>' }), res)
+  assert.equal(JSON.parse(res.body).added, 1)
+  res = mkRes()
+  await findHandler(regs, '/dsh-rss-news-daily/api/prefs')(mkReq('GET', '/dsh-rss-news-daily/api/prefs'), res)
+  assert.equal(JSON.parse(res.body).ok, true)
+  res = mkRes()
+  await findHandler(regs, '/dsh-rss-news-daily/api/prefs')(mkReq('POST', '/dsh-rss-news-daily/api/prefs', { bannedKeywords: ['x'] }), res)
+  assert.deepEqual(deps.prefs.get().bannedKeywords, ['x'])
+  res = mkRes()
+  await findHandler(regs, '/dsh-rss-news-daily/api/status')(mkReq('GET', '/dsh-rss-news-daily/api/status'), res)
+  assert.equal(JSON.parse(res.body).items, 3)
+})
+
+test('api: /api/items 分页与 day 过滤', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  deps.readerPageSize = 2
+  deps.store.items[0].fetchedAt = '2020-01-01T00:00:00Z'
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  const items = findHandler(regs, '/dsh-rss-news-daily/api/items')
+  let res = mkRes()
+  await items(mkReq('GET', '/dsh-rss-news-daily/api/items'), res)
+  const p1 = JSON.parse(res.body)
+  assert.equal(p1.items.length, 2)
+  assert.equal(p1.total, 2, 'hidden 剔除后总数')
+  res = mkRes()
+  await items(mkReq('GET', `/dsh-rss-news-daily/api/items?day=${new Date().toISOString().slice(0, 10)}`), res)
+  assert.equal(JSON.parse(res.body).items.length, 1, 'day 过滤只留今天的')
+})
+
+test('api: serveStatic 路径消毒——../ 与不存在返回 404', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  const st = findHandler(regs, '/dsh-rss-news-daily/web/')
+  let res = mkRes()
+  await st(mkReq('GET', '/dsh-rss-news-daily/web/../index.ts'), res)
+  assert.equal(res.statusCode, 404)
+  res = mkRes()
+  await st(mkReq('GET', '/dsh-rss-news-daily/web/nope.js'), res)
+  assert.equal(res.statusCode, 404)
+})
+
 test('api: cross-site 请求被 403', async () => {
   const { mountApi } = await import('../lib/api.js')
   const deps = await mkDeps()

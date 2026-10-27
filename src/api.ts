@@ -91,7 +91,7 @@ function apiItems(deps: ApiDeps) {
     const source = u.searchParams.get('source') || ''
     const q = (u.searchParams.get('q') || '').toLowerCase()
     const unread = u.searchParams.get('unread') === '1'
-    const page = Math.max(1, Number(u.searchParams.get('page') || 1))
+    const page = Math.max(1, Number(u.searchParams.get('page')) || 1)
     const dayStart = day ? new Date(`${day}T00:00:00`).getTime() : 0
     const dayEnd = day ? dayStart + 86400e3 : 0
     let items = deps.store.items
@@ -173,7 +173,7 @@ function apiSources(deps: ApiDeps) {
         return sendJson(res, 400, { ok: false, error: String((e as Error)?.message || e) })
       }
     }
-    const id = decodeURIComponent(sub || '')
+    const id = decodeURIComponent((sub || '').split('?')[0])
     if (method === 'PATCH') {
       const body = await readBody(req) as { enabled?: boolean; title?: string }
       if (typeof body.enabled === 'boolean') await deps.svc.setEnabled(id, body.enabled)
@@ -257,7 +257,7 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
 
   // JSON API
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/items`, handler: guard(apiItems(deps)) }))
-  disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/api/digest/`, handler: guard((q, r) => apiDigest(deps)(q, r, (q.url || '').split('/').pop() || zonedDayKey(new Date(), deps.timezone))) }))
+  disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/api/digest/`, handler: guard((q, r) => apiDigest(deps)(q, r, ((q.url || '').split('/').pop() || '').split('?')[0] || zonedDayKey(new Date(), deps.timezone))) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest`, handler: guard((q, r) => apiDigest(deps)(q, r, zonedDayKey(new Date(), deps.timezone))) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/feedback`, handler: guard(apiFeedback(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/sources`, handler: guard((q, r) => apiSources(deps)(q, r, '')) }))
