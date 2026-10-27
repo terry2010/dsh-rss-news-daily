@@ -51,14 +51,30 @@
               scoped.slots.register({ name: 'sidebar.right.pane.tab', key: TAB_ID }, ReaderBody))
             scoped.slots.inject('sidebar.right.pane.tab.title', () =>
               scoped.slots.register({ name: 'sidebar.right.pane.tab.title', key: TAB_ID }, Title))
-            // 顶部会话视图 tab（对话/轨迹/上下文/编队 那排）：conversation.view slot，session 级
-            scoped.slots.inject('conversation.view', () =>
+            // 会话 header 动作区（标题/「标准模式」右侧）：conversation.session.header.actions
+            const NewsAction = () => h('button', {
+              type: 'button',
+              title: '打开 RSS 新闻阅读器',
+              style: {
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 8px', borderRadius: 6, fontSize: 12, lineHeight: '18px',
+                border: '1px solid var(--dsh-color-border, #d0d0d0)', background: 'transparent', cursor: 'pointer',
+              },
+              onClick: () => {
+                try {
+                  const sr = typeof ctx.get === 'function' ? ctx.get('sidebarRight') : undefined
+                  if (sr && sr.openTab) sr.openTab(TAB_KIND)
+                  else window.open(READER_URL, '_blank')
+                } catch { window.open(READER_URL, '_blank') }
+              },
+            }, h('span', { 'aria-hidden': 'true' }, '📰'), h('span', null, '新闻'))
+            scoped.slots.inject('conversation.session.header.actions', () =>
               scoped.slots.register({
-                name: 'conversation.view',
-                id: 'rss-news',
-                order: 90, // 内置 view 占 0-30 量级，置尾；可被「更多」菜单 pin 调序
+                name: 'conversation.session.header.actions',
+                id: 'rss-news-action',
+                order: 30, // 跟在 preset label(≈0-10)/jobs(20) 之后
                 label: () => '新闻',
-              }, ReaderBody))
+              }, NewsAction))
             log.info('sidebar tab + conversation view registered')
           } catch (e) {
             log.warn(`sidebar tab failed (non-fatal): ${String(e)}`)
