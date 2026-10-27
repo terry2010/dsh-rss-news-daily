@@ -197,7 +197,7 @@ $('#btnDigestRun').addEventListener('click', async () => {
   $('#digestBusy').textContent = '⏳ 日报生成中…（LLM 总结可能要 1-2 分钟）' // 忙文走 busybar，statusbar 保持状态行
   try {
     // force: 手动点 = 现在就要重新生成，含当日已推条目（幂等空跑由 force 绕过）
-    const r = await post('/digest-run', { force: true })
+    const r = await post('/digest-run', { force: true, day: $('#digestDay').value.trim() || undefined })
     const doc = r.doc || {}
     const tk = doc.tokens ? ` · ${doc.tokens.inputTokens + doc.tokens.outputTokens} tokens` : ''
     toast(`日报已生成（${doc.itemCount ?? '?'} 条${doc.degraded ? ' · 总结降级' : ''}${tk}）`)

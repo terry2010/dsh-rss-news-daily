@@ -279,15 +279,16 @@ export function apply(ctx: Context, config: ConfigType) {
   }
   let digestBusy = false // 服务端防重入：调度与手动 /api/digest-run 并发会竞态落盘
   let digestAbort: AbortController | undefined // 「停止生成」：中止在飞的 LLM 调用（流逐条失败→降级收尾，不落半文件）
-  const digestNow = (force = false) => {
+  const digestNow = (force = false, day?: string) => {
     if (digestBusy) return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'extractive' as const, degraded: true, note: 'digest already running' })
     digestBusy = true
     digestAbort = new AbortController()
     digestProg = { running: true, done: 0, total: 0 }
-    return digestRun(force).finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0 } })
+    return digestRun(force, day).finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0 } })
   }
-  const digestRun = (force: boolean) => runDailyDigest({
+  const digestRun = (force: boolean, day?: string) => runDailyDigest({
     store,
+    day,
     configSources: config.sources,
     // 每次 digest 现组 client：UI 换模型后下次立即生效（resolution 缓存在 client 实例上）
     llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log) : undefined,

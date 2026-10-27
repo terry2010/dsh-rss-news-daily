@@ -34,6 +34,8 @@ export interface DigestPipelineOptions {
   llmTimeoutMs: number
   /** 外部取消信号（「停止生成」）；与 llmTimeoutMs 合并为任一触发即停 */
   signal?: AbortSignal
+  /** 指定生成的目标日（yyyy-mm-dd），缺省按 now 所在日 */
+  day?: string
   /** 翻译用 LLM client（translateLlm 路由）；存在时对英文条目生成中英对照译文 */
   translateClient?: LlmClient
   /** 每完成一条逐条摘要回调（done, total），进度上报用 */
@@ -300,7 +302,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   const log = opts.log || noopLog
   const startMs = Date.now()
   const now = opts.now ?? new Date()
-  const day = zonedDayKey(now, opts.timezone || undefined)
+  const day = opts.day || zonedDayKey(now, opts.timezone || undefined)
   const sources = effectiveSources(opts.configSources, opts.store)
   const sourcesById = new Map(sources.map((s) => [s.id, s]))
 

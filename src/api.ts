@@ -79,7 +79,7 @@ export interface ApiDeps {
   timezone: string
   readerPageSize: number
   digestsDir: string
-  runDigest: (force?: boolean) => Promise<unknown>
+  runDigest: (force?: boolean, day?: string) => Promise<unknown>
   /** 宿主 LLM runtime（可选能力）；用于 /api/llm 列 provider/model */
   getLlm?: () => { listProviders(): Array<{ id: string }>; listModels(p: string): Promise<Array<{ id: string }>> } | undefined
   /** config 层的 llm 路由对（用于 effective 判定展示） */
@@ -386,8 +386,9 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-cancel`, handler: guard(async (q, r) => { if (q.method !== 'POST') { r.statusCode = 405; r.end(); return } sendJson(r, 200, { ok: true, result: await deps.svc.cancelFetch?.() }) }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-run`, handler: guard(async (q, r) => {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
-    const body = await readBody(q) as { force?: boolean }
-    const doc = await deps.runDigest(!!body?.force)
+    const body = await readBody(q) as { force?: boolean; day?: string }
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(body?.day || '') ? body!.day : undefined
+    const doc = await deps.runDigest(!!body?.force, day)
     sendJson(r, 200, { ok: true, doc })
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/status`, handler: guard((_q, r) => sendJson(r, 200, { ok: true, ...deps.svc.status() })) }))
