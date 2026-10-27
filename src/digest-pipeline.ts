@@ -182,12 +182,9 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   )
 
   // 源状态行：失败/冷却的源点名
-  const statusLines = sources
-    .filter((s) => s.health.lastError || s.health.cooldownUntil)
-    .map((s) => {
-      const state = s.health.cooldownUntil ? `冷却中（至 ${s.health.cooldownUntil.slice(0, 16)}）` : '失败'
-      return `- ${s.title}: ${state}${s.health.lastError ? ` — ${s.health.lastError}` : ''}`
-    })
+  const failed = sources.filter((s) => s.health.lastError)
+  const cooling = sources.filter((s) => s.health.cooldownUntil && new Date(s.health.cooldownUntil).getTime() > now.getTime()).length
+  const statusLines = [`采集源状态：${sources.filter((s) => s.enabled).length}/${sources.length} 源 · ${opts.store.items.length} 条 · ${failed.length ? `${failed.length} 源异常${cooling ? `（${cooling} 冷却中）` : ''}` : '健康'}`]
 
   const degraded = sum.source !== 'llm'
   const note = degraded ? `summary degraded: ${sum.error ?? 'llm unavailable'}` : ''

@@ -168,8 +168,8 @@ function recordHealth(src: FeedSource, ok: boolean, ms: number, err: string | un
     // 错误文本消毒：真 HTML 拦页才剥标签（以 < 开头或 >=3 个标签），
     // 保留 "document root <html>" 这类解析错误里的标签名
     const rawErr = err || 'unknown'
-    const tagCount = (rawErr.match(/<[^>]+>/g) || []).length
-    h.lastError = (rawErr.trimStart().startsWith('<') || tagCount >= 3
+    // 含闭合标签或以 < 开头才算真 HTML 拦页；"document root <html>" 这类解析错误保留标签名
+    h.lastError = (/<\/[a-zA-Z]+>/i.test(rawErr) || rawErr.trimStart().startsWith('<')
       ? rawErr.replace(/<[^>]+>/g, ' ') : rawErr).replace(/\s+/g, ' ').trim().slice(0, 200)
     if (h.failStreak >= HEALTH_FAIL_COOLDOWN_STREAK) {
       h.cooldownUntil = new Date(now.getTime() + (src.cooldownHours ? src.cooldownHours * 3600e3 : COOLDOWN_MS)).toISOString()

@@ -130,8 +130,7 @@ test('digest 渲染: 失败源出现在采集源状态段', async () => {
   const id = normalizeUrl('https://bad.example/feed')
   store.setHealth(id, { ok: 0, fail: 3, failStreak: 3, lastError: 'timeout', cooldownUntil: '2099-01-01' })
   const doc = await runDailyDigest(mkOpts(store, { digestItems: 3 }))
-  assert.match(doc.markdown, /## 采集源状态/)
-  assert.match(doc.markdown, /BadSrc/)
+  assert.match(doc.markdown, /采集源状态：\d+\/\d+ 源 · \d+ 条 · 1 源异常（1 冷却中）/)
 })
 
 test('digest 渲染: LLM 摘要失败的条目回落原摘要文本', async () => {
