@@ -58,12 +58,19 @@ function renderItems() {
     return `
     <div class="item ${st.read ? 'read collapsed' : ''} ${st.liked === 1 ? 'liked' : ''}">
       <div class="item-head">
-        ${(() => { const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div style="color:var(--acc)">${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
+        ${(() => { if (state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div style="color:var(--acc)">${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
         <a href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
-      <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(() => { const t = i.title + (i.summary || ''); const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length; return cjk * 2 <= t.replace(/\s/g, '').length ? ` <button data-act="translate" data-id="${esc(i.id)}" title="翻译成中文">译</button>` : '' })()}</div>
+      <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(() => {
+        const t = i.title + (i.summary || '')
+        const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length
+        if (cjk * 2 > t.replace(/\s/g, '').length) return ''
+        if (state.translating === i.id) return ' <button disabled title="翻译中">翻译中…</button>'
+        if (st.translation) return ` <button data-act="translate" data-id="${esc(i.id)}" title="重新翻译">重译</button>${state.tlHidden?.has(i.id) ? ` <button data-act="showtl" data-id="${esc(i.id)}" title="显示译文">显示翻译</button>` : ` <button data-act="hidetl" data-id="${esc(i.id)}" title="隐藏译文">隐藏翻译</button>`}`
+        return ` <button data-act="translate" data-id="${esc(i.id)}" title="翻译成中文">译</button>`
+      })()}</div>
       <div class="item-lead">${esc((i.aiSummary || i.summary || '').slice(0, 140))}</div>
-      ${(() => { const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); const body = nl > 0 ? t.slice(nl).replace(/\s+/g, ' ').trim() : t; return body && nl > 0 ? `<div class="item-lead" style="color:var(--acc)">译: ${esc(body.slice(0, 240))}</div>` : '' })()}
+      ${(() => { if (state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); const body = nl > 0 ? t.slice(nl).replace(/\s+/g, ' ').trim() : t; return body && nl > 0 ? `<div class="item-lead" style="color:var(--acc)">译: ${esc(body.slice(0, 240))}</div>` : '' })()}
       <div class="item-actions">
         <button data-act="${st.read ? 'unread' : 'read'}" data-id="${esc(i.id)}" title="${st.read ? '标为未读（展开简介）' : '标为已读（收起简介）'}">${st.read ? '◉' : '✓'}</button>
         <button data-act="${st.liked === 1 ? 'unlike' : 'like'}" data-id="${esc(i.id)}" title="推荐学习：以后多推同类">👍</button>
@@ -87,6 +94,15 @@ $('#itemList').addEventListener('click', async (e) => {
     catch { toast('复制失败') }
     return
   }
+  if (btn.dataset.act === 'translate') {
+    state.translating = btn.dataset.id; renderItems()
+    try { await post('/feedback', { id: btn.dataset.id, action: 'translate' }) ; toast('已翻译') }
+    catch (err) { toast(`翻译失败: ${err.message}`) }
+    state.translating = null; loadItems()
+    return
+  }
+  if (btn.dataset.act === 'hidetl') { (state.tlHidden ||= new Set()).add(btn.dataset.id); renderItems(); return }
+  if (btn.dataset.act === 'showtl') { state.tlHidden?.delete(btn.dataset.id); renderItems(); return }
   try {
     await post('/feedback', { id: btn.dataset.id, action: btn.dataset.act })
     loadItems()
@@ -110,8 +126,9 @@ $('#q').addEventListener('input', debounce(() => { state.page = 1; loadItems() }
 $('#prevPage').addEventListener('click', () => { if (state.page > 1) { state.page--; loadItems() } })
 $('#nextPage').addEventListener('click', () => { if (state.page * state.pageSize < state.total) { state.page++; loadItems() } })
 $('#btnFetch').addEventListener('click', async () => {
+  const src = $('#srcFilter').value, cat = $('#category').value
   toast('抓取中…')
-  try { const r = await post('/fetch', { force: true }); toast(`抓取完成: +${r.added} 条`); loadItems(); loadStatus() }
+  try { const r = await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) }); toast(`抓取完成: +${r.added} 条`); loadItems(); loadStatus() }
   catch (e) { toast(`抓取失败: ${e.message}`) }
 })
 

@@ -99,15 +99,16 @@ export function apply(ctx: Context, config: ConfigType) {
   let fetchProg = { running: false, done: 0, total: 0 }
   let digestProg = { running: false, done: 0, total: 0 }
   let fetchAbort: AbortController | undefined
-  const runFetchForce = (force = false, onlyFailed = false) => {
+  const runFetchForce = (force = false, onlyFailed = false, filter?: { source?: string; category?: string }) => {
     // onlyFailed：只重试失败/冷却中的启用源（「重试全部失败源」按钮）；否则默认全量
-    const failedOnly = onlyFailed
-      ? effectiveSources(config.sources, store).filter((s) => s.enabled && (s.health.lastError || (s.health.cooldownUntil && new Date(s.health.cooldownUntil).getTime() > Date.now())))
-      : undefined
-    const all = failedOnly ?? effectiveSources(config.sources, store)
-    fetchProg = { running: true, done: 0, total: all.filter((s) => s.enabled).length }
+    let pool = effectiveSources(config.sources, store)
+    if (onlyFailed) pool = pool.filter((s) => s.enabled && (s.health.lastError || (s.health.cooldownUntil && new Date(s.health.cooldownUntil).getTime() > Date.now())))
+    // 界面筛选联动：选了源只抓该源，选了分类只抓该分类下所有源
+    if (filter?.source) pool = pool.filter((s) => s.id === filter.source || s.url === filter.source)
+    else if (filter?.category) pool = pool.filter((s) => s.category === filter.category)
+    fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length }
     fetchAbort = new AbortController()
-    return runFetchCycle({ ...makeFetchOpts(failedOnly), force, signal: fetchAbort.signal, onSourceDone: () => { fetchProg.done += 1 } })
+    return runFetchCycle({ ...makeFetchOpts(pool), force, signal: fetchAbort.signal, onSourceDone: () => { fetchProg.done += 1 } })
       .finally(() => { fetchProg = { running: false, done: 0, total: 0 }; fetchAbort = undefined })
   } // svc/api：手动抓取可带 force 绕冷却
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => runFetchCycle(makeFetchOpts(sources))

@@ -359,8 +359,8 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   const postOnly = (q: Req): boolean => String(q.method || 'GET').toUpperCase() === 'POST'
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch`, handler: guard(async (q, r) => {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
-    const body = await readBody(q) as { force?: boolean; onlyFailed?: boolean }
-    const res = await deps.svc.runFetch(!!body?.force, !!body?.onlyFailed)
+    const body = await readBody(q) as { force?: boolean; onlyFailed?: boolean; source?: string; category?: string }
+    const res = await deps.svc.runFetch(!!body?.force, !!body?.onlyFailed, { source: body?.source, category: body?.category })
     sendJson(r, 200, { ok: true, added: res.totalAdded, errors: res.errors })
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.fetchProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))

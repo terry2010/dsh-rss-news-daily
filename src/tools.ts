@@ -17,7 +17,7 @@ export interface NewsService {
   removeSource(urlOrId: string): Promise<boolean>
   importOpml(opmlText: string): Promise<{ added: number; duplicated: number; skipped: number; details?: Array<{ url: string; action: string; reason?: string }> }>
   exportOpml(): Promise<string>
-  runFetch(force?: boolean, onlyFailed?: boolean): Promise<FetchCycleResult>
+  runFetch(force?: boolean, onlyFailed?: boolean, filter?: { source?: string; category?: string }): Promise<FetchCycleResult>
   /** 抓取进度（{running,done,total}），供 UI 轮询 */
   fetchProgress?(): Promise<{ running: boolean; done: number; total: number }>
   /** 中止进行中的抓取 */
