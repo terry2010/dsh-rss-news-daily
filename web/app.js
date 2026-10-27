@@ -324,7 +324,7 @@ $('#btnOpmlExport').addEventListener('click', async () => {
     const t = await (await fetch(`${API}/opml`)).text()
     if (window.showSaveFilePicker) { // Electron guest 禁下载但支持 FS Access 原生保存对话框
       try {
-        const h = await window.showSaveFilePicker({ suggestedName: `sources-${new Date().toISOString().slice(0, 10)}.opml`, types: [{ description: 'OPML 订阅清单', accept: { 'text/xml': ['.opml', '.xml'] } }] })
+        const h = await window.showSaveFilePicker({ suggestedName: `dsh-rss-news-daily-sources-${new Date().toISOString().slice(0, 10)}.opml`, types: [{ description: 'OPML 订阅清单', accept: { 'text/xml': ['.opml', '.xml'] } }] })
         const w = await h.createWritable(); await w.write(t); await w.close()
         toast('已导出'); return
       } catch (e) { if (e?.name === 'AbortError') return }

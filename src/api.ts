@@ -335,7 +335,7 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     const { join, dirname } = await import('node:path')
     const dir = join(dirname(deps.store.path), 'exports')
     await mkdir(dir, { recursive: true })
-    const file = join(dir, `sources-${new Date().toISOString().slice(0, 10)}.opml`)
+    const file = join(dir, `dsh-rss-news-daily-sources-${new Date().toISOString().slice(0, 10)}.opml`)
     await writeFile(file, await deps.svc.exportOpml(), 'utf8')
     sendJson(r, 200, { ok: true, path: file })
   }) }))
