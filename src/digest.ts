@@ -103,7 +103,12 @@ export function renderDigest(options: DigestRenderOptions): string {
     // 逐条降级回落：aiSummary 缺失时用 feed 原摘要（截 90 字），保证每条都有摘要行
     const lead = (item.aiSummary || item.summary || '').trim().slice(0, 90)
     const reasons = item.reasons?.length ? ` · _${item.reasons.join('、')}_` : ''
-    return `${head}  \n    > ${meta}${reasons}${lead === '' ? '' : `  \n    > ${escapeLinkText(lead)}`}`
+    // 中英对照：有译文的条目加中文标题行 + 译文行
+    const tl = (item.state?.translation || '').trim()
+    const tnl = tl.indexOf('\n')
+    const tlTitle = tnl > 0 ? tl.slice(0, tnl).trim() : ''
+    const tlBody = tnl > 0 ? tl.slice(tnl).replace(/\s+/g, ' ').trim() : ''
+    return `${head}${tlTitle ? `  \n    ${escapeLinkText(tlTitle)}` : ''}  \n    > ${meta}${reasons}${lead === '' ? '' : `  \n    > ${escapeLinkText(lead)}`}${tlBody ? `  \n    > 译：${escapeLinkText(tlBody.slice(0, 180))}` : ''}`
   })
   const section = [
     `## ${SECTION_ITEMS[options.language]}`,

@@ -254,6 +254,7 @@ export function apply(ctx: Context, config: ConfigType) {
     configSources: config.sources,
     // 每次 digest 现组 client：UI 换模型后下次立即生效（resolution 缓存在 client 实例上）
     llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log) : undefined,
+    translateClient: llmRuntime ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log) : undefined,
     llmEnabled: config.llm.enabled,
     summaryEnabled: config.summary.enabled,
     summaryMaxItems: config.summary.maxItems,

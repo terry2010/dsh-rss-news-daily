@@ -20,7 +20,7 @@ async function api(path, opts) {
 const post = (path, body) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 
 function toast(msg) {
-  const el = $('#statusbar')
+  const el = $('#toastbar')
   el.textContent = msg
   clearTimeout(toast._t)
   toast._t = setTimeout(loadStatus, 3000)
@@ -184,7 +184,7 @@ $('#btnDigestRun').addEventListener('click', async () => {
       else { clearInterval(dp) }
     } catch { /* 进度不可达不影响生成 */ }
   }, 900)
-  $('#statusbar').textContent = '生成日报中（LLM 总结可能要 1-2 分钟）…' // 直写状态栏：不被 toast 的 3s 自动刷新冲掉
+  $('#digestBusy').textContent = '⏳ 日报生成中…（LLM 总结可能要 1-2 分钟）' // 忙文走 busybar，statusbar 保持状态行
   try {
     // force: 手动点 = 现在就要重新生成，含当日已推条目（幂等空跑由 force 绕过）
     const r = await post('/digest-run', { force: true })
@@ -501,6 +501,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
     document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === btn))
     for (const sec of document.querySelectorAll('main > section')) sec.hidden = true
     $(`#tab-${btn.dataset.tab}`).hidden = false
+    $('#statusbar').hidden = btn.dataset.tab === 'digest'
     if (btn.dataset.tab === 'digest') loadDigest()
     if (btn.dataset.tab === 'sources') loadSources()
     if (btn.dataset.tab === 'prefs') { loadPrefs(); loadLlm(); loadSchedule() }

@@ -34,6 +34,8 @@ export interface DigestPipelineOptions {
   llmTimeoutMs: number
   /** 外部取消信号（「停止生成」）；与 llmTimeoutMs 合并为任一触发即停 */
   signal?: AbortSignal
+  /** 翻译用 LLM client（translateLlm 路由）；存在时对英文条目生成中英对照译文 */
+  translateClient?: LlmClient
   /** 每完成一条逐条摘要回调（done, total），进度上报用 */
   onItemDone?: (done: number, total: number) => void
   /** LLM maxTokens（config 透传，不再用 summarizer 内算值） */
@@ -64,6 +66,36 @@ function toSummarizable(item: FeedItem, sourceTitle: string): SummarizableItem {
     sourceTitle,
     publishedAt: item.publishedAt,
   }
+}
+
+/** 逐条翻译：CJK 占比 ≤50% 的条目调翻译模型写 state.translation（'标题\n\n正文'），日报渲染中英对照。 */
+async function translateItems(items: FeedItem[], client: LlmClient, opts: DigestPipelineOptions): Promise<void> {
+  const targets = items.filter((i) => {
+    const t = i.title + (i.summary || '')
+    const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length
+    return cjk * 2 <= t.replace(/\s/g, '').length
+  })
+  const queue = [...targets]
+  const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency) }, async () => {
+    for (;;) {
+      if (opts.signal?.aborted) return
+      const item = queue.shift()
+      if (!item) return
+      try {
+        const text = await client.generateText({
+          system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
+          prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
+          maxTokens: 1200,
+          signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
+        })
+        const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
+        item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
+      } catch (e) {
+        item.state.translationError = e instanceof Error ? e.message : String(e)
+      }
+    }
+  })
+  await Promise.all(workers)
 }
 
 /** 逐条一句话摘要：并发受限、单条失败只写 aiSummaryError 不丢条目；summarize=false 的源跳过（用 feed 原摘要）。 */
@@ -130,6 +162,10 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   // 逐条摘要（仅当有可用 LLM）；summarize=false 的源在 itemSummaries 内跳过
   if (opts.summaryEnabled && opts.llmEnabled && opts.llmClient) {
     await itemSummaries(picked, sourcesById, opts.llmClient, opts)
+  }
+  // 英文条目生成中英对照译文（翻译模型/缺省跟随摘要模型）
+  if (opts.llmEnabled && opts.translateClient) {
+    await translateItems(picked, opts.translateClient, opts)
   }
 
   // 整体总结（summarize 内部已含抽取降级）
