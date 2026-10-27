@@ -34,6 +34,8 @@ export interface DigestPipelineOptions {
   llmTimeoutMs: number
   /** 外部取消信号（「停止生成」）；与 llmTimeoutMs 合并为任一触发即停 */
   signal?: AbortSignal
+  /** 每完成一条逐条摘要回调（done, total），进度上报用 */
+  onItemDone?: (done: number, total: number) => void
   /** LLM maxTokens（config 透传，不再用 summarizer 内算值） */
   llmMaxTokens: number
   digestItems: number
@@ -73,6 +75,7 @@ async function itemSummaries(
 ): Promise<void> {
   const targets = items.filter((i) => sourcesById.get(i.sourceId)?.summarize !== false).slice(0, opts.summaryMaxItems)
   const queue = [...targets]
+  let done = 0
   const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency) }, async () => {
     for (;;) {
       const item = queue.shift()
@@ -95,6 +98,8 @@ async function itemSummaries(
       } catch (e) {
         item.aiSummaryError = e instanceof Error ? e.message : String(e)
       }
+      done += 1
+      opts.onItemDone?.(done, targets.length)
     }
   })
   await Promise.all(workers)

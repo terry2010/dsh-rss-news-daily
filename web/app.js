@@ -149,6 +149,13 @@ $('#btnDigestRun').addEventListener('click', async () => {
   btn.disabled = true; btn.hidden = true // 生成中隐藏入口，防重入
   $('#btnDigestStop').hidden = false
   $('#digestBusy').hidden = false
+  const dp = setInterval(async () => {
+    try {
+      const p = await api('/digest-progress')
+      if (p.running) $('#digestBusy').textContent = `⏳ 日报生成中…${p.total ? ` (${p.done}/${p.total})` : ''}`
+      else { clearInterval(dp) }
+    } catch { /* 进度不可达不影响生成 */ }
+  }, 900)
   $('#statusbar').textContent = '生成日报中（LLM 总结可能要 1-2 分钟）…' // 直写状态栏：不被 toast 的 3s 自动刷新冲掉
   try {
     // force: 手动点 = 现在就要重新生成，含当日已推条目（幂等空跑由 force 绕过）

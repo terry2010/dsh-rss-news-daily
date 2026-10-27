@@ -97,6 +97,7 @@ export function apply(ctx: Context, config: ConfigType) {
   })
   const runFetch = () => runFetchCycle(makeFetchOpts()) // scheduler 回调签名 (signal?)=>…，不带参
   let fetchProg = { running: false, done: 0, total: 0 }
+  let digestProg = { running: false, done: 0, total: 0 }
   let fetchAbort: AbortController | undefined
   const runFetchForce = (force = false, onlyFailed = false) => {
     // onlyFailed：只重试失败/冷却中的启用源（「重试全部失败源」按钮）；否则默认全量
@@ -126,6 +127,7 @@ export function apply(ctx: Context, config: ConfigType) {
     exportOpml: () => exportOpml(store, config.sources),
     runFetch: runFetchForce,
     fetchProgress: async () => ({ ...fetchProg }),
+    digestProgress: async () => ({ ...digestProg }),
     testFetch: async (url, proxy) => {
       const d = await fetcher(url, undefined, { proxy })
       return 'error' in d ? { error: d.error } : { status: d.status, body: d.body.slice(0, 600) }
@@ -222,7 +224,8 @@ export function apply(ctx: Context, config: ConfigType) {
     if (digestBusy) return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'extractive' as const, degraded: true, note: 'digest already running' })
     digestBusy = true
     digestAbort = new AbortController()
-    return digestRun(force).finally(() => { digestBusy = false; digestAbort = undefined })
+    digestProg = { running: true, done: 0, total: 0 }
+    return digestRun(force).finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0 } })
   }
   const digestRun = (force: boolean) => runDailyDigest({
     store,
@@ -239,6 +242,7 @@ export function apply(ctx: Context, config: ConfigType) {
     digestMaxLength: config.digest.maxLength,
     llmTimeoutMs: config.llm.timeoutMs,
     signal: digestAbort?.signal,
+    onItemDone: (done, total) => { digestProg.done = done; digestProg.total = total },
     llmMaxTokens: config.llm.maxTokens,
     language: 'zh',
     timezone: config.timezone,
