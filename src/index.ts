@@ -30,6 +30,7 @@ import { DshLlmClient } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
 import { mountApi } from './api.js'
 import { parseTune } from './core/tune.js'
+import { execFile } from 'node:child_process'
 
 export { Config }
 
@@ -138,7 +139,17 @@ export function apply(ctx: Context, config: ConfigType) {
     digestsDir: join(dataDir, 'digests'),
     prefs: prefs.get(), // 每次取当前值：M5 调教立即生效于下一次打分
     log,
-  }).then((doc) => { log.info(`digest written: ${doc.date} ${doc.itemCount} items degraded=${doc.degraded}`) })
+  }).then((doc) => {
+    log.info(`digest written: ${doc.date} ${doc.itemCount} items degraded=${doc.degraded}`)
+    // macOS 通知（可选，fire-and-forget，失败静默——通知是锦上添花不是关键路径）
+    if (config.notifyEnabled) {
+      const top = store.items.filter((i) => doc.itemIds.includes(i.id)).slice(0, config.notifyMaxTitles)
+        .map((i) => i.title).join('；')
+      execFile('osascript', ['-e',
+        `display notification ${JSON.stringify(`${doc.itemCount} 条精选 ${top.slice(0, 120)}`)} with title ${JSON.stringify(doc.title)}`],
+        () => {})
+    }
+  })
 
   let disposed = false
   const disposers: Array<() => void> = []
