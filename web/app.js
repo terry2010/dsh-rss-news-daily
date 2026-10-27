@@ -60,14 +60,13 @@ function renderItems() {
       <div class="item-head">
         <a href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
-      <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}</div>
+      <div class="item-meta">${esc(i.topic)} · ${new Date(i.publishedAt || i.fetchedAt).toLocaleString()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(state.sources || []).find((x) => x.id === i.sourceId)?.lang === 'en' ? ` <button data-act="translate" data-id="${esc(i.id)}" title="翻译成中文">译</button>` : ''}</div>
       <div class="item-lead">${esc((i.aiSummary || i.summary || '').slice(0, 140))}</div>
       ${st.translation ? `<div class="item-lead" style="color:var(--acc)">译: ${esc(st.translation.slice(0, 200))}</div>` : ''}
       <div class="item-actions">
         <button data-act="${st.read ? 'unread' : 'read'}" data-id="${esc(i.id)}" title="${st.read ? '标为未读（展开简介）' : '标为已读（收起简介）'}">${st.read ? '◉' : '✓'}</button>
         <button data-act="${st.liked === 1 ? 'unlike' : 'like'}" data-id="${esc(i.id)}" title="推荐学习：以后多推同类">👍</button>
         <button data-act="dislike" data-id="${esc(i.id)}" title="少推学习：以后少推同类">👎</button>
-        ${(state.sources || []).find((x) => x.id === i.sourceId)?.lang === 'en' ? `<button data-act="translate" data-id="${esc(i.id)}" title="翻译成中文">译</button>` : ''}
         <button data-act="hide" data-id="${esc(i.id)}" title="从列表隐藏">✕</button>
         <button data-act="copy" data-id="${esc(i.id)}" data-link="${esc(safeUrl(i.link))}" title="复制链接">⧉</button>
       </div>
