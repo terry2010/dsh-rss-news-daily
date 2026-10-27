@@ -94,7 +94,7 @@ export function apply(ctx: Context, config: ConfigType) {
     dedupeWindowDays: config.dedupe.windowDays,
     log,
   })
-  const runFetch = () => runFetchCycle(makeFetchOpts())
+  const runFetch = (force = false) => runFetchCycle({ ...makeFetchOpts(), force })
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => runFetchCycle(makeFetchOpts(sources))
 
   // 对外操作门面：tools（M2）与 HTTP API（M4）共用同一组语义
@@ -184,6 +184,7 @@ export function apply(ctx: Context, config: ConfigType) {
         lastFetchAt: store.meta.lastFetchAt,
         lastDigestDay: store.meta.lastDigestDay,
         failures,
+        cooling: list.filter((s) => s.health.cooldownUntil && new Date(s.health.cooldownUntil).getTime() > Date.now()).length,
       }
     },
   }

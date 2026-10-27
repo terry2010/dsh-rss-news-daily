@@ -29,7 +29,7 @@ function toast(msg) {
 async function loadStatus() {
   try {
     const s = await api('/status')
-    $('#statusbar').textContent = `${s.enabled}/${s.sources} 源 · ${s.items} 条 · ${s.failures?.length ? `${s.failures.length} 源异常` : '健康'}`
+    $('#statusbar').textContent = `${s.enabled}/${s.sources} 源 · ${s.items} 条 · ${s.failures?.length ? `${s.failures.length} 源异常${s.cooling ? `（${s.cooling} 冷却中）` : ''}` : '健康'}`
   } catch { $('#statusbar').textContent = '状态不可用' }
 }
 
@@ -120,7 +120,7 @@ $('#prevPage').addEventListener('click', () => { if (state.page > 1) { state.pag
 $('#nextPage').addEventListener('click', () => { if (state.page * state.pageSize < state.total) { state.page++; loadItems() } })
 $('#btnFetch').addEventListener('click', async () => {
   toast('抓取中…')
-  try { const r = await post('/fetch', {}); toast(`抓取完成: +${r.added} 条`); loadItems() }
+  try { const r = await post('/fetch', { force: true }); toast(`抓取完成: +${r.added} 条`); loadItems(); loadStatus() }
   catch (e) { toast(`抓取失败: ${e.message}`) }
 })
 

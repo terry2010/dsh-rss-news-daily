@@ -18,6 +18,8 @@ import type { Store } from './core/store.js'
 import type { createFetcher } from './core/fetcher.js'
 
 export interface FetchCycleOptions {
+  /** 手动抓取：绕过 24h 冷却重试失败源（调度路径不传） */
+  force?: boolean
   fetch: ReturnType<typeof createFetcher>
   store: Store
   sources: FeedSource[]
@@ -369,7 +371,8 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
     totalAdded: 0,
     errors: 0,
   }
-  const active = opts.sources.filter((s) => s.enabled && !inCooldown(s, now))
+  // force=手动抓取：绕过冷却把失败源也重试（调度/interval 不带 force，冷却照常生效）
+  const active = opts.sources.filter((s) => s.enabled && (opts.force || !inCooldown(s, now)))
   const skipped = opts.sources.length - active.length
   if (skipped > 0) log.info(`fetch cycle: ${skipped} source(s) disabled or in cooldown`)
 
