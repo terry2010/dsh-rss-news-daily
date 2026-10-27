@@ -24,6 +24,9 @@ import { effectiveSources, runFetchCycle, addSource, removeSource, setSourceEnab
 import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
+import { runDailyDigest } from './digest-pipeline.js'
+import { DshLlmClient } from './dsh-llm.js'
+import type { LlmClient } from './summarizer.js'
 
 export { Config }
 
@@ -105,6 +108,25 @@ export function apply(ctx: Context, config: ConfigType) {
     },
   }
 
+  let llmClient: LlmClient | undefined
+  const digestNow = () => runDailyDigest({
+    store,
+    configSources: config.sources,
+    llmClient,
+    llmEnabled: config.llm.enabled,
+    summaryEnabled: config.summary.enabled,
+    summaryMaxItems: config.summary.maxItems,
+    summaryConcurrency: config.summary.concurrency,
+    summaryMaxLength: config.summary.maxLength,
+    digestItems: config.digest.digestItems,
+    perTopicLimit: config.digest.perTopicLimit,
+    digestMaxLength: config.digest.maxLength,
+    language: 'zh',
+    timezone: config.timezone,
+    digestsDir: join(dataDir, 'digests'),
+    log,
+  }).then((doc) => { log.info(`digest written: ${doc.date} ${doc.itemCount} items degraded=${doc.degraded}`) })
+
   let disposed = false
   const disposers: Array<() => void> = []
   void store.load()
@@ -119,7 +141,7 @@ export function apply(ctx: Context, config: ConfigType) {
         enabled: true,
         lastDigestDay: () => store.meta.lastDigestDay,
         runFetchCycle: runFetch,
-        runDailyDigest: async () => { log.info('daily digest: M3 pipeline not wired yet') },
+        runDailyDigest: digestNow,
         log,
       }))
       log.info('tools registered, scheduler armed')
@@ -127,8 +149,16 @@ export function apply(ctx: Context, config: ConfigType) {
     .catch((e) => log.error('store load failed; plugin degraded to inert', e))
 
   // 可选能力按服务逐项声明：有就用、没有就降级，绝不因缺服务而拒载。
-  ctx.inject(['llm'], () => {
-    log.info('llm service available: LLM summaries enabled')
+  ctx.inject(['llm'], (c) => {
+    const runtime = (c as unknown as { llm?: unknown }).llm
+    if (runtime) {
+      llmClient = new DshLlmClient(
+        runtime as ConstructorParameters<typeof DshLlmClient>[0],
+        { provider: config.llm.provider, model: config.llm.model },
+        log,
+      )
+      log.info('llm service available: LLM summaries enabled')
+    }
   })
   ctx.inject(['webServer'], () => {
     log.info('webServer available: reader page will mount at /dsh-rss-news-daily/')
