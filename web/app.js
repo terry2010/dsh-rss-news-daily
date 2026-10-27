@@ -53,7 +53,14 @@ async function loadItems() {
 function renderItems() {
   const el = $('#itemList')
   if (!state.items.length) { el.innerHTML = '<p class="empty">没有条目</p>'; return }
-  el.innerHTML = state.items.map((i) => {
+  el.innerHTML = state.items.map(itemHtml).join('')
+  const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize))
+  $('#pageInfo').textContent = `第 ${state.page} / ${totalPages} 页 · 共 ${state.total} 条`
+  $('#prevPage').disabled = state.page <= 1
+  $('#nextPage').disabled = !(state.page * state.pageSize < state.total)
+}
+
+function itemHtml(i) {
     const st = i.state || {} // 老数据可能缺 state 字段——防御，防整个渲染挂掉（"翻页没反应"）
     return `
     <div class="item ${st.read ? 'read collapsed' : ''} ${st.liked === 1 ? 'liked' : ''}">
@@ -79,11 +86,6 @@ function renderItems() {
         <button data-act="copy" data-id="${esc(i.id)}" data-link="${esc(safeUrl(i.link))}" title="复制链接">⧉</button>
       </div>
     </div>`
-  }).join('')
-  const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize))
-  $('#pageInfo').textContent = `第 ${state.page} / ${totalPages} 页 · 共 ${state.total} 条`
-  $('#prevPage').disabled = state.page <= 1
-  $('#nextPage').disabled = !(state.page * state.pageSize < state.total)
 }
 
 $('#itemList').addEventListener('click', async (e) => {
@@ -96,14 +98,16 @@ $('#itemList').addEventListener('click', async (e) => {
   }
   if (btn.dataset.act === 'translate') {
     state.translating = btn.dataset.id; renderItems()
-    try { await post('/feedback', { id: btn.dataset.id, action: 'translate' }) ; toast('已翻译') }
+    let rr
+    try { rr = await post('/feedback', { id: btn.dataset.id, action: 'translate' }); toast('已翻译') }
     catch (err) { toast(`翻译失败: ${err.message}`) }
     state.translating = null
     state.tlHidden?.delete(btn.dataset.id) // 重译成功自动取消隐藏，译文直接展示
-    await loadItems()
-    // 整表重建后滚动锚点会丢——把该条目拉回可视区
-    document.querySelector(`.item [data-id="${CSS.escape(btn.dataset.id)}"]`)?.closest('.item')
-      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    // 就地替换该条目 DOM——不重建整表，滚动位置不丢
+    const it = state.items.find((x) => x.id === btn.dataset.id)
+    const row = document.querySelector(`.item [data-id="${CSS.escape(btn.dataset.id)}"]`)?.closest('.item')
+    if (it && row) { if (rr?.state) it.state = rr.state; row.outerHTML = itemHtml(it) }
+    else loadItems()
     return
   }
   if (btn.dataset.act === 'hidetl') { (state.tlHidden ||= new Set()).add(btn.dataset.id); renderItems(); return }
