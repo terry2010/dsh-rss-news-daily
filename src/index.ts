@@ -29,6 +29,7 @@ import { runDailyDigest } from './digest-pipeline.js'
 import { DshLlmClient } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
 import { mountApi } from './api.js'
+import { parseTune } from './core/tune.js'
 
 export { Config }
 
@@ -97,6 +98,12 @@ export function apply(ctx: Context, config: ConfigType) {
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),
     runFetch,
+    tune: async (text) => {
+      const r = parseTune(text, prefs.get())
+      if (!r.ok) return { ok: false, actions: [], error: r.error }
+      if (r.patch) prefs.applyTune(text, r.actions.map((a) => `${a.kind}:${a.target}`), r.patch)
+      return { ok: true, actions: r.actions.map((a) => `${a.kind}:${a.target}${a.factor ? `×${a.factor}` : ''}`) }
+    },
     status: () => {
       const list = effectiveSources(config.sources, store)
       const failures = list.filter((s) => s.health.lastError).map((s) => ({ name: s.title, error: s.health.lastError! }))

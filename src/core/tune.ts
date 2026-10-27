@@ -90,3 +90,50 @@ export function parseTune(text: string, prefs: Prefs): TuneResult {
   }
   return { ok: true, actions, patch }
 }
+
+// ==== 反馈学习：👍/👎 → 权重微调（阅读习惯自学） ====
+
+/** 从标题抽关键词：CJK 连续段 + 英文词，≥2 字，取前 3。 */
+export function extractKeywords(title: string): string[] {
+  const keys: string[] = []
+  const cjk = title.match(/[一-鿿]{2,}/g) || []
+  const en = title.match(/[A-Za-z][A-Za-z0-9-]{3,}/g) || []
+  for (const w of [...cjk, ...en].slice(0, 6)) {
+    const k = w.length > 8 ? w.slice(0, 8) : w
+    if (!keys.includes(k)) keys.push(k)
+    if (keys.length >= 3) break
+  }
+  return keys
+}
+
+/**
+ * 👍 → topic×1.1、title 关键词×1.15、source×1.05；
+ * 👎 → 全部反向（×0.9/×0.87/×0.95）。返回可合并的完整 Prefs 映射。
+ */
+export function learnFromFeedback(
+  prefs: Prefs,
+  item: { topic: string; title: string; sourceId: string },
+  action: 'like' | 'dislike',
+): { patch: Prefs; learned: string[] } {
+  const patch: Prefs = {
+    topics: { ...prefs.topics },
+    keywords: { ...prefs.keywords },
+    bannedKeywords: [...prefs.bannedKeywords],
+    sourceWeight: { ...prefs.sourceWeight },
+  }
+  const learned: string[] = []
+  const up = action === 'like'
+  const topicF = up ? 1.1 : 0.9
+  const kwF = up ? 1.15 : 0.87
+  const srcF = up ? 1.05 : 0.95
+
+  if (item.topic) { bump(patch.topics, item.topic, topicF); learned.push(`topic:${item.topic}×${topicF}`) }
+  for (const kw of extractKeywords(item.title)) {
+    bump(patch.keywords, kw, kwF)
+    learned.push(`kw:${kw}×${kwF}`)
+  }
+  bump(patch.sourceWeight, item.sourceId, srcF)
+  learned.push(`src:${item.sourceId.slice(0, 24)}×${srcF}`)
+
+  return { patch, learned }
+}

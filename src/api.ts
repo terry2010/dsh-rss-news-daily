@@ -13,7 +13,7 @@ import type { PrefsStore } from './core/prefs.js'
 import type { NewsService } from './tools.js'
 import { effectiveSources } from './service.js'
 import { zonedDayKey } from './core/time.js'
-import { parseTune } from './core/tune.js'
+import { parseTune, learnFromFeedback } from './core/tune.js'
 
 const BASE = '/dsh-rss-news-daily'
 
@@ -148,6 +148,12 @@ function apiFeedback(deps: ApiDeps) {
       default: return sendJson(res, 400, { ok: false, error: `unknown action: ${body.action}` })
     }
     await deps.store.save()
+    // 反馈学习：👍/👎 直接微调偏好权重（不进 tuningHistory——反馈不是显式调教）
+    if (body.action === 'like' || body.action === 'dislike') {
+      const { patch, learned } = learnFromFeedback(deps.prefs.get(), item, body.action)
+      deps.prefs.save(patch)
+      return sendJson(res, 200, { ok: true, state: item.state, learned })
+    }
     sendJson(res, 200, { ok: true, state: item.state })
   }
 }

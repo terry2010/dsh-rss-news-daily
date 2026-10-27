@@ -18,6 +18,7 @@ export interface NewsService {
   exportOpml(): Promise<string>
   runFetch(): Promise<FetchCycleResult>
   status(): { sources: number; enabled: number; items: number; lastFetchAt: string; lastDigestDay: string; failures: Array<{ name: string; error: string }> }
+  tune(text: string): Promise<{ ok: boolean; actions: string[]; error?: string }>
 }
 
 const sourceSchema = {
@@ -208,6 +209,29 @@ function newsExport(svc: NewsService) {
   })
 }
 
+function newsTune(svc: NewsService) {
+  return defineTool({
+    name: 'news_tune',
+    description: 'Tune RSS recommendation preferences via natural language, e.g. "多推 AI、少推币圈、屏蔽裁员" or "重置". Applies immediately to the next digest.',
+    parameters: {
+      text: { type: 'string', required: true, description: 'Tuning instruction in natural language' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          ok: { type: 'boolean' },
+          error: { type: 'string' },
+          actions: { type: 'array', items: { type: 'string' } },
+        },
+        additionalProperties: false,
+      },
+      render: (_a, v) => text(v.ok ? `Tuning applied: ${(v.actions ?? []).join('; ')}` : `Tune failed: ${v.error}`),
+    },
+    execute: async (args) => svc.tune(String(args.text ?? '')),
+  })
+}
+
 /** 注册全部 news_* 工具；返回 disposer。 */
 export function registerTools(ctx: Context, svc: NewsService): () => void {
   const ds = [
@@ -218,6 +242,7 @@ export function registerTools(ctx: Context, svc: NewsService): () => void {
     ctx.tools.register(newsStatus(svc)),
     ctx.tools.register(newsImport(svc)),
     ctx.tools.register(newsExport(svc)),
+    ctx.tools.register(newsTune(svc)),
   ]
   return () => ds.forEach((d) => d())
 }

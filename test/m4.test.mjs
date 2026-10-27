@@ -219,6 +219,54 @@ test('client.js: classic-script 形态，factory(require) 单参调用返回 {in
   assert.ok(exports2.inject.includes('sidebarRightTabs'))
 })
 
+test('learnFromFeedback: like/dislike 微调 topic+keywords+source 权重', async () => {
+  const { learnFromFeedback, extractKeywords } = await import('../lib/core/tune.js')
+  const prefs = { topics: {}, keywords: {}, bannedKeywords: [], sourceWeight: {} }
+  const item = { topic: 'AI', title: 'OpenAI 发布新 Agent 框架', sourceId: 'src-x' }
+  const up = learnFromFeedback(prefs, item, 'like')
+  assert.ok(up.patch.topics.AI > 1)
+  assert.ok(Object.keys(up.patch.keywords).length >= 1)
+  assert.ok(up.patch.sourceWeight['src-x'] > 1)
+  assert.ok(up.learned.length >= 3)
+  const down = learnFromFeedback(prefs, item, 'dislike')
+  assert.ok(down.patch.topics.AI < 1)
+  assert.ok(down.patch.sourceWeight['src-x'] < 1)
+  assert.ok(extractKeywords('币圈崩盘 BTC').includes('币圈崩盘'))
+})
+
+test('api: /api/feedback like 触发学习 → prefs.keywords/sourceWeight 变更', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  deps.store.items[0].topic = 'AI'
+  deps.store.items[0].sourceId = 'src-z'
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  const fb = findHandler(regs, '/dsh-rss-news-daily/api/feedback')
+  const res = mkRes()
+  await fb(mkReq('POST', '/dsh-rss-news-daily/api/feedback', { id: 'a', action: 'like' }), res)
+  const out = JSON.parse(res.body)
+  assert.ok(out.learned?.length >= 1)
+  assert.ok(deps.prefs.get().topics.AI > 1)
+  assert.ok(deps.prefs.get().sourceWeight['src-z'] > 1)
+})
+
+test('svc.tune 经 parseTune+applyTune 落库并返回 actions（news_tune 后端）', async () => {
+  const { PrefsStore } = await import('../lib/core/prefs.js')
+  const { parseTune } = await import('../lib/core/tune.js')
+  const prefs = new PrefsStore(join(mkdtempSync(join(tmpdir(), 'rnd-t5-')), 'p.json'))
+  const tune = async (text) => {
+    const r = parseTune(text, prefs.get())
+    if (!r.ok) return { ok: false, actions: [], error: r.error }
+    if (r.patch) prefs.applyTune(text, r.actions.map((a) => `${a.kind}:${a.target}`), r.patch)
+    return { ok: true, actions: r.actions.map((a) => `${a.kind}:${a.target}`) }
+  }
+  const r = await tune('多推 AI、屏蔽裁员')
+  assert.equal(r.ok, true)
+  assert.ok(r.actions.length >= 2)
+  assert.deepEqual(prefs.get().bannedKeywords, ['裁员'])
+  assert.equal(prefs.get().tuningHistory.length, 1)
+})
+
 test('api: cross-site 请求被 403', async () => {
   const { mountApi } = await import('../lib/api.js')
   const deps = await mkDeps()
