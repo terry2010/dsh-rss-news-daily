@@ -319,8 +319,12 @@ $('#btnAddSrc').addEventListener('click', async () => {
   } catch (e) { toast(`添加失败: ${e.message}`) }
 })
 
-$('#btnOpmlExport').addEventListener('click', () => {
-  window.open(`${API}/opml`, '_blank')
+$('#btnOpmlExport').addEventListener('click', async () => {
+  try {
+    const t = await (await fetch(`${API}/opml`)).text()
+    await navigator.clipboard.writeText(t)
+    toast('OPML 已复制到剪贴板（粘贴到阅读器/文件即可导入）')
+  } catch (e) { toast(`导出失败: ${e.message}`) }
 })
 $('#opmlFile').addEventListener('change', async (e) => {
   const f = e.target.files?.[0]
