@@ -9,6 +9,11 @@ test('bundle contract: name/inject/Config/apply all exported', async () => {
   assert.ok(!mod.inject.includes('webServer'), 'webServer must stay optional (ctx.inject), not static')
   assert.equal(typeof mod.apply, 'function')
   assert.ok(mod.Config, 'Config schema missing')
+  const { existsSync } = await import('node:fs')
+  const { join, dirname } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  assert.ok(existsSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/client.js')),
+    'lib/client.js missing — dsh.client declared in package.json would throw ClientPackageCompositionError')
 })
 
 test('apply is callable with stub ctx and does not throw', async () => {
