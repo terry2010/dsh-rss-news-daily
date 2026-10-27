@@ -14,15 +14,17 @@
     <button class="tab" data-tab="sources">🔌 订阅源</button>
     <button class="tab" data-tab="prefs">⚙ 设置</button>
   </div>
-  <div class="statusbar" id="statusbar">加载中…</div>
 </header>
 
 <main>
+  <div class="statusbar" id="statusbar">加载中…</div>
   <!-- 全部条目流 -->
   <section id="tab-items">
     <div class="toolbar">
       <input type="search" id="q" placeholder="搜索标题/摘要…">
       <input type="date" id="day">
+    </div>
+    <div class="toolbar filterbar">
       <select id="category"><option value="">全部分类</option></select>
       <select id="srcFilter"><option value="">全部源</option></select>
       <label><input type="checkbox" id="unread"> 只看未读</label>
