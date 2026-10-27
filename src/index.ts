@@ -296,7 +296,7 @@ export function apply(ctx: Context, config: ConfigType) {
     llmEnabled: config.llm.enabled,
     summaryEnabled: config.summary.enabled,
     summaryMaxItems: prefs.get().digestOpts?.summaryMaxItems ?? config.summary.maxItems,
-    summaryConcurrency: config.summary.concurrency,
+    summaryConcurrency: prefs.get().digestOpts?.summaryConcurrency ?? config.summary.concurrency,
     summaryMaxLength: config.summary.maxLength,
     digestItems: prefs.get().digestOpts?.digestItems ?? config.digest.digestItems,
     perTopicLimit: prefs.get().digestOpts?.perTopicLimit ?? config.digest.perTopicLimit,
