@@ -58,12 +58,40 @@ function renderItems() {
   $('#pageInfo').textContent = `第 ${state.page} / ${totalPages} 页 · 共 ${state.total} 条`
   $('#prevPage').disabled = state.page <= 1
   $('#nextPage').disabled = !(state.page * state.pageSize < state.total)
+  $('#btnTopPage').hidden = state.page <= 1
 }
+
+// 阅读位置记忆：{page, id(锚点条目), top(视口内偏移)}——滚动节流保存，重开恢复并滚回该条目
+const POS_KEY = 'rss_reader_pos'
+function savePos() {
+  for (const el of document.querySelectorAll('#itemList .item')) {
+    const r = el.getBoundingClientRect()
+    if (r.bottom > 90) { // 第一条可见条目做锚点（90≈sticky头+筛选栏高度）
+      localStorage.setItem(POS_KEY, JSON.stringify({ page: state.page, id: el.dataset.id, top: r.top }))
+      return
+    }
+  }
+}
+let posT = 0
+window.addEventListener('scroll', () => { clearTimeout(posT); posT = setTimeout(savePos, 300) }, { passive: true })
+function restorePos() {
+  try { const p = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); return p && p.page > 1 ? p : null }
+  catch { return null }
+}
+function scrollToAnchor(p) {
+  const el = document.querySelector(`#itemList .item[data-id="${CSS.escape(p.id)}"]`)
+  if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - p.top })
+}
+$('#btnTopPage').addEventListener('click', () => {
+  localStorage.removeItem(POS_KEY)
+  state.page = 1
+  loadItems().then(() => window.scrollTo(0, 0))
+})
 
 function itemHtml(i) {
     const st = i.state || {} // 老数据可能缺 state 字段——防御，防整个渲染挂掉（"翻页没反应"）
     return `
-    <div class="item ${st.read ? 'read collapsed' : ''} ${st.liked === 1 ? 'liked' : ''}">
+    <div class="item ${st.read ? 'read collapsed' : ''} ${st.liked === 1 ? 'liked' : ''}" data-id="${esc(i.id)}">
       <div class="item-head">
         ${(() => { if (i.aiSummary || state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div style="color:var(--acc)">译: ${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
         <a href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
@@ -600,5 +628,7 @@ $('#btnResetPrefs').addEventListener('click', async () => {
   loadPrefs()
 })
 
-loadStatus(); loadSources().then(loadItems)
+const pendingPos = restorePos()
+if (pendingPos) state.page = pendingPos.page
+loadStatus(); loadSources().then(async () => { await loadItems(); if (pendingPos?.id) scrollToAnchor(pendingPos) })
 setInterval(loadStatus, 2000) // 未读计数 2s 轮询
