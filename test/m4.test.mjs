@@ -77,6 +77,8 @@ const mkDeps = async () => {
 }
 
 const findHandler = (regs, path) => regs.find((r) => r.path === path)?.handler
+/** prefix 路由查找（同名 exact+prefix 并存时按 kind 区分） */
+const findPrefix = (regs, path) => regs.find((r) => r.path === path && r.kind === 'prefix')?.handler
 
 test('api: mountApi 注册全部路由；/api/items 过滤 + /api/feedback 持久化', async () => {
   const { mountApi } = await import('../lib/api.js')
@@ -131,7 +133,7 @@ test('api: /api/sources POST 走 svc.addSource 校验；PATCH/DELETE 生效', as
   const regs = []
   mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
   const srcs = findHandler(regs, '/dsh-rss-news-daily/api/sources')
-  const srcsSub = findHandler(regs, '/dsh-rss-news-daily/api/sources/')
+  const srcsSub = findPrefix(regs, '/dsh-rss-news-daily/api/sources')
   let res = mkRes()
   await srcs(mkReq('POST', '/dsh-rss-news-daily/api/sources', { url: 'https://n/feed' }), res)
   assert.equal(added.url, 'https://n/feed')
@@ -188,7 +190,7 @@ test('api: serveStatic 路径消毒——../ 与不存在返回 404', async () =
   const deps = await mkDeps()
   const regs = []
   mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
-  const st = findHandler(regs, '/dsh-rss-news-daily/web/')
+  const st = findPrefix(regs, '/dsh-rss-news-daily/web')
   let res = mkRes()
   await st(mkReq('GET', '/dsh-rss-news-daily/web/../index.ts'), res)
   assert.equal(res.statusCode, 404)
@@ -278,7 +280,7 @@ test('api: PATCH action:retry 走 svc.retrySource，未知 id→404；/api/fetch
   deps.svc.retrySource = async (id) => { retried = id; return id !== 'ghost' }
   const regs = []
   mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
-  const sub = findHandler(regs, '/dsh-rss-news-daily/api/sources/')
+  const sub = findPrefix(regs, '/dsh-rss-news-daily/api/sources')
   let res = mkRes()
   await sub(mkReq('PATCH', '/dsh-rss-news-daily/api/sources/https%3A%2F%2Fx%2Ff', { action: 'retry' }), res)
   assert.equal(retried, 'https://x/f')
@@ -408,7 +410,7 @@ test('source summarize: PATCH 持久化 + digest 跳过该源的 AI 摘要', asy
   mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
   deps.svc.setSummarize = async (id, s) => setSourceSummarize(deps.store, id, s)
   const res = mkRes()
-  await findHandler(regs, '/dsh-rss-news-daily/api/sources/')(mkReq('PATCH', '/dsh-rss-news-daily/api/sources/https%3A%2F%2Fx%2Ffeed', { summarize: true }), res)
+  await findPrefix(regs, '/dsh-rss-news-daily/api/sources')(mkReq('PATCH', '/dsh-rss-news-daily/api/sources/https%3A%2F%2Fx%2Ffeed', { summarize: true }), res)
   assert.equal(deps.store.sources.find((s) => s.url === 'https://x/feed').summarize, true)
   await setSourceSummarize(deps.store, 'https://x/feed', false)
   // digest: 该源条目不生成 aiSummary（feed 原摘要回落）

@@ -23,10 +23,22 @@
       function apply(ctx) {
         const log = (ctx && ctx.logger ? ctx.logger('rss-news-daily') : console)
 
+        // dsh-app:// 自定义协议下 iframe 内 fetch() 会被挂起；用 webServer 的
+        // http://127.0.0.1:port 绝对地址作 src，让页面落在 http origin（fetch 同源放行）。
+        let readerUrl = READER_URL
+        ctx.inject(['webServer'], (scoped) => {
+          try {
+            const root = scoped.webServer && scoped.webServer.rootURL
+            if (root) readerUrl = String(root).replace(/\/+$/, '') + READER_URL
+          } catch (e) {
+            log.warn(`webServer.rootURL unavailable, iframe stays on relative path: ${String(e)}`)
+          }
+        })
+
         ctx.inject(['sidebarRightTabs', 'slots'], (scoped) => {
           try {
             const ReaderBody = () => h('iframe', {
-              src: READER_URL,
+              src: readerUrl,
               style: { width: '100%', height: '100%', border: 'none', background: 'transparent' },
               title: 'RSS 新闻',
             })
@@ -64,8 +76,8 @@
                 try {
                   const sr = typeof ctx.get === 'function' ? ctx.get('sidebarRight') : undefined
                   if (sr && sr.openTab) sr.openTab(TAB_KIND)
-                  else window.open(READER_URL, '_blank')
-                } catch { window.open(READER_URL, '_blank') }
+                  else window.open(readerUrl, '_blank')
+                } catch { window.open(readerUrl, '_blank') }
               },
             }, h('span', { 'aria-hidden': 'true' }, '📰'), h('span', null, '新闻'))
             scoped.slots.inject('conversation.session.header.actions', () =>
