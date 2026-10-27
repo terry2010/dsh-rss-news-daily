@@ -255,13 +255,18 @@ export async function addSource(
   if (store.sources.some((s) => normalizeUrl(s.url) === normalizeUrl(url))) {
     throw new Error(`已存在该源: ${url}`)
   }
-  const doc = await fetch(url) // SSRF/超时/大小在 fetcher 内兜底
+  let doc = await fetch(url) // SSRF/超时/大小在 fetcher 内兜底
+  let viaProxy = false
+  if ('error' in doc) { // 直连失败 → 走全局代理重试（GFW 源：reddit/twitter 等）
+    const proxied = await fetch(url, undefined, { proxy: true })
+    if (!('error' in proxied)) { doc = proxied; viaProxy = true }
+  }
   if ('error' in doc) throw new Error(`抓取失败: ${doc.error}`)
   const feed = parseFeedDocument(doc.body) // 解析失败会抛 FeedParseError
   if (feed.items.length === 0) throw new Error('feed 无条目（可能不是有效 RSS/Atom）')
   const src = toFeedSource({
     url, title: opts.title || feed.title || url, category: opts.category,
-    builtin: false,
+    builtin: false, proxy: viaProxy ? true : undefined,
   })
   store.addSource(src)
   await store.save()
