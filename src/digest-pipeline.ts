@@ -344,19 +344,26 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     await translateItems(picked, opts.translateClient, opts)
   }
 
-  // 整体总结（summarize 内部已含抽取降级）
+  // 整体总结：>25 条走两段式——分块各总结→合并块总结再压一遍（单次调用压 100+ 条必然丢细节）
   const summaryItems = picked.map((i) => toSummarizable(i, sourcesById.get(i.sourceId)?.title ?? i.sourceId))
   opts.onItemDone?.(1, 1, 'finishing')
-  const sum = await summarize(
-    {
-      items: summaryItems, language: opts.language, mode: 'batch',
-      maxLength: opts.digestMaxLength,
-      maxTokens: opts.llmMaxTokens,
-      signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
-    },
-    opts.llmClient,
-    opts.llmEnabled && !!opts.llmClient,
-  )
+  const sumReq = (items: typeof summaryItems, maxLength: number) => ({
+    items, language: opts.language, mode: 'batch' as const, maxLength,
+    maxTokens: opts.llmMaxTokens,
+    signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
+  })
+  const llmOn = opts.llmEnabled && !!opts.llmClient
+  const sum = summaryItems.length <= 25 || !llmOn
+    ? await summarize(sumReq(summaryItems, opts.digestMaxLength), opts.llmClient, llmOn)
+    : await (async () => {
+        const chunkSize = 25
+        const chunks: typeof summaryItems[] = []
+        for (let i = 0; i < summaryItems.length; i += chunkSize) chunks.push(summaryItems.slice(i, i + chunkSize))
+        const chunkMax = Math.max(300, Math.ceil(opts.digestMaxLength / chunks.length))
+        const parts = await Promise.all(chunks.map((c) => summarize(sumReq(c, chunkMax), opts.llmClient, llmOn)))
+        const merged = parts.map((p, i) => ({ title: `第${i + 1}部分摘要`, sourceTitle: '', publishedAt: '', link: '', summary: p.text, content: '', topic: '', reasons: [] }))
+        return summarize(sumReq(merged, opts.digestMaxLength), opts.llmClient, llmOn)
+      })()
 
   // 源状态行：失败/冷却的源点名
   const failed = sources.filter((s) => s.health.lastError)

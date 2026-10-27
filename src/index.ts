@@ -305,7 +305,7 @@ export function apply(ctx: Context, config: ConfigType) {
     candidateHours: prefs.get().digestOpts?.candidateHours ?? undefined,
     dedupeStories: config.digest.dedupeStories,
     categoryPrompts: config.digest.categoryPrompts,
-    digestMaxLength: config.digest.maxLength,
+    digestMaxLength: prefs.get().digestOpts?.digestMaxLength ?? config.digest.maxLength,
     llmTimeoutMs: config.llm.timeoutMs,
     signal: digestAbort?.signal,
     onItemDone: (done, total, stage) => { digestProg.done = done; digestProg.total = total; digestProg.stage = stage || '' },
