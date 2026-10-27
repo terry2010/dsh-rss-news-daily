@@ -100,7 +100,10 @@ export function apply(ctx: Context, config: ConfigType) {
     listSources: () => effectiveSources(config.sources, store),
     addSource: (o) => addSource(fetcher, store, o),
     setEnabled: (id, en) => setSourceEnabled(store, id, en),
-    setSummarize: (id, s) => setSourceSummarize(store, id, s),
+    setSummarize: (id, s) => {
+      const cur = effectiveSources(config.sources, store).find((x) => x.id === normalizeUrl(id) || x.url === id)
+      return setSourceSummarize(store, id, s, cur?.enabled ?? true)
+    },
     removeSource: (id) => removeSource(store, id),
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),

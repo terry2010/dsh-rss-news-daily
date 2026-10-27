@@ -288,8 +288,9 @@ export async function setSourceEnabled(
   await store.save()
 }
 
-/** 切换源级 AI 摘要开关（summarize=false 的源，日报里用 feed 原摘要、不调 LLM）。 */
-export async function setSourceSummarize(store: Store, urlOrId: string, summarize: boolean): Promise<void> {
+/** 切换源级 AI 摘要开关（summarize=false 的源，日报里用 feed 原摘要、不调 LLM）。
+ *  currentEnabled 传当前生效 enabled——写覆盖层时保留，避免误复活被 config 停用的源。 */
+export async function setSourceSummarize(store: Store, urlOrId: string, summarize: boolean, currentEnabled = true): Promise<void> {
   const id = normalizeUrl(urlOrId)
   const builtin = builtinCatalog().find((s) => normalizeUrl(s.url) === id)
     ?? builtinCatalog().find((s) => s.url === urlOrId)
@@ -299,7 +300,7 @@ export async function setSourceSummarize(store: Store, urlOrId: string, summariz
   } else {
     store.addSource(toFeedSource({
       url: urlOrId, title: builtin?.name || urlOrId,
-      category: builtin?.category, enabled: true, summarize,
+      category: builtin?.category, enabled: currentEnabled, summarize,
     }))
   }
   await store.save()

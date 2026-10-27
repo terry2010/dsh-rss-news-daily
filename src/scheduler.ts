@@ -78,21 +78,19 @@ export function startScheduler(ctx: TimerSeam, options: SchedulerOptions): () =>
         const sched = options.getSchedule?.() ?? { digestTimes: [options.dailyTime], fetchTimes: [] }
         const digestTimes = sched.digestTimes.length ? sched.digestTimes : [options.dailyTime]
         const fetchTimes = sched.fetchTimes
-        // 取两表所有时刻里最近的下一跳
+        // 取两表所有时刻里最近的下一跳；归属按 secondsUntil 相等判定（'8:00'/'08:00' 异形同刻不误判）
         const now = new Date()
-        let best: { t: string; secs: number } | undefined
-        for (const t of [...digestTimes, ...fetchTimes]) {
-          try {
-            const { secondsUntil } = nextZonedOccurrence(t, options.timezone || undefined, now)
-            if (!best || secondsUntil < best.secs) best = { t, secs: secondsUntil }
-          } catch {
-            log.warn(`invalid schedule time skipped: ${t}`)
-          }
+        const secsOf = (t: string): number => {
+          try { return nextZonedOccurrence(t, options.timezone || undefined, now).secondsUntil }
+          catch { log.warn(`invalid schedule time skipped: ${t}`); return Number.POSITIVE_INFINITY }
         }
-        if (!best) return
-        const doDigest = digestTimes.includes(best.t)
-        const doFetch = fetchTimes.includes(best.t)
-        nextTimer = ctx.timeout(() => fire(doFetch, doDigest), best.secs * 1000)
+        let bestSecs = Number.POSITIVE_INFINITY
+        for (const t of [...digestTimes, ...fetchTimes]) bestSecs = Math.min(bestSecs, secsOf(t))
+        if (bestSecs === Number.POSITIVE_INFINITY) return
+        const inTable = (times: string[]) => times.some((t) => secsOf(t) === bestSecs)
+        const doDigest = inTable(digestTimes)
+        const doFetch = inTable(fetchTimes)
+        nextTimer = ctx.timeout(() => fire(doFetch, doDigest), bestSecs * 1000)
       } catch (error) {
         log.error(`digest scheduler not armed (invalid dailyTime/timezone): ${String(error)}`)
       }
