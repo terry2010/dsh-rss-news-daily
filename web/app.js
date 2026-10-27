@@ -256,7 +256,7 @@ function renderSources() {
         <button data-src-act="retry" data-id="${esc(s.url)}" title="${s.health?.lastError || s.health?.cooldownUntil ? '复活并重试该源' : '立即抓取该源'}">${s.health?.lastError || s.health?.cooldownUntil ? '↻ 重试' : '↻ 抓取'}</button>
         <button data-src-act="toggle" data-id="${esc(s.url)}" data-en="${s.enabled ? 0 : 1}">${s.enabled ? '停用' : '启用'}</button>
         <button data-src-act="sum" data-id="${esc(s.url)}" data-sum="${s.summarize !== false ? 0 : 1}" title="该源条目是否生成 AI 摘要">${s.summarize !== false ? '摘要✓' : '摘要✗'}</button>
-        <button data-src-act="edit" data-id="${esc(s.url)}" title="编辑源属性">⚙</button>
+        <button data-src-act="edit" data-id="${esc(s.url)}" title="编辑源属性">⚙ 编辑</button>
         ${s.builtin ? '' : `<button data-src-act="del" data-id="${esc(s.url)}">删除</button>`}
       </div>
     </div>

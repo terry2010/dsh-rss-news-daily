@@ -50,13 +50,8 @@
     <div class="toolbar">
       <input type="url" id="newSrcUrl" placeholder="https://…/feed.xml">
       <input type="text" id="newSrcTitle" placeholder="名称（可选）">
-      <select id="newSrcCat">
-        <option value="">分类…</option>
-        <option>AI</option><option>科技</option><option>开发</option><option>开源</option>
-        <option>产品</option><option>商业</option><option>财经</option><option>国际</option>
-        <option>科学</option><option>健康</option><option>环境</option><option>社会</option>
-        <option>人文</option><option>独立博客</option>
-      </select>
+      <input type="text" id="newSrcCat" list="srcCatList" placeholder="分类…">
+      <datalist id="srcCatList"></datalist>
       <button id="btnAddSrc">＋ 添加</button>
       <button id="btnRetryAll" title="并发重试全部失败/冷却源">↻ 重试全部失败源</button>
       <button id="btnOpmlExport">⇩ 导出 OPML</button>
