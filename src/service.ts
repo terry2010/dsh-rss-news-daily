@@ -249,6 +249,7 @@ export async function addSource(
   fetch: ReturnType<typeof createFetcher>,
   store: Store,
   opts: AddSourceOptions,
+  classify?: (feed: { title: string; items: { title: string }[] }) => Promise<string>,
 ): Promise<FeedSource> {
   const url = opts.url.trim()
   if (!url) throw new Error('url required')
@@ -264,8 +265,9 @@ export async function addSource(
   if ('error' in doc) throw new Error(`抓取失败: ${doc.error}`)
   const feed = parseFeedDocument(doc.body) // 解析失败会抛 FeedParseError
   if (feed.items.length === 0) throw new Error('feed 无条目（可能不是有效 RSS/Atom）')
+  const category = opts.category || (classify ? await classify(feed) : '') || undefined
   const src = toFeedSource({
-    url, title: opts.title || feed.title || url, category: opts.category,
+    url, title: opts.title || feed.title || url, category,
     builtin: false, proxy: viaProxy ? true : undefined,
   })
   store.addSource(src)

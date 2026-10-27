@@ -321,7 +321,7 @@ $('#btnAddSrc').addEventListener('click', async () => {
   try {
     await post('/sources', { url, title: $('#newSrcTitle').value.trim() || undefined, category: $('#newSrcCat').value || undefined })
     $('#newSrcUrl').value = ''; $('#newSrcTitle').value = ''
-    toast('已添加'); loadSources()
+    toast(`已添加${r?.category ? ` · 分类: ${r.category}` : ''}`); loadSources()
   } catch (e) { toast(`添加失败: ${e.message}`) }
 })
 

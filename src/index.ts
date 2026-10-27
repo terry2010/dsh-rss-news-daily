@@ -116,6 +116,21 @@ export function apply(ctx: Context, config: ConfigType) {
     return cjk * 2 <= t.replace(/\s/g, '').length
   }
 
+  // LLM 自动分类：新加源时把频道标题+条目样本丢给翻译模型归到现有分类，不中返回空
+  const CLASSIFY_CATS = ['AI', '科技', '国际', '开发', '科学', '财经', '产品', '社会·人文', '综合']
+  const classifyFeed = async (feed: { title: string; items: { title: string }[] }): Promise<string> => {
+    if (!llmRuntime) return '' // 惰性求值：函数体调用时才读 llmRuntime（声明在下方）
+    const client = new DshLlmClient(llmRuntime, pickTranslateRoute(), log)
+    try {
+      const text = await client.generateText({
+        system: `把 RSS 源归类到这些分类之一：${CLASSIFY_CATS.join('、')}。只输出分类名，不要解释。`,
+        prompt: `频道：${feed.title}\n\n条目：${feed.items.slice(0, 5).map((i) => i.title).join('；')}`,
+        maxTokens: 20,
+      })
+      return CLASSIFY_CATS.find((c) => text.trim().includes(c)) || ''
+    } catch { return '' }
+  }
+
   const runFetchForce = (force = false, onlyFailed = false, filter?: { source?: string; category?: string }) => {
     // onlyFailed：只重试失败/冷却中的启用源（「重试全部失败源」按钮）；否则默认全量
     let pool = effectiveSources(config.sources, store)
@@ -146,7 +161,7 @@ export function apply(ctx: Context, config: ConfigType) {
   // 对外操作门面：tools（M2）与 HTTP API（M4）共用同一组语义
   const svc: NewsService = {
     listSources: () => effectiveSources(config.sources, store),
-    addSource: (o) => addSource(fetcher, store, o),
+    addSource: (o) => addSource(fetcher, store, o, o.category ? undefined : classifyFeed),
     setEnabled: (id, en) => setSourceEnabled(store, id, en),
     setSummarize: (id, s) => {
       const cur = effectiveSources(config.sources, store).find((x) => x.id === normalizeUrl(id) || x.url === id)
