@@ -317,7 +317,12 @@ export function apply(ctx: Context, config: ConfigType) {
         sources: list.length,
         enabled: list.filter((s) => s.enabled).length,
         items: (store as { count?: () => number }).count?.() ?? store.items.length,
-        todayAdded: store.items.filter((i) => { const d = new Date(i.fetchedAt); const t = new Date(); t.setHours(0, 0, 0, 0); return d.getTime() >= t.getTime() }).length,
+        todayAdded: (() => { // SQL COUNT（窗口外的也算,且不受手动删库幻影影响）
+          const t = new Date(); t.setHours(0, 0, 0, 0)
+          const qi = (store as { queryItems?: (o: { day?: string; pageSize?: number }) => { total: number } }).queryItems
+          return qi ? qi.call(store, { day: zonedDayKey(new Date(), config.timezone || undefined), pageSize: 1 }).total
+            : store.items.filter((i) => new Date(i.fetchedAt).getTime() >= t.getTime()).length
+        })(),
         lastAdded: (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0,
         todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate } : undefined })(),
         tokenStats: store.meta.tokenStats,
