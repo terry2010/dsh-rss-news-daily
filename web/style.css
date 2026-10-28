@@ -6,10 +6,10 @@ header { position: sticky; top: 0; background: var(--bg); border-bottom: 1px sol
 .tabs { display: flex; gap: 6px; }
 .tab { background: none; border: 1px solid var(--line); color: var(--dim); padding: 6px 12px; border-radius: 8px; cursor: pointer; }
 .tab.active { color: var(--fg); border-color: var(--acc); }
-.statusbar { font-size: 12px; color: var(--dim); margin-top: 6px; }
+.statusbar { font-size: 12px; color: var(--dim); margin-top: 4px; margin-bottom: 4px; }
 header { position: sticky; top: 0; z-index: 10; background: var(--bg); padding: 8px 12px 0; }
-main { padding: 12px; max-width: 860px; margin: 0 auto; }
-.toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; align-items: center; }
+main { padding: 6px 12px 12px; max-width: 860px; margin: 0 auto; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; align-items: center; }
 .filterbar { position: sticky; top: 44px; z-index: 5; background: var(--bg); padding: 4px 0; margin-bottom: 6px; }
 input, select, button { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
 button { cursor: pointer; }
