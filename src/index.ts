@@ -25,7 +25,7 @@ import { effectiveSources, runFetchCycle, addSource, removeSource, setSourceEnab
 import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
-import { runDailyDigest } from './digest-pipeline.js'
+import { runDailyDigest, scoreNewItems, appendHourlyBrief } from './digest-pipeline.js'
 import { DshLlmClient } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
 import { mountApi } from './api.js'
@@ -69,7 +69,11 @@ export function apply(ctx: Context, config: ConfigType) {
     return
   }
   const dataDir = resolveDataDir(config.dataDir)
-  const store = new Store({ path: join(dataDir, 'store.json'), maxItems: config.fetch.maxStoredItems, log })
+  const store = new Store({
+    path: join(dataDir, 'store.json'), maxItems: config.fetch.maxStoredItems, log,
+    retentionDays: () => prefs.get().digestOpts?.retentionDays ?? 90,
+    pruneLowQuality: () => prefs.get().digestOpts?.pruneLowQuality ?? true,
+  })
   const prefs = new PrefsStore(join(dataDir, 'prefs.json'), log)
   const fetcher = createFetcher({
     proxyUrl: () => (prefs.get() as { proxyUrl?: string }).proxyUrl || config.fetch.proxyUrl,
@@ -95,7 +99,43 @@ export function apply(ctx: Context, config: ConfigType) {
     dedupeWindowDays: config.dedupe.windowDays,
     log,
   })
-  const runFetch = () => runFetchCycle(makeFetchOpts()) // scheduler 回调签名 (signal?)=>…，不带参
+  // P1+P8：评分+快报——fetch 完成后 fire-and-forget（调度/手动路径共用，不阻塞 fetch 返回）
+  let scoringInFlight = false // 闩锁：与 digest rescoreMissing 互斥，防同批双评
+  const scoreAndBrief = async (cycleStart: string, signal?: AbortSignal) => {
+    const dopts = prefs.get().digestOpts
+    const doScore = (dopts?.scoreOnFetch ?? config.fetch.scoreOnFetch) && config.llm.enabled && llmRuntime
+    if (!doScore || scoringInFlight) return
+    scoringInFlight = true
+    try {
+      const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart)
+      const scored = await scoreNewItems(fresh, new DshLlmClient(llmRuntime!, pickRoute(), log), {
+        llmTimeoutMs: config.llm.timeoutMs,
+        llmScoreCandidates: dopts?.llmScoreCandidates ?? config.digest.llmScoreCandidates,
+        llmMaxTokens: config.llm.maxTokens,
+        prefs: prefs.get(),
+        signal,
+      }, log)
+      if (scored) await store.save()
+      if (dopts?.hourlyBrief ?? config.fetch.hourlyBrief) {
+        const now = new Date()
+        const day = zonedDayKey(now, config.timezone || undefined)
+        const hm = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: config.timezone || undefined }).format(now)
+        await appendHourlyBrief({
+          items: fresh,
+          sourcesById: new Map(effectiveSources(config.sources, store).map((src) => [src.id, { title: src.title }])),
+          day, time: hm,
+          minScore: config.fetch.hourlyMinScore,
+          digestsDir: join(dataDir, 'digests'), log,
+        })
+      }
+    } catch (e) { log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }
+    finally { scoringInFlight = false }
+  }
+  const runFetch = () => {
+    const cycleStart = new Date().toISOString()
+    return runFetchCycle(makeFetchOpts())
+      .then((r) => { void scoreAndBrief(cycleStart); return r }) // fire-and-forget，不阻塞抓取结果
+  }
   let fetchProg = { running: false, done: 0, total: 0 }
   let digestProg = { running: false, done: 0, total: 0, stage: '' }
   let fetchAbort: AbortController | undefined
@@ -152,11 +192,15 @@ export function apply(ctx: Context, config: ConfigType) {
           }
           if (fresh.length) { await store.save(); log.info(`autoTranslate: ${fresh.length} items translated`) }
         }
+        void scoreAndBrief(cycleStart, fetchAbort?.signal) // fire-and-forget：评分不阻塞抓取返回
         return result
       })
       .finally(() => { fetchProg = { running: false, done: 0, total: 0 }; fetchAbort = undefined })
   } // svc/api：手动抓取可带 force 绕冷却
-  const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => runFetchCycle(makeFetchOpts(sources))
+  const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => {
+    const cycleStart = new Date().toISOString()
+    return runFetchCycle(makeFetchOpts(sources)).then((r) => { void scoreAndBrief(cycleStart); return r })
+  }
 
   // 对外操作门面：tools（M2）与 HTTP API（M4）共用同一组语义
   const svc: NewsService = {
@@ -258,6 +302,8 @@ export function apply(ctx: Context, config: ConfigType) {
         sources: list.length,
         enabled: list.filter((s) => s.enabled).length,
         items: store.items.length,
+        todayAdded: store.items.filter((i) => { const d = new Date(i.fetchedAt); const t = new Date(); t.setHours(0, 0, 0, 0); return d.getTime() >= t.getTime() }).length,
+        lastAdded: (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0,
         lastFetchAt: store.meta.lastFetchAt,
         lastDigestDay: store.meta.lastDigestDay,
         failures,
@@ -301,6 +347,8 @@ export function apply(ctx: Context, config: ConfigType) {
     digestItems: prefs.get().digestOpts?.digestItems ?? config.digest.digestItems,
     perTopicLimit: prefs.get().digestOpts?.perTopicLimit ?? config.digest.perTopicLimit,
     llmScoreCandidates: prefs.get().digestOpts?.llmScoreCandidates ?? config.digest.llmScoreCandidates,
+    subscribedTopics: prefs.get().subscribedTopics,
+    rescoreMissing: !scoringInFlight && (prefs.get().digestOpts?.rescoreMissing ?? config.digest.rescoreMissing),
     minLlmScore: prefs.get().digestOpts?.minLlmScore ?? config.digest.minLlmScore,
     candidateHours: prefs.get().digestOpts?.candidateHours ?? undefined,
     dedupeStories: config.digest.dedupeStories,

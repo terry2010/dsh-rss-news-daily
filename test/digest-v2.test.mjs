@@ -164,15 +164,15 @@ test('v2: CJK 标题同题合并（bigram 相似度）', async () => {
   assert.match(doc.markdown, /同题 2 家报道/)
 })
 
-test('v2: 陈旧 llmScore/aiBlocks 在 LLM 关闭时被清除、不渲染评分', async () => {
+test('v2: llmScore 是 ingest 持久属性（不清/渲染），aiBlocks 每轮清', async () => {
   const { runDailyDigest } = await import('../lib/digest-pipeline.js')
   const stale = mkItem(1)
   stale.llmScore = 9; stale.aiBlocks = { summary: '旧摘要', background: '旧', impact: '旧' }
   const store = await mkStore([stale])
   const doc = await runDailyDigest(mkOpts(store, { llmEnabled: false, summaryEnabled: false }))
-  assert.equal(stale.llmScore, undefined) // 清残留
-  assert.doesNotMatch(doc.markdown, /评分 9/) // 不渲染旧徽标
-  assert.equal(stale.aiBlocks, undefined)
+  assert.equal(stale.llmScore, 9) // ingest 属性持久
+  assert.match(doc.markdown, /评分 9/) // 评分徽标照常渲染
+  assert.equal(stale.aiBlocks, undefined) // 每轮产物清除
 })
 
 test('v2: perTopicLimit>0 配额截断 + 溢出补齐不空缺', async () => {

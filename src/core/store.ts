@@ -26,6 +26,8 @@ export interface StoreMeta {
   lastDigestAt: string
   /** Date key (YYYY-MM-DD in the digest timezone) of the latest digest. */
   lastDigestDay: string
+  /** 最近一次抓取周期新增条目数（状态栏"本次新增"） */
+  lastFetchAdded?: number
 }
 
 export interface StoreData {
@@ -144,6 +146,10 @@ export interface StoreOptions {
   path: string
   /** Maximum number of items kept (oldest fetched are pruned on save). */
   maxItems?: number
+  /** 条目保留天数（0=不按时间过期，仅数量上限）；每次 prune 实时读取 */
+  retentionDays?: () => number
+  /** 数量超限清退时低质优先（llmScore/启发式分最低的先走）；false=最老的先走 */
+  pruneLowQuality?: () => boolean
   log?: LogSink
 }
 
@@ -155,6 +161,8 @@ export class Store {
   readonly path: string
   readonly maxItems: number
   private readonly log: LogSink
+  private readonly retentionDays: () => number
+  private readonly pruneLowQuality: () => boolean
   private data: StoreData
   private dirty = false
   private writeQueue: Promise<void> = Promise.resolve()
@@ -162,6 +170,8 @@ export class Store {
   constructor(options: StoreOptions) {
     this.path = options.path
     this.maxItems = options.maxItems ?? 1000
+    this.retentionDays = options.retentionDays ?? (() => 0)
+    this.pruneLowQuality = options.pruneLowQuality ?? (() => false)
     this.log = options.log ?? noopLog
     this.data = {
       schema: STORE_SCHEMA,
@@ -248,13 +258,25 @@ export class Store {
     return this.writeQueue
   }
 
-  /** Enforce the item retention cap (oldest fetched items are dropped). */
+  /** 清退：先按保留天数过期，再按数量上限砍（低质优先 or 最老优先）。 */
   private prune(): void {
+    const days = this.retentionDays()
+    if (days > 0) {
+      const cutoff = Date.now() - days * 86400e3
+      const before = this.data.items.length
+      this.data.items = this.data.items.filter((i) => new Date(i.fetchedAt).getTime() >= cutoff)
+      if (this.data.items.length < before) this.log.info(`pruned ${before - this.data.items.length} expired items (>${days}d)`)
+    }
     if (this.data.items.length <= this.maxItems) return
-    const sorted = [...this.data.items].sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))
+    // 低质优先：按质量键升序砍；否则按 fetchedAt 最老优先
+    const lowQ = this.pruneLowQuality()
+    const qualityKey = (i: FeedItem) => i.llmScore ?? Math.min(10, Math.max(0, (i.score ?? 0) * 8))
+    const sorted = [...this.data.items].sort((a, b) => lowQ
+      ? (qualityKey(a) - qualityKey(b)) || a.fetchedAt.localeCompare(b.fetchedAt)
+      : a.fetchedAt.localeCompare(b.fetchedAt))
     const kept = sorted.slice(sorted.length - this.maxItems)
     this.data.items = kept
-    this.log.info(`pruned ${sorted.length - this.maxItems} oldest items (cap ${this.maxItems})`)
+    this.log.info(`pruned ${sorted.length - this.maxItems} items (cap ${this.maxItems}${lowQ ? ', low-quality first' : ''})`)
   }
 
   /** Rename a corrupt file aside so the original is moved, not copied. */

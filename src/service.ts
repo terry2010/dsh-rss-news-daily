@@ -454,6 +454,7 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
   await Promise.all(workers)
   result.finishedAt = nowFn().toISOString()
   opts.store.meta.lastFetchAt = result.finishedAt
+  opts.store.meta.lastFetchAdded = result.totalAdded
   await opts.store.save()
   log.info(`fetch cycle done: ${result.totalAdded} added / ${result.totalFetched} fetched / ${result.errors} errors`)
   return result

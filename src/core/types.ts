@@ -87,6 +87,8 @@ export interface FeedItem {
   tags?: string[]
   /** digest v2：LLM 重写短标题（条目块调用产出） */
   aiTitle?: string
+  /** 当日快报中出现的时段数（≥2=持续热点） */
+  hotCycles?: number
   /** digest v2：合并掉的同题新闻数（本条为主条目时） */
   dupCount?: number
   /** digest v2：本条被合并进的主条目 id（非主条目时） */

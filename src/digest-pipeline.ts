@@ -36,6 +36,10 @@ export interface DigestPipelineOptions {
   signal?: AbortSignal
   /** 指定生成的目标日（yyyy-mm-dd），缺省按 now 所在日 */
   day?: string
+  /** 订阅分类（缺省/空=全部订阅）；不在表内的 topic 不进日报候选池 */
+  subscribedTopics?: string[]
+  /** 日报补评无分候选（存量/评分失败兜底），默认 true */
+  rescoreMissing?: boolean
   /** 翻译用 LLM client（translateLlm 路由）；存在时对英文条目生成中英对照译文 */
   translateClient?: LlmClient
   /** 每完成一条回调（done, total, stage）——stage: summaries/translate/finishing，进度上报用 */
@@ -74,6 +78,8 @@ function toSummarizable(item: FeedItem, sourceTitle: string): SummarizableItem {
     summary: item.summary,
     content: item.content,
     sourceTitle,
+    topic: item.topic,
+    hour: (item.fetchedAt || '').slice(11, 16),
     publishedAt: item.publishedAt,
   }
 }
@@ -124,7 +130,55 @@ const DEFAULT_CAT_PROMPTS: Record<string, string> = {
   '综合': '核心信息是什么、价值何在',
 }
 
-/** v2 LLM 评分：启发式粗排 top N 批量打分 [{i,s,r}]；解析失败返回 false（回退启发式）。 */
+/** 偏好提示段：调教权重→特别关注、banned→屏蔽（注入评分 system prompt）。 */
+function buildPrefsHint(prefs?: DigestPipelineOptions['prefs']): string {
+  if (!prefs) return ''
+  const top = [...Object.entries(prefs.topics ?? {}), ...Object.entries(prefs.keywords ?? {})]
+    .filter(([, w]) => w > 1.1).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k]) => k)
+  const banned = (prefs.bannedKeywords ?? []).slice(0, 10)
+  const parts: string[] = []
+  if (top.length) parts.push(`用户特别关注：${top.join('、')}——相关条目可上调 1-2 档`)
+  if (banned.length) parts.push(`用户明确屏蔽：${banned.join('、')}——命中建议 ≤2 分`)
+  return parts.length ? `\n${parts.join('\n')}` : ''
+}
+
+/** 单块评分核心：一次批量调用给 items 打 llmScore/tags；返回评出条数（失败 0）。 */
+async function scoreChunk(
+  chunk: FeedItem[],
+  client: LlmClient,
+  opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmMaxTokens' | 'signal' | 'prefs'>,
+  log: LogSink,
+): Promise<number> {
+  try {
+    const text = await client.generateText({
+      system: '你是新闻价值评审。按该条目所属领域的价值分档打分：9-10 突破（领域内原创深度/重大版本/行业变革）；7-8 高值（重要进展值得即读）；5-6 有趣（增量/教程/值得关注）；3-4 低优先（例行更新/软文）；0-2 噪声（垃圾/标题党）。不要奖励夸张标题；区分厂商宣称与已交付能力。并给每条 2-4 个主题标签。'
+        + buildPrefsHint(opts.prefs)
+        + ' 只输出 JSON 数组 [{"i":序号,"s":分数,"r":"10字内理由","t":["标签"]}]，不要解释。',
+      prompt: chunk.map((it, idx) => `${idx + 1}. [${it.topic || '综合'}] ${it.title}`).join('\n'),
+      maxTokens: 2400,
+      signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
+    })
+    const m = text.match(/\[[\s\S]*\]/)
+    const arr: Array<{ i: number; s: number; r?: string; t?: string[] }> = m ? JSON.parse(m[0]) : []
+    let n = 0
+    for (const e of arr) {
+      const it = chunk[Number(e.i) - 1]
+      if (it && typeof e.s === 'number' && e.s >= 1 && e.s <= 10) {
+        it.llmScore = e.s
+        if (e.r) it.llmReason = String(e.r)
+        if (Array.isArray(e.t) && e.t.length) it.tags = e.t.map(String).slice(0, 4)
+        n += 1
+      }
+    }
+    log.info(`llmScore: ${n}/${chunk.length} items scored`)
+    return n
+  } catch (e) {
+    log.warn(`scoreChunk failed: ${e instanceof Error ? e.message : e}`)
+    return 0
+  }
+}
+
+/** v2 LLM 评分：启发式粗排 top N 批量打分 [{i,s,r}]；覆盖过半才有效（回退启发式）。 */
 async function llmScoreItems(
   items: FeedItem[],
   client: LlmClient,
@@ -133,31 +187,80 @@ async function llmScoreItems(
 ): Promise<boolean> {
   const top = items.filter((i) => (i.score ?? 0) > -0.5).slice(0, opts.llmScoreCandidates ?? 40)
   if (!top.length) return false
-  try {
-    const text = await client.generateText({
-      system: '你是新闻价值评审。按分档打分：9-10 突破（原创深度/重大版本/行业变革）；7-8 高值（重要进展值得即读）；5-6 有趣（增量/教程/值得关注）；3-4 低优先（例行更新/软文）；0-2 噪声（垃圾/标题党）。不要奖励夸张标题；区分厂商宣称与已交付能力。并给每条 2-4 个主题标签。只输出 JSON 数组 [{"i":序号,"s":分数,"r":"10字内理由","t":["标签"]}]，不要解释。',
-      prompt: top.map((it, idx) => `${idx + 1}. [${it.topic || '?'}] ${it.title}`).join('\n'),
-      maxTokens: 2400,
-      signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
-    })
-    const m = text.match(/\[[\s\S]*\]/)
-    const arr: Array<{ i: number; s: number; r?: string; t?: string[] }> = m ? JSON.parse(m[0]) : []
-    let n = 0
-    for (const e of arr) {
-      const it = top[Number(e.i) - 1]
-      if (it && typeof e.s === 'number' && e.s >= 1 && e.s <= 10) {
-        it.llmScore = e.s
-        if (e.r) it.llmReason = String(e.r)
-        if (Array.isArray(e.t) && e.t.length) it.tags = e.t.map(String).slice(0, 4)
-        n += 1
-      }
-    }
-    log.info(`llmScore: ${n}/${top.length} items scored`)
-    return n >= Math.ceil(top.length / 2) // 覆盖过半才算数——只评出几条会误杀未评条目
-  } catch (e) {
-    log.warn(`llmScore failed, fallback to heuristic: ${e instanceof Error ? e.message : e}`)
-    return false
+  const n = await scoreChunk(top, client, opts, log)
+  return n >= Math.ceil(top.length / 2) // 覆盖过半才算数——只评出几条会误杀未评条目
+}
+
+/** P1 抓取后评分：本轮新条目本批去重 → 分块批量评分（无分跳过幂等）；返回评出条数。 */
+export async function scoreNewItems(
+  items: FeedItem[],
+  client: LlmClient,
+  opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs'>,
+  log: LogSink,
+): Promise<number> {
+  const fresh = items.filter((i) => i.llmScore == null && !i.state.hidden)
+  if (!fresh.length || (opts.llmScoreCandidates ?? 40) <= 0) return 0 // 0=关闭评分
+  dedupeStories(fresh) // 本批 Jaccard 去重：dupOf 不送评分省 token；跨批同题日报时再并
+  const scorable = fresh.filter((i) => !i.dupOf)
+  const chunkSize = Math.max(1, opts.llmScoreCandidates ?? 40)
+  const maxChunks = 50 // 防洪：单轮最多 50 块
+  let scored = 0
+  for (let i = 0; i < scorable.length && i / chunkSize < maxChunks; i += chunkSize) {
+    if (opts.signal?.aborted) break
+    scored += await scoreChunk(scorable.slice(i, i + chunkSize), client, opts, log)
   }
+  if (scorable.length > maxChunks * chunkSize) log.warn(`scoreNewItems truncated: ${scorable.length} items > ${maxChunks} chunks`)
+  return scored
+}
+
+/** P8 时段快报：高分条目按领域分组追加/覆盖 `## HH:mm 时段快报` 节（{day}-hourly.md）。 */
+export async function appendHourlyBrief(opts: {
+  items: FeedItem[]
+  sourcesById: Map<string, { title: string }>
+  day: string
+  time: string // "HH:mm"
+  minScore: number
+  digestsDir: string
+  log?: LogSink
+}): Promise<number> {
+  const log = opts.log || noopLog
+  const scored = opts.items.filter((i) => !i.dupOf && !i.state.hidden && (i.llmScore ?? 0) >= opts.minScore)
+  if (!scored.length) return 0
+  const groups = new Map<string, FeedItem[]>()
+  for (const it of [...scored].sort((a, b) => (b.llmScore ?? 0) - (a.llmScore ?? 0))) {
+    const t = it.topic || '综合'
+    groups.set(t, [...(groups.get(t) ?? []), it])
+  }
+  const lines = [`## ${opts.time} 时段快报`, '']
+  for (const [topic, list] of groups) {
+    lines.push(`### ${topic}`)
+    for (const it of list) {
+      const src = opts.sourcesById.get(it.sourceId)?.title ?? it.sourceId
+      const meta = [`评分 ${it.llmScore}`, src, ...(it.tags ?? []).map((t) => `#${t}`)].join(' · ')
+      lines.push(`- **${it.title}**  \n  ${meta}${it.llmReason ? ` — ${it.llmReason}` : ''}  \n  ${it.link || ''}`)
+    }
+    lines.push('')
+  }
+  const section = lines.join('\n').trimEnd() + '\n'
+  const file = join(opts.digestsDir, `${opts.day}-hourly.md`)
+  const head = `# 时段快报 · ${opts.day}\n\n`
+  let body = ''
+  await mkdir(opts.digestsDir, { recursive: true })
+  try { body = await readFile(file, 'utf8') } catch { /* 新文件 */ }
+  if (body.startsWith(head)) body = body.slice(head.length)
+  const marker = `## ${opts.time} 时段快报`
+  // 幂等：同刻已存在则替换该节（到下一个 ## 或文件尾），否则追加
+  const idx = body.indexOf(marker)
+  if (idx >= 0) {
+    const rest = body.slice(idx + marker.length)
+    const nextH = rest.indexOf('\n## ')
+    body = body.slice(0, idx) + section + (nextH >= 0 ? rest.slice(nextH + 1) : '')
+  } else {
+    body = body + section
+  }
+  await writeFile(file, head + body, 'utf8')
+  log.info(`hourlyBrief ${opts.time}: ${scored.length} items -> ${file}`)
+  return scored.length
 }
 
 /** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。 */
@@ -231,17 +334,18 @@ async function llmClusterItems(
   }
 }
 
-/** v2 最终挑选：LLM 分优先（回退启发式分）+ minLlmScore 阈值 + perTopicLimit 上限。 */
-function pickFinal(items: FeedItem[], opts: DigestPipelineOptions, llmRan: boolean): FeedItem[] {
+/** v3 最终挑选：llmScore ?? 启发式 单键降序；阈值只管有分条目；perTopicLimit 软配额。 */
+function pickFinal(items: FeedItem[], opts: DigestPipelineOptions): FeedItem[] {
   const minScore = opts.minLlmScore ?? 5
-  // llmRan 时才按 LLM 分排序——回退/关闭路径纯启发式，陈旧残留分不参与
-  const ranked = [...items].sort((a, b) => (llmRan ? (b.llmScore ?? 0) - (a.llmScore ?? 0) : 0) || (b.score ?? 0) - (a.score ?? 0))
+  // ingest 时一次写入的 llmScore 参与排序；无分条目启发式分(~0-1.2域)线性映射到 0-10 正常竞争（未评≠低分）
+  const keyOf = (it: FeedItem) => it.llmScore ?? Math.min(10, Math.max(0, (it.score ?? 0) * 8))
+  const ranked = [...items].sort((a, b) => (keyOf(b) - keyOf(a)) || (b.score ?? 0) - (a.score ?? 0))
   const picked: FeedItem[] = []
   const overflow: FeedItem[] = []
   const perTopic: Record<string, number> = {}
   for (const it of ranked) {
     if ((it.score ?? 0) <= -0.5) continue // 屏蔽/隐藏
-    if (llmRan && (it.llmScore ?? 0) < minScore) continue // 评过分但未达标，以及未进候选池的
+    if (it.llmScore != null && it.llmScore < minScore) continue // 评过且未达标才过滤
     const topic = it.topic || '综合'
     if (opts.perTopicLimit > 0 && (perTopic[topic] || 0) >= opts.perTopicLimit) { overflow.push(it); continue }
     picked.push(it)
@@ -311,12 +415,14 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
 
   // 候选池：今日未推过 + 未隐藏；candidateHours>0 时限近 N 小时
   const cutoff = (opts.candidateHours ?? 0) > 0 ? now.getTime() - opts.candidateHours! * 3600e3 : 0
+  const subs = opts.subscribedTopics
   const candidates = opts.store.items.filter((i) =>
     (opts.force || i.digestedDay !== day) && !i.state.hidden
-    && (!cutoff || new Date(i.fetchedAt).getTime() >= cutoff),
+    && (!cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
+    && (!subs?.length || subs.includes(i.topic || '综合')), // P5 订阅分类：未订阅不进池
   )
   // v2：启发式全量粗排 → 同题合并 → LLM 评分（可关/失败回退）→ 阈值+perTopic 挑选
-  for (const i of candidates) { i.llmScore = undefined; i.llmReason = undefined; i.dupCount = undefined; i.dupOf = undefined; i.aiBlocks = undefined } // 清上轮持久化残留
+  for (const i of candidates) { i.dupCount = undefined; i.dupOf = undefined; i.aiBlocks = undefined } // 清上轮产物；llmScore/tags 是 ingest 一次性属性不清
   const allScored = scoreAndSelect(candidates, sourcesById, Math.max(candidates.length, 1), {
     prefs: opts.prefs,
     digestDay: day,
@@ -330,10 +436,12 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     await llmClusterItems(merged, opts.llmClient, opts, log)
     merged = merged.filter((i) => !i.dupOf)
   }
-  const llmRan = opts.llmEnabled && opts.llmClient && (opts.llmScoreCandidates ?? 40) > 0
-    ? await llmScoreItems(merged, opts.llmClient, opts, log)
-    : false
-  const picked = pickFinal(merged, opts, llmRan)
+  // P3 补评兜底：无分候选（存量/评分失败批次）补评一次，写回持久化
+  if ((opts.rescoreMissing ?? true) && opts.llmEnabled && opts.llmClient && (opts.llmScoreCandidates ?? 40) > 0) {
+    const unscored = merged.filter((i) => i.llmScore == null && (i.score ?? 0) > -0.5)
+    if (unscored.length) await llmScoreItems(unscored, opts.llmClient, opts, log)
+  }
+  const picked = pickFinal(merged, opts)
 
   // 逐条摘要（仅当有可用 LLM）；summarize=false 的源在 itemSummaries 内跳过
   if (opts.summaryEnabled && opts.llmEnabled && opts.llmClient) {
@@ -344,24 +452,59 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     await translateItems(picked, opts.translateClient, opts)
   }
 
+  // 持续热点检测：读当日 hourly.md，统计每条在几个 ## HH:mm 节出现（≥2=持续发酵）
+  try {
+    const hb = await readFile(join(opts.digestsDir, `${day}-hourly.md`), 'utf8')
+    const sections = hb.split(/^## \d{2}:\d{2}/m).slice(1)
+    if (sections.length >= 2) {
+      for (const it of picked) {
+        const key = it.link || it.title
+        it.hotCycles = sections.filter((sec) => key && sec.includes(key)).length
+      }
+    }
+  } catch { /* 无快报文件——热点检测跳过 */ }
+  const hotTopics = [...new Set(picked.filter((i) => (i.hotCycles ?? 0) >= 2).map((i) => i.topic || '综合'))]
+
   // 整体总结：>25 条走两段式——分块各总结→合并块总结再压一遍（单次调用压 100+ 条必然丢细节）
   const summaryItems = picked.map((i) => toSummarizable(i, sourcesById.get(i.sourceId)?.title ?? i.sourceId))
   opts.onItemDone?.(1, 1, 'finishing')
+  const notes = [
+    hotTopics.length ? `以下领域话题全天持续发酵，请在重点中体现纵深：${hotTopics.join('、')}` : '',
+    picked.length >= 15 ? '按上午/下午/晚间时间线组织重点；同一事件的多次报道归并到首发时段，不要重复' : '',
+  ].filter(Boolean).join('；')
   const sumReq = (items: typeof summaryItems, maxLength: number) => ({
     items, language: opts.language, mode: 'batch' as const, maxLength,
     maxTokens: opts.llmMaxTokens,
+    notes: notes || undefined,
     signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
   })
   const llmOn = opts.llmEnabled && !!opts.llmClient
-  const sum = summaryItems.length <= 25 || !llmOn
+  // P6：按领域分组做 chunk——块摘要即领域速览，合并后仍得今日重点
+  const byTopic = new Map<string, typeof summaryItems>()
+  for (const it of summaryItems) {
+    const t = it.topic || '综合'
+    byTopic.set(t, [...(byTopic.get(t) ?? []), it])
+  }
+  const topicChunks: Array<{ topic: string; items: typeof summaryItems }> = []
+  for (const [topic, list] of byTopic) {
+    for (let i = 0; i < list.length; i += 25) topicChunks.push({ topic, items: list.slice(i, i + 25) })
+  }
+  const domainSummaries: Array<{ topic: string; text: string; count: number }> = []
+  const sum = !llmOn
     ? await summarize(sumReq(summaryItems, opts.digestMaxLength), opts.llmClient, llmOn)
     : await (async () => {
-        const chunkSize = 25
-        const chunks: typeof summaryItems[] = []
-        for (let i = 0; i < summaryItems.length; i += chunkSize) chunks.push(summaryItems.slice(i, i + chunkSize))
-        const chunkMax = Math.max(300, Math.ceil(opts.digestMaxLength / chunks.length))
-        const parts = await Promise.all(chunks.map((c) => summarize(sumReq(c, chunkMax), opts.llmClient, llmOn)))
-        const merged = parts.map((p, i) => ({ title: `第${i + 1}部分摘要`, sourceTitle: '', publishedAt: '', link: '', summary: p.text, content: '', topic: '', reasons: [] }))
+        const chunkMax = Math.max(300, Math.ceil(opts.digestMaxLength / Math.max(1, topicChunks.length)))
+        const parts = await Promise.all(topicChunks.map((c) => summarize(sumReq(c.items, chunkMax), opts.llmClient, llmOn)))
+        // 同主题多块合并为一行速览（首块摘要+总条数）
+        const agg = new Map<string, { text: string; count: number }>()
+        for (const [i, c] of topicChunks.entries()) {
+          const e = agg.get(c.topic)
+          if (e) e.count += c.items.length
+          else agg.set(c.topic, { text: parts[i].text.slice(0, 300), count: c.items.length })
+        }
+        for (const [topic, e] of agg) domainSummaries.push({ topic, text: e.text, count: e.count })
+        if (topicChunks.length === 1) return parts[0]
+        const merged = parts.map((p, i) => ({ title: `${topicChunks[i].topic}板块摘要`, sourceTitle: '', publishedAt: '', link: '', summary: p.text, content: '', topic: '', reasons: [] }))
         return summarize(sumReq(merged, opts.digestMaxLength), opts.llmClient, llmOn)
       })()
 
@@ -400,6 +543,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     includeItemLinks: true,
     sourcesStatus: statusLines,
     degradedNote: degraded ? note.replace('summary degraded: ', '') : undefined,
+    domainSummaries,
   })
 
   await mkdir(opts.digestsDir, { recursive: true })

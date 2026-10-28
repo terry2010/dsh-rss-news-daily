@@ -126,10 +126,12 @@ function apiItems(deps: ApiDeps) {
 }
 
 function apiDigest(deps: ApiDeps) {
-  return async (_req: Req, res: Res, day: string) => {
+  return async (req: Req, res: Res, day: string) => {
     const { readFile: rf } = await import('node:fs/promises')
     try {
-      const md = await rf(join(deps.digestsDir, `${day}-rss-briefing.md`), 'utf8')
+      const kind = new URL(req.url || '', 'http://x').searchParams.get('kind')
+      const file = kind === 'hourly' ? `${day}-hourly.md` : `${day}-rss-briefing.md`
+      const md = await rf(join(deps.digestsDir, file), 'utf8')
       sendJson(res, 200, { ok: true, day, markdown: md })
     } catch {
       sendJson(res, 404, { ok: false, error: `no digest for ${day}` })
@@ -246,7 +248,7 @@ function apiPrefs(deps: ApiDeps) {
         topics: body.topics, keywords: body.keywords,
         bannedKeywords: body.bannedKeywords, sourceWeight: body.sourceWeight,
         proxyUrl: body.proxyUrl, autoTranslate: body.autoTranslate,
-        digestOpts: body.digestOpts,
+        digestOpts: body.digestOpts, subscribedTopics: body.subscribedTopics,
       }).filter(([, v]) => v !== undefined))
       deps.prefs.save(patch)
       return sendJson(res, 200, { ok: true, prefs: deps.prefs.get() })

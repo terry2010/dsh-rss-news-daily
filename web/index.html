@@ -18,6 +18,12 @@
 
 <main>
   <div class="statusbar" id="statusbar">加载中…</div><div class="statusbar" id="toastbar"></div>
+<div id="findbar" hidden style="position:fixed;top:8px;right:12px;z-index:99;background:#1e1e1e;border:1px solid #4a9eff;border-radius:6px;padding:4px 8px;display:flex;gap:4px;align-items:center">
+  <input id="findInput" type="text" placeholder="页内查找…" style="width:160px">
+  <button id="findPrev" title="上一个(Shift+Enter)">↑</button>
+  <button id="findNext" title="下一个(Enter)">↓</button>
+  <button id="findClose" title="关闭(Esc)">✕</button>
+</div>
   <!-- 全部条目流 -->
   <section id="tab-items">
     <div class="toolbar">
@@ -39,6 +45,8 @@
   <section id="tab-digest" hidden>
     <div class="toolbar">
       <input type="date" id="digestDay" title="查看历史日报（生成始终针对今天）">
+      <button id="btnKindDigest" title="当日精选日报">日报</button>
+      <button id="btnKindHourly" title="逐时段快报">快报</button>
       <button id="btnDigestRun" title="立即生成今日日报">▶ 生成日报</button>
       <button id="btnDigestStop" hidden title="中止当前生成">⏹ 停止</button>
       <span id="digestBusy" class="busybar" hidden>⏳ 日报生成中…</span>
@@ -101,7 +109,18 @@
       <label style="font-size:12px">总结字数 <input type="number" id="dSumLen" min="50" max="3000" style="width:70px" placeholder="800"></label>
       <button id="btnDigestOptsSave">保存</button>
     </div>
-    <div class="hist">留空=跟随配置默认；每类上限 0=不限；LLM评分条数 0=关闭评分；候选窗口 0=不限；写摘要条数 0=不写AI摘要</div>
+    <div style="display:flex;gap:14px;font-size:12px;margin:2px 0">
+      <label><input type="checkbox" id="dScoreFetch"> 抓取后评分</label>
+      <label><input type="checkbox" id="dRescore"> 无分补评</label>
+      <label><input type="checkbox" id="dHourly"> 时段快报</label>
+      <label>保留 <input type="number" id="dRetDays" min="0" style="width:55px" placeholder="90"> 天</label>
+      <label><input type="checkbox" id="dPruneQ"> 清退低质优先</label>
+    </div>
+    <div class="hist">留空=跟随配置默认；每类上限 0=不限；LLM评分条数 0=关闭评分；候选窗口 0=不限；写摘要条数 0=不写AI摘要；保留天数 0=仅数量上限</div>
+    <h3>订阅分类</h3>
+    <div id="subTopics" style="display:flex;gap:10px;flex-wrap:wrap;font-size:13px"></div>
+    <div class="toolbar"><button id="btnSubSave">保存订阅</button></div>
+    <div class="hist">未勾选的分类不进日报（仍抓取+评分；全勾=默认全部订阅）</div>
     <h3>翻译模型</h3>
     <div class="toolbar">
       <select id="tlProvider"><option value="">provider…</option></select>
