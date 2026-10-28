@@ -362,8 +362,7 @@ function renderSources() {
       <label><input type="checkbox" data-f="summarize" ${s.summarize !== false ? 'checked' : ''}> AI 摘要</label>
       <label><input type="checkbox" data-f="useProxy" ${s.proxy === true || typeof s.proxy === 'string' ? 'checked' : ''}> 使用代理</label>
       <label>最小冷却小时 <input type="number" min="0" step="1" data-f="cooldownHours" value="${s.cooldownHours ?? ''}" placeholder="24"></label>
-      <button data-src-act="save" data-id="${esc(s.url)}">保存</button>
-      <button data-src-act="cancel">取消</button>
+      <button data-src-act="cancel" data-id="${esc(s.url)}">完成</button>
     </div>` : ''}
     </div>`).join('')
 }
@@ -379,6 +378,26 @@ document.addEventListener('change', (e) => { // 分类选「＋自定义…」�
   inp.addEventListener('keydown', (e) => { if (e.key === 'Escape') back() }, { once: true })
   inp.addEventListener('blur', back, { once: true })
 })
+// 源编辑自动生效:编辑面板内字段 change 即 PATCH,面板保持打开
+$('#srcList').addEventListener('change', debounce(async (e) => {
+  const panel = e.target.closest('.src-edit')
+  if (!panel || !e.target.matches('[data-f]')) return
+  const id = panel.querySelector('button[data-src-act=cancel]')?.dataset.id || e.target.closest('[data-id]')?.dataset.id
+  const g = (n) => panel.querySelector(`[data-f="${n}"]`)
+  try {
+    await api(`/sources/${encodeURIComponent(g('url')?.value.trim() || '')}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      url: g('url').value.trim() || undefined,
+      title: g('title').value.trim() || undefined,
+      category: g('categoryNew').value.trim() || g('category').value || undefined,
+      enabled: g('enabled').checked,
+      summarize: g('summarize').checked,
+      proxy: g('useProxy').checked ? true : false,
+      cooldownHours: g('cooldownHours').value === '' ? null : Number(g('cooldownHours').value),
+    }) })
+    toast('源已自动保存')
+  } catch (err) { toast(`保存失败: ${err.message}`) }
+}, 500))
+
 $('#srcList').addEventListener('click', async (e) => {
   const btn = e.target.closest('button[data-src-act]')
   if (!btn) return
@@ -479,20 +498,25 @@ async function loadPrefs() {
     renderSubTopics(r.prefs)
   } catch { /* ignore */ }
 }
-$('#btnProxySave').addEventListener('click', async () => {
+const saveProxy = async () => {
   try {
     await post('/prefs', { proxyUrl: $('#proxyUrl').value.trim() || undefined })
-    toast('全局代理已保存，下次抓取生效')
+    toast('全局代理已保存')
   } catch (e) { toast(`保存失败: ${e.message}`) }
-})
-$('#btnDigestOptsSave').addEventListener('click', async () => {
+}
+$('#proxyUrl').addEventListener('input', debounce(saveProxy))
+$('#btnProxySave')?.remove()
+const saveDigestOpts = async () => {
   const num = (id) => { const v = $(`#${id}`).value.trim(); return v === '' ? undefined : Number(v) }
   try {
     const r = await post('/prefs', { digestOpts: { digestItems: num('dItems'), perTopicLimit: num('dPerTopic'), minLlmScore: num('dMinScore'), llmScoreCandidates: num('dScoreN'), candidateHours: num('dCandH'), summaryMaxItems: num('dSumN'), summaryConcurrency: num('dConc'), digestMaxLength: num('dSumLen'), scoreOnFetch: $('#dScoreFetch').checked, rescoreMissing: $('#dRescore').checked, hourlyBrief: $('#dHourly').checked, retentionDays: num('dRetDays'), pruneLowQuality: $('#dPruneQ').checked } })
     state.prefs = r.prefs
-    toast('日报参数已保存，下次生成生效')
+    toast('日报参数已保存')
   } catch (e) { toast(`保存失败: ${e.message}`) }
-})
+}
+for (const id of ['dItems', 'dPerTopic', 'dMinScore', 'dScoreN', 'dCandH', 'dSumN', 'dConc', 'dSumLen', 'dRetDays']) $(`#${id}`)?.addEventListener('input', debounce(saveDigestOpts))
+for (const id of ['dScoreFetch', 'dRescore', 'dHourly', 'dPruneQ']) $(`#${id}`)?.addEventListener('change', saveDigestOpts)
+$('#btnDigestOptsSave')?.remove()
 function renderSubTopics(p) {
   const cats = [...new Set((state.sources || []).map((src) => src.category).filter(Boolean))].sort()
   const subs = p?.subscribedTopics // undefined=全订阅
@@ -500,15 +524,17 @@ function renderSubTopics(p) {
     `<label><input type="checkbox" class="subTopic" value="${esc(c)}" ${!subs || subs.includes(c) ? 'checked' : ''}> ${esc(c)}</label>`).join('')
     : '<span class="empty">暂无分类</span>'
 }
-$('#btnSubSave').addEventListener('click', async () => {
+const saveSubTopics = async () => {
   const checked = [...document.querySelectorAll('.subTopic')].filter((c) => c.checked).map((c) => c.value)
   const all = checked.length === document.querySelectorAll('.subTopic').length
   try {
-    const r = await post('/prefs', { subscribedTopics: all ? [] : checked }) // []=全订阅（undefined 会被 merge 保留旧值）
-    state.prefs = r.prefs; renderSubTopics(r.prefs)
+    const r = await post('/prefs', { subscribedTopics: all ? [] : checked })
+    state.prefs = r.prefs
     toast(all ? '已订阅全部分类' : `已订阅 ${checked.length} 个分类`)
   } catch (e) { toast(`保存失败: ${e.message}`) }
-})
+}
+$('#subTopics').addEventListener('change', saveSubTopics) // 委托:动态复选框
+$('#btnSubSave')?.remove()
 $('#btnFetchTest').addEventListener('click', async () => {
   const out = $('#fetchTestOut')
   out.hidden = false; out.textContent = '测试中…'
@@ -534,7 +560,7 @@ function renderPrefs() {
   const hist = (p.tuningHistory || []).slice(-5)
   $('#prefsView').innerHTML = WT_TABLES.map(([t, l]) => sec(t, l)).join('')
     + `<h4>屏蔽词</h4>${bans}<div class="pref"><input id="banNew" placeholder="新增屏蔽词" style="width:140px"> <button id="banAdd">＋</button></div>`
-    + '<button id="btnWeightsSave" style="margin-top:8px">保存权重</button>'
+    + '<p class="hint" style="margin-top:8px">修改自动生效</p>'
     + (hist.length ? '<h4>最近调教</h4>' + hist.map((h) => `<div class="hist">${esc(h.at?.slice(0, 16))} — ${esc(h.text)} <i>${(h.actions || []).join('; ')}</i></div>`).join('') : '')
 }
 // 采集面板当前编辑值（加删前收割，保住未保存的输入）
@@ -551,23 +577,29 @@ $('#prefsView').addEventListener('click', async (e) => {
   const btn = e.target.closest('button')
   if (!btn) return
   const w = harvestWeights()
-  if (btn.dataset.wtDel) { delete w[btn.dataset.wtDel][btn.dataset.k]; state.prefs = { ...state.prefs, ...w }; renderPrefs(); return }
+  if (btn.dataset.wtDel) { delete w[btn.dataset.wtDel][btn.dataset.k]; state.prefs = { ...state.prefs, ...w }; renderPrefs(); saveWeightsPost(w); return }
   if (btn.dataset.wtAdd) {
     const name = btn.parentElement.querySelector('input').value.trim()
     if (!name) return
-    w[btn.dataset.wtAdd][name] = 1.0; state.prefs = { ...state.prefs, ...w }; renderPrefs(); return
+    w[btn.dataset.wtAdd][name] = 1.0; state.prefs = { ...state.prefs, ...w }; renderPrefs(); saveWeightsPost(w); return
   }
   if (btn.dataset.banDel) { w.bannedKeywords = w.bannedKeywords.filter((k) => k !== btn.dataset.banDel); state.prefs = { ...state.prefs, ...w }; renderPrefs(); return }
   if (btn.id === 'banAdd') {
     const v = $('#banNew').value.trim()
     if (v && !w.bannedKeywords.includes(v)) w.bannedKeywords.push(v)
-    state.prefs = { ...state.prefs, ...w }; renderPrefs(); return
+    state.prefs = { ...state.prefs, ...w }; renderPrefs(); saveWeightsPost(w); return
   }
-  if (btn.id === 'btnWeightsSave') {
-    try { const r = await post('/prefs', w); state.prefs = r.prefs || state.prefs; renderPrefs(); toast('权重已保存') }
-    catch (err) { toast(`保存失败: ${err.message}`) }
+  if (btn.dataset.banDel) {
+    w.bannedKeywords = w.bannedKeywords.filter((k) => k !== btn.dataset.banDel)
+    state.prefs = { ...state.prefs, ...w }; renderPrefs(); saveWeightsPost(w); return
   }
 })
+// 权重自动落盘:字段改/行增删都走这
+async function saveWeightsPost(w) {
+  try { const r = await post('/prefs', w || harvestWeights()); state.prefs = r.prefs || state.prefs; toast('权重已保存') }
+  catch (err) { toast(`保存失败: ${err.message}`) }
+}
+$('#prefsView').addEventListener('change', (e) => { if (e.target.matches('input[data-wt]')) debounce(saveWeightsPost)() })
 
 $('#btnTune').addEventListener('click', async () => {
   const text = $('#tuneText').value.trim()
@@ -614,13 +646,15 @@ async function loadTlModels(provider, selected) {
   } catch { /* provider 模型列表拉取失败留空 */ }
 }
 
-$('#tlProvider').addEventListener('change', (e) => loadTlModels(e.target.value, ''))
-$('#btnTlSave').addEventListener('click', async () => {
+const saveTlModel = async () => {
   try {
     await post('/llm', { provider: $('#tlProvider').value, model: $('#tlModel').value, scope: 'translate' })
     toast('翻译模型已保存'); loadLlm()
   } catch (e) { toast(`保存失败: ${e.message}`) }
-})
+}
+$('#tlProvider').addEventListener('change', (e) => { loadTlModels(e.target.value, ''); saveTlModel() })
+$('#tlModel').addEventListener('change', saveTlModel)
+$('#btnTlSave')?.remove()
 
 async function loadLlmModels(provider, selected) {
   if (!provider) return
@@ -631,15 +665,17 @@ async function loadLlmModels(provider, selected) {
   } catch { /* provider 模型列表拉取失败留空 */ }
 }
 
-$('#llmProvider').addEventListener('change', (e) => loadLlmModels(e.target.value, ''))
-$('#btnLlmSave').addEventListener('click', async () => {
+const saveLlmModel = async () => {
   const provider = $('#llmProvider').value
   const model = $('#llmModel').value
   if (!provider || !model) return toast('provider 和 model 都要选')
   await post('/llm', { provider, model })
   toast('模型已保存，下次日报生效')
   loadLlm()
-})
+}
+$('#llmProvider').addEventListener('change', (e) => { loadLlmModels(e.target.value, ''); saveLlmModel() })
+$('#llmModel').addEventListener('change', saveLlmModel)
+$('#btnLlmSave')?.remove()
 $('#btnLlmClear').addEventListener('click', async () => {
   await post('/llm', { provider: '', model: '' })
   toast('已恢复自动路由')
@@ -653,14 +689,15 @@ const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/
 function timeRow(value, isFirst) {
   const row = document.createElement('div'); row.className = 'sched-row'
   const inp = document.createElement('input'); inp.type = 'time'; inp.value = value || ''
+  inp.addEventListener('change', () => saveSchedule()) // 时刻修改即生效
   const add = document.createElement('button')
   add.textContent = '＋'; add.title = '新增时刻'
-  add.onclick = () => row.parentElement.appendChild(timeRow('', false))
+  add.onclick = () => { row.parentElement.appendChild(timeRow('', false)); saveSchedule() }
   row.append(inp, add)
   if (!isFirst) { // 第二行起同时有 ＋ 和 −
     const del = document.createElement('button')
     del.textContent = '−'; del.title = '删除该时刻'
-    del.onclick = () => row.remove()
+    del.onclick = () => { row.remove(); saveSchedule() }
     row.append(del)
   }
   return row
@@ -683,14 +720,18 @@ async function loadSchedule() {
   } catch (e) { $('#schedInfo').textContent = `调度信息不可用: ${esc(e.message)}` }
 }
 
-$('#btnSchedSave').addEventListener('click', async () => {
+async function saveSchedule() { // function 声明提升:timeRow 先引用后定义
   const digestTimes = collectTimes('#schedDigestRows')
   const fetchTimes = collectTimes('#schedFetchRows')
   const iv = $('#schedInterval').value.trim()
-  await post('/schedule', { digestTimes, fetchTimes, intervalMinutes: iv === '' ? undefined : Number(iv), onStartup: $('#schedStartup').checked || undefined })
-  toast('调度已保存，下一次挂钟生效')
-  loadSchedule()
-})
+  try {
+    await post('/schedule', { digestTimes, fetchTimes, intervalMinutes: iv === '' ? undefined : Number(iv), onStartup: $('#schedStartup').checked || undefined })
+    toast('调度已保存')
+  } catch { /* 行内空值时静默 */ }
+}
+$('#schedInterval').addEventListener('input', debounce(saveSchedule))
+$('#schedStartup').addEventListener('change', saveSchedule)
+$('#btnSchedSave')?.remove()
 $('#btnSchedClear').addEventListener('click', async () => {
   await post('/schedule', { clear: true })
   toast('已恢复配置默认')
