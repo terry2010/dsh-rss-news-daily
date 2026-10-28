@@ -108,7 +108,9 @@ function apiItems(deps: ApiDeps) {
     if (unread) items = items.filter((i) => !i.state.read && !i.state.hidden)
     items = items.filter((i) => !i.state.hidden)
     if (q) items = items.filter((i) => `${i.title} ${i.summary}`.toLowerCase().includes(q))
-    const sorted = [...items].sort((a, b) => (b.publishedAt || b.fetchedAt).localeCompare(a.publishedAt || a.fetchedAt)) // 原始发布时间优先，缺则回退抓取时间
+    const sortKey = u.searchParams.get('sort') === 'fetched' ? 'fetched' : 'published'
+    const keyOf = (i: (typeof items)[number]) => sortKey === 'fetched' ? i.fetchedAt : (i.publishedAt || i.fetchedAt)
+    const sorted = [...items].sort((a, b) => keyOf(b).localeCompare(keyOf(a))) // sort=fetched 按抓取时间;默认按发布时间缺则回退抓取时间
     const pageSize = deps.readerPageSize
     sendJson(res, 200, {
       ok: true,

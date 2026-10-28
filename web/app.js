@@ -6,7 +6,7 @@ const applyTheme = (t) => { if (t === 'dark' || t === 'light') document.document
 applyTheme(new URLSearchParams(location.search).get('theme'))
 window.addEventListener('message', (e) => { if (e.data && e.data.type === 'rnd-theme') applyTheme(e.data.theme) })
 
-const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', generating: false, total: 0, pageSize: 50 }
+const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', generating: false, sort: 'published', total: 0, pageSize: 50 }
 const $ = (sel) => document.querySelector(sel)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 /** 输出链接白名单：只放行 http(s)，javascript:/data: 一律清空 */
@@ -161,6 +161,7 @@ $('#srcFilter').addEventListener('change', () => {
   state.page = 1; loadItems()
 })
 $('#q').addEventListener('input', debounce(() => { state.page = 1; loadItems() }, 400))
+$('#sortSel').addEventListener('change', (e) => { state.sort = e.target.value; state.page = 1; loadItems() })
 // 翻页后滚回列表顶部（pager 在页脚，不滚会停在页底）
 const toTop = () => window.scrollTo(0, 0)
 $('#prevPage').addEventListener('click', () => { if (state.page > 1) { state.page--; loadItems().then(toTop) } })
@@ -168,7 +169,7 @@ $('#nextPage').addEventListener('click', () => { if (state.page * state.pageSize
 $('#btnFetch').addEventListener('click', async () => {
   const src = $('#srcFilter').value, cat = $('#category').value
   toast('抓取中…')
-  try { const r = await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) }); toast(`抓取完成: +${r.added} 条`); state.page = 1; posSave(null); loadItems(); loadStatus() } // 手动抓取→回第1页看最新
+  try { const r = await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) }); toast(`抓取完成: +${r.added} 条`); state.page = 1; state.sort = 'fetched'; $('#sortSel').value = 'fetched'; posSave(null); loadItems(); loadStatus() } // 手动抓取→回第1页按抓取时间看最新
   catch (e) { toast(`抓取失败: ${e.message}`) }
 })
 
