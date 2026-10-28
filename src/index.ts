@@ -147,7 +147,7 @@ export function apply(ctx: Context, config: ConfigType) {
     return runFetchCycle(makeFetchOpts())
       .then((r) => { void scoreAndBrief(cycleStart); return r }) // fire-and-forget，不阻塞抓取结果
   }
-  let fetchProg = { running: false, done: 0, total: 0 }
+  let fetchProg = { running: false, done: 0, total: 0, stage: '' }
   let digestProg = { running: false, done: 0, total: 0, stage: '' }
   let fetchAbort: AbortController | undefined
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
@@ -190,7 +190,7 @@ export function apply(ctx: Context, config: ConfigType) {
     // 界面筛选联动：选了源只抓该源，选了分类只抓该分类下所有源
     if (filter?.source) pool = pool.filter((s) => s.id === filter.source || s.url === filter.source)
     else if (filter?.category) pool = pool.filter((s) => s.category === filter.category)
-    fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length }
+    fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length, stage: 'fetch' }
     fetchAbort = new AbortController()
     const cycleStart = new Date().toISOString()
     return runFetchCycle({ ...makeFetchOpts(pool), force, signal: fetchAbort.signal, onSourceDone: () => { fetchProg.done += 1 } })
@@ -198,16 +198,19 @@ export function apply(ctx: Context, config: ConfigType) {
         // 自动翻译：本轮新入库的外文条目逐条调翻译模型（用户勾选后开启，按条计费）
         if (prefs.get().autoTranslate && llmRuntime) {
           const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
+          if (fresh.length) fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate' }
           for (const it of fresh) {
             try { await translateItemCore(it) }
             catch (e) { it.state.translationError = e instanceof Error ? e.message : String(e) }
+            fetchProg.done += 1
+            if (fetchProg.done % 10 === 0) void store.save() // 分批落盘,中断不丢全部
           }
           if (fresh.length) { await store.save(); log.info(`autoTranslate: ${fresh.length} items translated`) }
         }
         void scoreAndBrief(cycleStart, fetchAbort?.signal) // fire-and-forget：评分不阻塞抓取返回
         return result
       })
-      .finally(() => { fetchProg = { running: false, done: 0, total: 0 }; fetchAbort = undefined })
+      .finally(() => { fetchProg = { running: false, done: 0, total: 0, stage: '' }; fetchAbort = undefined })
   } // svc/api：手动抓取可带 force 绕冷却
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => {
     const cycleStart = new Date().toISOString()

@@ -386,8 +386,10 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch`, handler: guard(async (q, r) => {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
     const body = await readBody(q) as { force?: boolean; onlyFailed?: boolean; source?: string; category?: string }
-    const res = await deps.svc.runFetch(!!body?.force, !!body?.onlyFailed, { source: body?.source, category: body?.category })
-    sendJson(r, 200, { ok: true, added: res.totalAdded, errors: res.errors })
+    // fire-and-forget：autoTranslate 串行翻译远超 HTTP 超时,立即返回+前端轮询 /fetch-progress
+    deps.svc.runFetch(!!body?.force, !!body?.onlyFailed, { source: body?.source, category: body?.category })
+      .catch(() => { /* 错误经 progress/日志可见 */ })
+    sendJson(r, 200, { ok: true, started: true })
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.fetchProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.digestProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))

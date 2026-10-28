@@ -111,12 +111,15 @@ test('api /opml POST 导入+解析失败 400', async () => {
 
 // ---- fetch/digest 端点 ----
 
-test('api /fetch POST 调 svc.runFetch 并回结果', async () => {
-  const deps = await mkDeps({ runFetch: async (force, onlyFailed, opts) => ({ totalAdded: 7, errors: 1, got: { force, onlyFailed, opts } }) })
+test('api /fetch POST fire-and-forget: 立即返回 started,参数转发', async () => {
+  const got = []
+  const deps = await mkDeps({ runFetch: async (force, onlyFailed, opts) => { got.push({ force, onlyFailed, opts }); return {} } })
   const regs = await mount(deps)
   const h = findH(regs, '/dsh-rss-news-daily/api/fetch')
   const res = mkRes(); await h(mkReq('POST', '/dsh-rss-news-daily/api/fetch', { force: true, source: 's1' }), res)
-  assert.equal(json(res).added, 7)
+  assert.equal(json(res).started, true) // fire-and-forget 立即返回
+  await new Promise((r) => setTimeout(r, 20))
+  assert.deepEqual(got[0], { force: true, onlyFailed: false, opts: { source: 's1', category: undefined } })
 })
 
 test('api /fetch-cancel POST → svc.cancelFetch', async () => {

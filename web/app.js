@@ -176,13 +176,15 @@ $('#btnFetch').addEventListener('click', async () => {
   const src = $('#srcFilter').value, cat = $('#category').value
   b.textContent = '⟳ 抓取中…'
   fetchPoll = setInterval(async () => { // 轮询进度进按钮文案
-    try { const p = await api('/fetch-progress'); if (p.running) { b.textContent = `⏹ 抓取中(${p.done}/${p.total}) 点我取消`; b.disabled = false } } catch { /* 进度不可达不阻塞 */ }
+    try {
+      const p = await api('/fetch-progress')
+      if (p.running) { const st = p.stage === 'translate' ? '翻译中' : '抓取中'; b.textContent = `⏹ ${st}(${p.done}/${p.total}) 点我取消`; b.disabled = false }
+      else { fetchBtnIdle(); toast('抓取完成'); state.page = 1; state.sort = 'fetched'; $('#sortSel').value = 'fetched'; localStorage.removeItem(POS_KEY); loadItems(); loadStatus() }
+    } catch { /* 进度不可达不阻塞 */ }
   }, 800)
   try {
-    const r = await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) })
-    toast(`抓取完成: +${r.added} 条`); state.page = 1; state.sort = 'fetched'; $('#sortSel').value = 'fetched'; localStorage.removeItem(POS_KEY); loadItems(); loadStatus()
-  } catch (e) { toast(`抓取失败: ${e.message}`) }
-  finally { fetchBtnIdle() }
+    await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) })
+  } catch (e) { toast(`抓取失败: ${e.message}`); fetchBtnIdle() }
 })
 
 $('#autoTranslate').addEventListener('change', async (e) => {
