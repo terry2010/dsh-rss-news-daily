@@ -124,8 +124,8 @@ test('sof: appendHourlyBrief 按节追加+同刻覆盖幂等', async () => {
   let md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
   assert.match(md, /## 09:00 时段快报/)
   assert.match(md, /## 10:00 时段快报/)
-  assert.match(md, /评分 8/)
-  assert.doesNotMatch(md, /评分 4/) // 低分不入快报
+  assert.match(md, /Title 1/) // 高分条目入快报(评分不再渲染)
+  assert.doesNotMatch(md, /Title 2/) // 低分不入快报
   await appendHourlyBrief({ ...base, time: '09:00' }) // 同刻覆盖不重复
   md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
   assert.equal((md.match(/## 09:00/g) || []).length, 1)
