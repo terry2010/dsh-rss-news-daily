@@ -216,6 +216,17 @@ async function loadDigest() {
     const r = await api(`/digest/${day}${state.digestKind === 'hourly' ? '?kind=hourly' : ''}`)
     $('#digestView').innerHTML = mdLite(r.markdown)
   } catch {
+    // 请求的是"今天"且无日报→回退前一天（刚过0点新一天还没生成）
+    if (state.digestKind === 'digest' && day === localDay) {
+      const y = new Date(ld); y.setDate(y.getDate() - 1)
+      const yday = `${y.getFullYear()}-${String(y.getMonth() + 1).padStart(2, '0')}-${String(y.getDate()).padStart(2, '0')}`
+      try {
+        const r = await api(`/digest/${yday}`)
+        $('#digestDay').value = yday
+        $('#digestView').innerHTML = mdLite(r.markdown)
+        return
+      } catch { /* 前一天也没有→走空态 */ }
+    }
     const kindLabel = state.digestKind === 'hourly' ? '快报' : '日报'
     $('#digestView').innerHTML = state.generating
       ? `<p class="empty">⏳ ${kindLabel}生成中，请稍候…</p>`
