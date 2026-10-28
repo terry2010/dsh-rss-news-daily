@@ -353,12 +353,12 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
       const body = await readBody(q) as { digestTimes?: string[]; fetchTimes?: string[]; intervalMinutes?: number; onStartup?: boolean; clear?: boolean }
       if (body.clear) deps.prefs.save({ schedule: undefined })
       else {
-        deps.prefs.save({ schedule: Object.fromEntries(Object.entries({
+        deps.prefs.save({ schedule: {
           digestTimes: Array.isArray(body.digestTimes) ? body.digestTimes : [],
           fetchTimes: Array.isArray(body.fetchTimes) ? body.fetchTimes : [],
-          intervalMinutes: typeof body.intervalMinutes === 'number' && body.intervalMinutes > 0 ? body.intervalMinutes : undefined,
-          onStartup: typeof body.onStartup === 'boolean' ? body.onStartup : undefined,
-        }).filter(([, v]) => v !== undefined)) })
+          ...(typeof body.intervalMinutes === 'number' && body.intervalMinutes > 0 ? { intervalMinutes: body.intervalMinutes } : {}),
+          ...(typeof body.onStartup === 'boolean' ? { onStartup: body.onStartup } : {}),
+        } })
       }
       return sendJson(r, 200, { ok: true, schedule: deps.prefs.get().schedule ?? def })
     }
