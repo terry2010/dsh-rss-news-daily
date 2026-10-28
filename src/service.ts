@@ -14,7 +14,7 @@ import type { FeedItem, FeedSource, FetchCycleResult, LogSink, SourceFetchResult
 import { noopLog } from './core/types.js'
 import { parseFeedDocument, stripHtml, truncateCodePoints } from './core/parser.js'
 import { findDuplicate, itemHash } from './core/dedupe.js'
-import type { Store } from './core/store.js'
+import type { StoreLike } from './core/store.js'
 import type { createFetcher } from './core/fetcher.js'
 
 export interface FetchCycleOptions {
@@ -25,7 +25,7 @@ export interface FetchCycleOptions {
   /** 每完成一个源回调一次（进度上报） */
   onSourceDone?: () => void
   fetch: ReturnType<typeof createFetcher>
-  store: Store
+  store: StoreLike
   sources: FeedSource[]
   maxItemsPerSource: number
   storeContentChars: number
@@ -108,7 +108,7 @@ function toFeedSource(raw: {
 /** 生效源表：内置 ∪ config 预置 ∪ store 用户源，按规范化 URL 合并（用户覆盖内置）。 */
 export function effectiveSources(
   configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean; summarize?: boolean; proxy?: string | boolean; cooldownHours?: number }>,
-  store: Store,
+  store: StoreLike,
 ): FeedSource[] {
   const byUrl = new Map<string, FeedSource>()
   for (const s of builtinCatalog()) {
@@ -247,7 +247,7 @@ export interface AddSourceOptions {
 /** 添加源：SSRF → 真实抓取校验 → 解析 feed 提标题 → 落 store。校验不过不保存。 */
 export async function addSource(
   fetch: ReturnType<typeof createFetcher>,
-  store: Store,
+  store: StoreLike,
   opts: AddSourceOptions,
   classify?: (feed: { title: string; items: { title: string }[] }) => Promise<string>,
 ): Promise<FeedSource> {
@@ -277,7 +277,7 @@ export async function addSource(
 }
 
 /** 移除源（连带其条目）并落盘。内置源只支持停用不支持删除——停用走 store 覆盖层。 */
-export async function removeSource(store: Store, urlOrId: string): Promise<boolean> {
+export async function removeSource(store: StoreLike, urlOrId: string): Promise<boolean> {
   const id = normalizeUrl(urlOrId)
   const removed = store.removeSource(id) || store.removeSource(urlOrId)
   if (removed) await store.save()
@@ -287,7 +287,7 @@ export async function removeSource(store: Store, urlOrId: string): Promise<boole
 /** 启用/停用源：内置源在 store 写覆盖层，用户源直接改记录。
  *  builtinMeta 不传时自动查内置目录，防显示名退化为 URL。 */
 export async function setSourceEnabled(
-  store: Store,
+  store: StoreLike,
   urlOrId: string,
   enabled: boolean,
   builtinMeta?: { title: string; category: string },
@@ -313,7 +313,7 @@ export async function setSourceEnabled(
 /** 切换源级 AI 摘要开关（summarize=false 的源，日报里用 feed 原摘要、不调 LLM）。
  *  currentEnabled 传当前生效 enabled——写覆盖层时保留，避免误复活被 config 停用的源。 */
 /** 更新源的任意可编辑属性（title/category/proxy/cooldownHours 走 override；enabled/summarize 由专门开关管，但这里一并兜住）。 */
-export async function updateSource(store: Store, urlOrId: string, patch: {
+export async function updateSource(store: StoreLike, urlOrId: string, patch: {
   title?: string; category?: string; enabled?: boolean; summarize?: boolean
   proxy?: string | boolean | null; cooldownHours?: number | null; url?: string
 }, currentEnabled = true): Promise<void> {
@@ -353,7 +353,7 @@ export async function updateSource(store: Store, urlOrId: string, patch: {
   await store.save()
 }
 
-export async function setSourceSummarize(store: Store, urlOrId: string, summarize: boolean, currentEnabled = true): Promise<void> {
+export async function setSourceSummarize(store: StoreLike, urlOrId: string, summarize: boolean, currentEnabled = true): Promise<void> {
   const id = normalizeUrl(urlOrId)
   const builtin = builtinCatalog().find((s) => normalizeUrl(s.url) === id)
     ?? builtinCatalog().find((s) => s.url === urlOrId)
@@ -379,7 +379,7 @@ export interface OpmlImportResult {
 /** OPML 导入编排：规范化去重 + 判重（store∪builtin∪config），明细可核对。
  *  批量导入不做逐源抓取校验（数十源的串行校验太慢）——健康度由后续 fetch 循环接管。 */
 export async function importOpml(
-  store: Store,
+  store: StoreLike,
   opmlText: string,
   configSources: Array<{ url: string }> = [],
 ): Promise<OpmlImportResult> {
@@ -410,7 +410,7 @@ export async function importOpml(
 }
 
 /** OPML 导出：生效源表 → opml 文本。 */
-export async function exportOpml(store: Store, configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean }>): Promise<string> {
+export async function exportOpml(store: StoreLike, configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean }>): Promise<string> {
   const { generateOpml } = await import('./core/opml.js')
   return generateOpml(
     effectiveSources(configSources, store)

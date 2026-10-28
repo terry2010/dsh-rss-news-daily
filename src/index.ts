@@ -36,6 +36,7 @@ import { digestFileName } from './digest.js'
 import { normalizeUrl } from './service.js'
 import { learnFromFeedback } from './core/tune.js'
 import { zonedDayKey } from './core/time.js'
+import { probeSqlite, SqliteStore } from './core/sqlite-store.js'
 import { addTokenStats } from './core/token-stats.js'
 
 export { Config }
@@ -70,10 +71,14 @@ export function apply(ctx: Context, config: ConfigType) {
     return
   }
   const dataDir = resolveDataDir(config.dataDir)
-  const store = new Store({
-    path: join(dataDir, 'store.json'), maxItems: config.fetch.maxStoredItems, log,
+  const probe = probeSqlite()
+  if (!probe.ok) throw new Error('node:sqlite unavailable in this host (requires Node >=22.5)')
+  if (!probe.fts) log.warn('SQLite FTS5/trigram unavailable in this host; search falls back to LIKE')
+  const store = new SqliteStore({
+    path: join(dataDir, 'store.db'), maxItems: config.fetch.maxStoredItems, log,
     retentionDays: () => prefs.get().digestOpts?.retentionDays ?? 90,
     pruneLowQuality: () => prefs.get().digestOpts?.pruneLowQuality ?? true,
+    fts: probe.fts,
   })
   const prefs = new PrefsStore(join(dataDir, 'prefs.json'), log)
   const fetcher = createFetcher({
@@ -142,7 +147,7 @@ export function apply(ctx: Context, config: ConfigType) {
     return runFetchCycle(makeFetchOpts())
       .then((r) => { void scoreAndBrief(cycleStart); return r }) // fire-and-forget，不阻塞抓取结果
   }
-  let fetchProg = { running: false, done: 0, total: 0 }
+  let fetchProg = { running: false, done: 0, total: 0, stage: '' }
   let digestProg = { running: false, done: 0, total: 0, stage: '' }
   let fetchAbort: AbortController | undefined
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
@@ -185,7 +190,7 @@ export function apply(ctx: Context, config: ConfigType) {
     // 界面筛选联动：选了源只抓该源，选了分类只抓该分类下所有源
     if (filter?.source) pool = pool.filter((s) => s.id === filter.source || s.url === filter.source)
     else if (filter?.category) pool = pool.filter((s) => s.category === filter.category)
-    fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length }
+    fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length, stage: 'fetch' }
     fetchAbort = new AbortController()
     const cycleStart = new Date().toISOString()
     return runFetchCycle({ ...makeFetchOpts(pool), force, signal: fetchAbort.signal, onSourceDone: () => { fetchProg.done += 1 } })
@@ -193,16 +198,19 @@ export function apply(ctx: Context, config: ConfigType) {
         // 自动翻译：本轮新入库的外文条目逐条调翻译模型（用户勾选后开启，按条计费）
         if (prefs.get().autoTranslate && llmRuntime) {
           const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
+          if (fresh.length) fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate' }
           for (const it of fresh) {
             try { await translateItemCore(it) }
             catch (e) { it.state.translationError = e instanceof Error ? e.message : String(e) }
+            fetchProg.done += 1
+            if (fetchProg.done % 10 === 0) void store.save() // 分批落盘,中断不丢全部
           }
           if (fresh.length) { await store.save(); log.info(`autoTranslate: ${fresh.length} items translated`) }
         }
         void scoreAndBrief(cycleStart, fetchAbort?.signal) // fire-and-forget：评分不阻塞抓取返回
         return result
       })
-      .finally(() => { fetchProg = { running: false, done: 0, total: 0 }; fetchAbort = undefined })
+      .finally(() => { fetchProg = { running: false, done: 0, total: 0, stage: '' }; fetchAbort = undefined })
   } // svc/api：手动抓取可带 force 绕冷却
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => {
     const cycleStart = new Date().toISOString()
@@ -308,8 +316,13 @@ export function apply(ctx: Context, config: ConfigType) {
       return {
         sources: list.length,
         enabled: list.filter((s) => s.enabled).length,
-        items: store.items.length,
-        todayAdded: store.items.filter((i) => { const d = new Date(i.fetchedAt); const t = new Date(); t.setHours(0, 0, 0, 0); return d.getTime() >= t.getTime() }).length,
+        items: (store as { count?: () => number }).count?.() ?? store.items.length,
+        todayAdded: (() => { // SQL COUNT（窗口外的也算,且不受手动删库幻影影响）
+          const t = new Date(); t.setHours(0, 0, 0, 0)
+          const qi = (store as { queryItems?: (o: { day?: string; pageSize?: number }) => { total: number } }).queryItems
+          return qi ? qi.call(store, { day: zonedDayKey(new Date(), config.timezone || undefined), pageSize: 1 }).total
+            : store.items.filter((i) => new Date(i.fetchedAt).getTime() >= t.getTime()).length
+        })(),
         lastAdded: (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0,
         todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate } : undefined })(),
         tokenStats: store.meta.tokenStats,
