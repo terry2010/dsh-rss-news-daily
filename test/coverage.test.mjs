@@ -191,3 +191,79 @@ test('scheduler: 今天已生成日报→不补跑', async () => {
   })
   assert.equal(calls.filter(([k, ms]) => k === 'timeout' && ms === 15_000).length, 0) // 已生成→不挂补跑 timer
 })
+
+// ---- dsh-llm collectText ----
+
+test('collectText: 流式累计文本+usage 增量取累计值差', async () => {
+  const { collectText } = await import('../lib/dsh-llm.js')
+  const chunks = (async function* () {
+    yield { type: 'text-delta', text: 'Hello' }
+    yield { type: 'text-delta', text: ' world', usage: { inputTokens: 50, outputTokens: 10 } }
+    yield { type: 'text-delta', text: '!', usage: { inputTokens: 50, outputTokens: 20 } } // 累计值:只看差
+  })()
+  const usage = { inputTokens: 0, outputTokens: 0 }
+  const text = await collectText(chunks, usage)
+  assert.equal(text, 'Hello world!')
+  assert.equal(usage.inputTokens, 50)
+  assert.equal(usage.outputTokens, 20)
+})
+
+test('collectText: 无 usage chunk 不累计', async () => {
+  const { collectText } = await import('../lib/dsh-llm.js')
+  const chunks = (async function* () { yield { type: 'text-delta', text: 'a' }; yield { type: 'text-delta', text: 'b' } })()
+  const usage = { inputTokens: 0, outputTokens: 0 }
+  assert.equal(await collectText(chunks, usage), 'ab')
+  assert.equal(usage.inputTokens, 0)
+})
+
+// ---- summarizer 降级路径 ----
+
+const sumReq = (items, over = {}) => ({ items, language: 'zh', mode: 'batch', maxLength: 100, ...over })
+const sumItem = (t, s = '') => ({ title: t, summary: s, sourceTitle: '', publishedAt: '', topic: '', hour: '' })
+
+test('summarize: llmEnabled=false → extractive 降级', async () => {
+  const { summarize } = await import('../lib/summarizer.js')
+  const r = await summarize(sumReq([sumItem('a'), sumItem('b')]), undefined, false)
+  assert.equal(r.source, 'extractive')
+  assert.ok(r.text.length > 0)
+})
+
+test('summarize: client 抛错 → extractive 降级带 error', async () => {
+  const { summarize } = await import('../lib/summarizer.js')
+  const client = { generateText: async () => { throw new Error('llm down') } }
+  const r = await summarize(sumReq([sumItem('a')]), client, true)
+  assert.equal(r.source, 'extractive')
+  assert.equal(r.error, 'llm down')
+})
+
+test('summarize: 空输出 → extractive 降级(empty model output)', async () => {
+  const { summarize } = await import('../lib/summarizer.js')
+  const client = { generateText: async () => '   ' }
+  const r = await summarize(sumReq([sumItem('a')]), client, true)
+  assert.equal(r.source, 'extractive')
+  assert.equal(r.error, 'empty model output')
+})
+
+test('summarize: 正常路径 → llm 源+文本截断', async () => {
+  const { summarize } = await import('../lib/summarizer.js')
+  const client = { generateText: async () => 'x'.repeat(500) }
+  const r = await summarize(sumReq([sumItem('a')], { maxLength: 50 }), client, true)
+  assert.equal(r.source, 'llm')
+  assert.ok(r.text.length <= 50)
+})
+
+// ---- tools 注册+执行 ----
+
+test('registerTools: 全部 news_* 工具注册+news_status 返回状态投影', async () => {
+  const { registerTools } = await import('../lib/tools.js')
+  const tools = []
+  const ctx = { tools: { register: (t) => { tools.push(t); return () => {} } } }
+  const svc = { status: () => ({ sources: 2, enabled: 1, items: 5, lastFetchAt: 'x', lastDigestDay: 'd', failures: [] }), listSources: () => [] }
+  const dispose = registerTools(ctx, svc)
+  assert.ok(tools.length >= 10) // 12 个工具全注册
+  const status = tools.find((t) => t.name === 'news_status')
+  const r = await status.execute({})
+  assert.equal(r.ok, true)
+  assert.equal(r.sources, 2)
+  dispose()
+})
