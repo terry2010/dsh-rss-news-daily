@@ -140,6 +140,25 @@
     <div id="llmInfo" class="hist"></div>
     <h3>当前权重</h3>
     <div id="prefsView"></div>
+    <div id="statsSection" hidden>
+      <h3>Token 用量</h3>
+      <div class="toolbar">
+        <select id="statsView">
+          <option value="day">按日</option>
+          <option value="feature">按功能</option>
+          <option value="total">总计</option>
+        </select>
+        <select id="statsRange">
+          <option value="7">近 7 天</option>
+          <option value="30">近 30 天</option>
+          <option value="0">全部</option>
+        </select>
+      </div>
+      <div id="statsBody" class="hist"></div>
+    </div>
+    <div style="text-align:center;color:#666;font-size:11px;margin-top:24px;padding-bottom:8px">
+      © 2026 terry · MIT License · <span id="versionTag" style="cursor:pointer;user-select:none">v?.?.?</span>
+    </div>
   </section>
 </main>
 

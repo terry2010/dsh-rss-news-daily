@@ -318,6 +318,8 @@ export function apply(ctx: Context, config: ConfigType) {
         todayAdded: store.items.filter((i) => { const d = new Date(i.fetchedAt); const t = new Date(); t.setHours(0, 0, 0, 0); return d.getTime() >= t.getTime() }).length,
         lastAdded: (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0,
         todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate } : undefined })(),
+        tokenStats: store.meta.tokenStats,
+        version: (() => { try { return (JSON.parse(readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '..', 'package.json'), 'utf8')) as { version?: string }).version } catch { return undefined } })(),
         lastFetchAt: store.meta.lastFetchAt,
         lastDigestDay: store.meta.lastDigestDay,
         failures,

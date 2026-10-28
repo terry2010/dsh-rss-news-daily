@@ -29,7 +29,7 @@ function toast(msg) {
 async function loadStatus() {
   try {
     const s = await api('/status')
-    $('#statusbar').textContent = `${s.enabled}/${s.sources} 源 · 今日+${s.todayAdded ?? 0} · 本次+${s.lastAdded ?? 0} · 共${s.items} 条${s.todayTokens?.total ? ` · 今日 ${(s.todayTokens.total / 1000).toFixed(1)}k tok` : ''} · ${s.failures?.length ? `${s.failures.length} 源异常${s.cooling ? `（${s.cooling} 冷却中）` : ''}` : '健康'}`
+    $('#statusbar').textContent = `${s.enabled}/${s.sources} 源 · 今日+${s.todayAdded ?? 0} · 本次+${s.lastAdded ?? 0} · 共${s.items} 条 · ${s.failures?.length ? `${s.failures.length} 源异常${s.cooling ? `（${s.cooling} 冷却中）` : ''}` : '健康'}`
   } catch { $('#statusbar').textContent = '状态不可用' }
 }
 
@@ -661,6 +661,41 @@ $('#btnSchedClear').addEventListener('click', async () => {
   toast('已恢复配置默认')
   loadSchedule()
 })
+
+// ---- token 统计（彩蛋：版本号点 10 次解锁） ----
+let statsData = null
+const fmtTok = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`
+function renderStats() {
+  const body = $('#statsBody'); if (!body || !statsData) return
+  const view = $('#statsView').value, range = +$('#statsRange').value
+  const days = Object.entries(statsData.days || {}).sort((a, b) => b[0].localeCompare(a[0]))
+  const filtered = range ? days.slice(0, range) : days
+  if (view === 'day') {
+    body.innerHTML = filtered.map(([d, v]) =>
+      `<div class="hist-item"><span>${d}</span><span>日报 ${fmtTok(v.digest)} · 评分 ${fmtTok(v.score)} · 翻译 ${fmtTok(v.translate)} · 计 ${fmtTok(v.in + v.out)}</span></div>`).join('') || '<p class="empty">暂无数据</p>'
+  } else if (view === 'feature') {
+    const agg = { digest: 0, score: 0, translate: 0 }
+    for (const [, v] of filtered) { agg.digest += v.digest; agg.score += v.score; agg.translate += v.translate }
+    body.innerHTML = [['日报', agg.digest], ['评分/快报', agg.score], ['翻译', agg.translate]]
+      .map(([k, v]) => `<div class="hist-item"><span>${k}</span><span>${fmtTok(v)} tok</span></div>`).join('')
+  } else {
+    body.innerHTML = `<div class="hist-item"><span>总输入</span><span>${fmtTok(statsData.totalIn)} tok</span></div>`
+      + `<div class="hist-item"><span>总输出</span><span>${fmtTok(statsData.totalOut)} tok</span></div>`
+      + `<div class="hist-item"><span>合计</span><span>${fmtTok(statsData.totalIn + statsData.totalOut)} tok</span></div>`
+  }
+}
+$('#statsView')?.addEventListener('change', renderStats)
+$('#statsRange')?.addEventListener('change', renderStats)
+let verClicks = 0, verTimer = 0
+$('#versionTag')?.addEventListener('click', () => {
+  clearTimeout(verTimer); verTimer = setTimeout(() => { verClicks = 0 }, 1500)
+  if (++verClicks >= 10) {
+    verClicks = 0; $('#statsSection').hidden = false
+    api('/status').then((s) => { statsData = s.tokenStats; renderStats() })
+    toast('已解锁 Token 统计')
+  }
+})
+api('/status').then((s) => { if (s.version) $('#versionTag').textContent = `v${s.version}`; if (s.tokenStats) statsData = s.tokenStats }).catch(() => {})
 
 // ---- 初始化 ----
 
