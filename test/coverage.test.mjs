@@ -71,7 +71,10 @@ test('addTokenStats: 按日+按功能累计,零用量跳过', async () => {
 // ---- /items sort 参数 ----
 
 const mkRes = () => ({ statusCode: 0, headers: {}, body: '', setHeader(k, v) { this.headers[k] = v }, end(b) { this.body = b ?? '' } })
-const mkReq = (method, url) => ({ method, url, headers: {}, on(ev, cb) { if (ev === 'end') setImmediate(cb) } })
+const mkReq = (method, url, body) => ({
+  method, url, headers: {},
+  on(ev, cb) { if (ev === 'data' && body !== undefined) cb(Buffer.from(JSON.stringify(body))); if (ev === 'end') setImmediate(cb) },
+})
 const findH = (regs, path) => regs.find((r) => r.path === path)?.handler
 
 test('api /items: sort=fetched 按抓取时间,默认按发布时间', async () => {
@@ -122,4 +125,69 @@ test('scheduler: 轮询<5min 不挂 interval', async () => {
     runFetchCycle: async () => ({}), runDailyDigest: async () => ({}),
   })
   assert.equal(calls.filter(([k]) => k === 'interval').length, 0)
+})
+
+// ---- /api/prefs POST 合并语义 ----
+
+test('api /prefs POST: 显式字段才落盘,undefined 不清已学权重', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const { PrefsStore } = await import('../lib/core/prefs.js')
+  const prefs = new PrefsStore(join(mkdtempSync(join(tmpdir(), 'rnd-pr-')), 'p.json'))
+  prefs.save({ topics: { AI: 1.5 }, bannedKeywords: ['x'] })
+  const regs = []; mountApi({ register: (o) => { regs.push(o); return () => {} } }, {
+    store: await mkStore(), prefs, readerPageSize: 50,
+  })
+  const h = findH(regs, '/dsh-rss-news-daily/api/prefs')
+  const res = mkRes()
+  await h(mkReq('POST', '/dsh-rss-news-daily/api/prefs', { autoTranslate: true }), res)
+  const saved = prefs.get()
+  assert.equal(saved.autoTranslate, true)
+  assert.equal(saved.topics?.AI, 1.5) // 未提字段保留
+  assert.deepEqual(saved.bannedKeywords, ['x'])
+})
+
+test('api /prefs POST: subscribedTopics=[] 显式清空(非保留)', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const { PrefsStore } = await import('../lib/core/prefs.js')
+  const prefs = new PrefsStore(join(mkdtempSync(join(tmpdir(), 'rnd-pr-')), 'p.json'))
+  prefs.save({ subscribedTopics: ['AI', '财经'] })
+  const regs = []; mountApi({ register: (o) => { regs.push(o); return () => {} } }, {
+    store: await mkStore(), prefs, readerPageSize: 50,
+  })
+  const h = findH(regs, '/dsh-rss-news-daily/api/prefs')
+  const res = mkRes()
+  await h(mkReq('POST', '/dsh-rss-news-daily/api/prefs', { subscribedTopics: [] }), res)
+  assert.deepEqual(prefs.get().subscribedTopics, []) // 空数组=清空订阅=全部入池
+})
+
+// ---- scheduler 补跑 ----
+
+test('scheduler: 错过日报且在 catchUpHours 内→补跑', async () => {
+  const { startScheduler } = await import('../lib/scheduler.js')
+  const calls = []
+  const timers = { interval(fn, ms) { calls.push(['interval', ms]); return () => {} }, timeout(fn, ms) { calls.push(['timeout', ms]); return () => {} } }
+  startScheduler(timers, {
+    fetch: { enabled: false, intervalMinutes: 60, onStartup: false, fetchTimes: [] },
+    dailyTime: '08:00', timezone: '', catchUpHours: 24, enabled: true,
+    lastDigestDay: () => '2026-10-27', // 昨天生成过,今天没生成
+    runFetchCycle: async () => ({}),
+    runDailyDigest: async () => ({}),
+    getSchedule: () => ({ digestTimes: [], fetchTimes: [] }),
+  })
+  assert.ok(calls.find(([k, ms]) => k === 'timeout' && ms === 15_000)) // 补跑 timer 已挂(CATCHUP_DELAY_MS=15s)
+})
+
+test('scheduler: 今天已生成日报→不补跑', async () => {
+  const { startScheduler } = await import('../lib/scheduler.js')
+  const calls = []
+  const timers = { interval(fn, ms) { calls.push(['interval', ms]); return () => {} }, timeout(fn, ms) { calls.push(['timeout', ms]); return () => {} } }
+  startScheduler(timers, {
+    fetch: { enabled: false, intervalMinutes: 60, onStartup: false, fetchTimes: [] },
+    dailyTime: '08:00', timezone: '', catchUpHours: 24, enabled: true,
+    lastDigestDay: () => new Date().toISOString().slice(0, 10), // 今天已生成
+    runFetchCycle: async () => ({}),
+    runDailyDigest: async () => ({}),
+    getSchedule: () => ({ digestTimes: [], fetchTimes: [] }),
+  })
+  assert.equal(calls.filter(([k, ms]) => k === 'timeout' && ms === 15_000).length, 0) // 已生成→不挂补跑 timer
 })
