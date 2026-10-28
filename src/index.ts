@@ -298,6 +298,8 @@ export function apply(ctx: Context, config: ConfigType) {
         sources: list.length,
         enabled: list.filter((s) => s.enabled).length,
         items: store.items.length,
+        todayAdded: store.items.filter((i) => { const d = new Date(i.fetchedAt); const t = new Date(); t.setHours(0, 0, 0, 0); return d.getTime() >= t.getTime() }).length,
+        lastAdded: (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0,
         lastFetchAt: store.meta.lastFetchAt,
         lastDigestDay: store.meta.lastDigestDay,
         failures,

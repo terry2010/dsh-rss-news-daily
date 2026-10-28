@@ -26,6 +26,8 @@ export interface StoreMeta {
   lastDigestAt: string
   /** Date key (YYYY-MM-DD in the digest timezone) of the latest digest. */
   lastDigestDay: string
+  /** 最近一次抓取周期新增条目数（状态栏"本次新增"） */
+  lastFetchAdded?: number
 }
 
 export interface StoreData {
