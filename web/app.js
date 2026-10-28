@@ -169,7 +169,7 @@ $('#nextPage').addEventListener('click', () => { if (state.page * state.pageSize
 $('#btnFetch').addEventListener('click', async () => {
   const src = $('#srcFilter').value, cat = $('#category').value
   toast('抓取中…')
-  try { const r = await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) }); toast(`抓取完成: +${r.added} 条`); state.page = 1; state.sort = 'fetched'; $('#sortSel').value = 'fetched'; posSave(null); loadItems(); loadStatus() } // 手动抓取→回第1页按抓取时间看最新
+  try { const r = await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) }); toast(`抓取完成: +${r.added} 条`); state.page = 1; state.sort = 'fetched'; $('#sortSel').value = 'fetched'; localStorage.removeItem(POS_KEY); loadItems(); loadStatus() } // 手动抓取→回第1页按抓取时间看最新
   catch (e) { toast(`抓取失败: ${e.message}`) }
 })
 
