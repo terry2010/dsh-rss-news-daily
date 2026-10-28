@@ -166,11 +166,22 @@ $('#sortSel').addEventListener('change', (e) => { state.sort = e.target.value; s
 const toTop = () => window.scrollTo(0, 0)
 $('#prevPage').addEventListener('click', () => { if (state.page > 1) { state.page--; loadItems().then(toTop) } })
 $('#nextPage').addEventListener('click', () => { if (state.page * state.pageSize < state.total) { state.page++; loadItems().then(toTop) } })
+let fetchPoll = 0
+const fetchBtnIdle = () => { $('#btnFetch').textContent = '⟳ 抓取'; $('#btnFetch').disabled = false; if (fetchPoll) { clearInterval(fetchPoll); fetchPoll = 0 } }
 $('#btnFetch').addEventListener('click', async () => {
+  const b = $('#btnFetch')
+  // 抓取中再点=取消
+  try { const p = await api('/fetch-progress'); if (p.running) { await post('/fetch-cancel', {}); toast('已请求取消，在飞的源收尾后停止'); b.textContent = `⏹ 停止中(${p.done}/${p.total})`; b.disabled = true; return } } catch { /* 按未运行处理 */ }
   const src = $('#srcFilter').value, cat = $('#category').value
-  toast('抓取中…')
-  try { const r = await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) }); toast(`抓取完成: +${r.added} 条`); state.page = 1; state.sort = 'fetched'; $('#sortSel').value = 'fetched'; localStorage.removeItem(POS_KEY); loadItems(); loadStatus() } // 手动抓取→回第1页按抓取时间看最新
-  catch (e) { toast(`抓取失败: ${e.message}`) }
+  b.textContent = '⟳ 抓取中…'
+  fetchPoll = setInterval(async () => { // 轮询进度进按钮文案
+    try { const p = await api('/fetch-progress'); if (p.running) { b.textContent = `⏹ 抓取中(${p.done}/${p.total}) 点我取消`; b.disabled = false } } catch { /* 进度不可达不阻塞 */ }
+  }, 800)
+  try {
+    const r = await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) })
+    toast(`抓取完成: +${r.added} 条`); state.page = 1; state.sort = 'fetched'; $('#sortSel').value = 'fetched'; localStorage.removeItem(POS_KEY); loadItems(); loadStatus()
+  } catch (e) { toast(`抓取失败: ${e.message}`) }
+  finally { fetchBtnIdle() }
 })
 
 $('#autoTranslate').addEventListener('change', async (e) => {
