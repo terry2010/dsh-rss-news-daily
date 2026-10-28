@@ -17,7 +17,7 @@ export interface PrefsFile extends Prefs {
   /** UI 指定的日报模型覆盖；两个都非空才生效（成对校验同 config） */
   llm?: { provider: string; model: string }
   /** UI 指定的多时间点调度覆盖；digestTimes 空=回 dailyTime */
-  schedule?: { digestTimes: string[]; fetchTimes: string[] }
+  schedule?: { digestTimes: string[]; fetchTimes: string[]; intervalMinutes?: number; onStartup?: boolean }
   /** UI 全局代理 URL（fetcher 每次解析：UI 覆盖 > config.fetch.proxyUrl > 环境变量） */
   proxyUrl?: string
   /** 抓取后自动翻译所有外文条目（按条调翻译模型，成本高） */
@@ -57,8 +57,12 @@ export function normalizePrefs(value: unknown): PrefsFile {
     llm: typeof llm.provider === 'string' && typeof llm.model === 'string'
       ? { provider: llm.provider, model: llm.model }
       : undefined,
-    schedule: Array.isArray(sched.digestTimes) || Array.isArray(sched.fetchTimes)
-      ? { digestTimes: times(sched.digestTimes), fetchTimes: times(sched.fetchTimes) }
+    schedule: Array.isArray(sched.digestTimes) || Array.isArray(sched.fetchTimes) || typeof sched.intervalMinutes === 'number' || typeof sched.onStartup === 'boolean'
+      ? {
+          digestTimes: times(sched.digestTimes), fetchTimes: times(sched.fetchTimes),
+          intervalMinutes: typeof sched.intervalMinutes === 'number' && Number.isFinite(sched.intervalMinutes) ? sched.intervalMinutes : undefined,
+          onStartup: typeof sched.onStartup === 'boolean' ? sched.onStartup : undefined,
+        }
       : undefined,
     proxyUrl: typeof r.proxyUrl === 'string' && r.proxyUrl ? r.proxyUrl : undefined,
     autoTranslate: r.autoTranslate === true ? true : undefined,

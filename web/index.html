@@ -68,6 +68,10 @@
     <h3>定时调度</h3>
     <div class="sched-group"><span class="sched-label">生成日报</span><div id="schedDigestRows"></div></div>
     <div class="sched-group"><span class="sched-label">更新数据</span><div id="schedFetchRows"></div></div>
+    <div class="sched-group"><span class="sched-label">轮询间隔</span>
+      <label style="font-size:13px"><input type="number" id="schedInterval" min="5" style="width:70px"> 分钟（留空=默认60，≥5）</label>
+      <label style="font-size:13px"><input type="checkbox" id="schedStartup"> 启动即抓一轮</label>
+    </div>
     <div class="toolbar">
       <button id="btnSchedSave">保存</button>
       <button id="btnSchedClear">恢复配置</button>

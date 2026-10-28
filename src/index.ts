@@ -338,7 +338,11 @@ export function apply(ctx: Context, config: ConfigType) {
       prefs.load()
       disposers.push(registerTools(ctx, svc))
       disposers.push(startScheduler(ctx as unknown as TimerSeam, {
-        fetch: config.fetch,
+        fetch: {
+          ...config.fetch,
+          intervalMinutes: prefs.get().schedule?.intervalMinutes ?? config.fetch.intervalMinutes,
+          onStartup: prefs.get().schedule?.onStartup ?? config.fetch.onStartup,
+        },
         dailyTime: config.dailyTime,
         getSchedule: () => prefs.get().schedule ?? {
           digestTimes: config.schedule.digestTimes.length ? config.schedule.digestTimes : [config.dailyTime],

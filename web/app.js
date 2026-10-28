@@ -593,6 +593,8 @@ async function loadSchedule() {
     const r = await api('/schedule')
     fillTimeRows('#schedDigestRows', r.schedule.digestTimes || [])
     fillTimeRows('#schedFetchRows', r.schedule.fetchTimes || [])
+    $('#schedInterval').value = r.schedule.intervalMinutes ?? ''
+    $('#schedStartup').checked = !!r.schedule.onStartup
     $('#schedInfo').textContent = `生效来源: ${r.effective === 'ui' ? '界面指定' : '配置默认'}；同一时刻若两表都含，先抓取后生成日报`
   } catch (e) { $('#schedInfo').textContent = `调度信息不可用: ${esc(e.message)}` }
 }
@@ -600,7 +602,8 @@ async function loadSchedule() {
 $('#btnSchedSave').addEventListener('click', async () => {
   const digestTimes = collectTimes('#schedDigestRows')
   const fetchTimes = collectTimes('#schedFetchRows')
-  await post('/schedule', { digestTimes, fetchTimes })
+  const iv = $('#schedInterval').value.trim()
+  await post('/schedule', { digestTimes, fetchTimes, intervalMinutes: iv === '' ? undefined : Number(iv), onStartup: $('#schedStartup').checked || undefined })
   toast('调度已保存，下一次挂钟生效')
   loadSchedule()
 })
