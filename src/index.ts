@@ -142,10 +142,23 @@ export function apply(ctx: Context, config: ConfigType) {
     } catch (e) { log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }
     finally { scoringInFlight = false }
   }
+  // autoTranslate：本轮新入库外文条目逐条翻译（手动+定时两路径共用）
+  const translateFresh = async (cycleStart: string) => {
+    if (!prefs.get().autoTranslate || !llmRuntime) return
+    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
+    if (fresh.length) fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate' }
+    for (const it of fresh) {
+      try { await translateItemCore(it) }
+      catch (e) { it.state.translationError = e instanceof Error ? e.message : String(e) }
+      fetchProg.done += 1
+      if (fetchProg.done % 10 === 0) void store.save()
+    }
+    if (fresh.length) { await store.save(); log.info(`autoTranslate: ${fresh.length} items translated`) }
+  }
   const runFetch = () => {
     const cycleStart = new Date().toISOString()
     return runFetchCycle(makeFetchOpts())
-      .then((r) => { void scoreAndBrief(cycleStart); return r }) // fire-and-forget，不阻塞抓取结果
+      .then(async (r) => { await translateFresh(cycleStart); void scoreAndBrief(cycleStart); return r })
   }
   let fetchProg = { running: false, done: 0, total: 0, stage: '' }
   let digestProg = { running: false, done: 0, total: 0, stage: '' }
@@ -195,18 +208,7 @@ export function apply(ctx: Context, config: ConfigType) {
     const cycleStart = new Date().toISOString()
     return runFetchCycle({ ...makeFetchOpts(pool), force, signal: fetchAbort.signal, onSourceDone: () => { fetchProg.done += 1 } })
       .then(async (result) => {
-        // 自动翻译：本轮新入库的外文条目逐条调翻译模型（用户勾选后开启，按条计费）
-        if (prefs.get().autoTranslate && llmRuntime) {
-          const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
-          if (fresh.length) fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate' }
-          for (const it of fresh) {
-            try { await translateItemCore(it) }
-            catch (e) { it.state.translationError = e instanceof Error ? e.message : String(e) }
-            fetchProg.done += 1
-            if (fetchProg.done % 10 === 0) void store.save() // 分批落盘,中断不丢全部
-          }
-          if (fresh.length) { await store.save(); log.info(`autoTranslate: ${fresh.length} items translated`) }
-        }
+        await translateFresh(cycleStart) // 自动翻译：本轮新入库外文条目（与定时路径共用）
         void scoreAndBrief(cycleStart, fetchAbort?.signal) // fire-and-forget：评分不阻塞抓取返回
         return result
       })
