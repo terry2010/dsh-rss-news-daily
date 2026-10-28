@@ -6,7 +6,7 @@ const applyTheme = (t) => { if (t === 'dark' || t === 'light') document.document
 applyTheme(new URLSearchParams(location.search).get('theme'))
 window.addEventListener('message', (e) => { if (e.data && e.data.type === 'rnd-theme') applyTheme(e.data.theme) })
 
-const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', total: 0, pageSize: 50 }
+const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', generating: false, total: 0, pageSize: 50 }
 const $ = (sel) => document.querySelector(sel)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 /** 输出链接白名单：只放行 http(s)，javascript:/data: 一律清空 */
@@ -193,7 +193,9 @@ async function loadDigest() {
     $('#digestView').innerHTML = mdLite(r.markdown)
   } catch {
     const kindLabel = state.digestKind === 'hourly' ? '快报' : '日报'
-    $('#digestView').innerHTML = `<p class="empty">${esc(day)} 无${kindLabel}（未到生成时间或抓取为空），可点「生成${kindLabel}」手动触发。</p>`
+    $('#digestView').innerHTML = state.generating
+      ? `<p class="empty">⏳ ${kindLabel}生成中，请稍候…</p>`
+      : `<p class="empty">${esc(day)} 无${kindLabel}（未到生成时间或抓取为空），可点「生成${kindLabel}」手动触发。</p>`
   }
 }
 
@@ -226,7 +228,8 @@ $('#btnDigestRun').addEventListener('click', async () => {
   btn.disabled = true; btn.hidden = true // 生成中隐藏入口，防重入
   $('#btnDigestStop').hidden = false
   $('#digestBusy').hidden = false
-  const reset = () => { btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
+  const reset = () => { state.generating = false; btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
+  state.generating = true
   const dp = setInterval(async () => {
     try {
       const p = await api('/digest-progress')
