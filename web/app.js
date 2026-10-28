@@ -42,6 +42,7 @@ async function loadItems() {
   if ($('#category').value) p.set('category', $('#category').value)
   if ($('#srcFilter').value) p.set('source', $('#srcFilter').value)
   if ($('#unread').checked) p.set('unread', '1')
+  p.set('sort', state.sort)
   p.set('page', state.page)
   try {
     const r = await api(`/items?${p}`)
