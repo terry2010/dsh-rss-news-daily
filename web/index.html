@@ -27,8 +27,9 @@
   <!-- 全部条目流 -->
   <section id="tab-items">
     <div class="toolbar">
-      <input type="search" id="q" placeholder="搜索标题/摘要…">
-      <input type="date" id="day">
+      <input type="search" id="q" placeholder="搜索标题/摘要…" style="max-width:200px">
+      <input type="date" id="day" style="max-width:135px">
+      <label><input type="checkbox" id="unread"> 未读</label>
     </div>
     <div class="toolbar filterbar">
       <select id="category"><option value="">全部分类</option></select>
@@ -37,7 +38,6 @@
         <option value="fetched">按抓取时间</option>
       </select>
       <select id="srcFilter"><option value="">全部源</option></select>
-      <label><input type="checkbox" id="unread"> 只看未读</label>
       <button id="btnFetch" title="立即抓取全部源">⟳ 抓取</button>
       <button id="btnTopPage" hidden title="回到第1页">⇤ 回到第1页</button>
     </div>
