@@ -79,6 +79,7 @@ function toSummarizable(item: FeedItem, sourceTitle: string): SummarizableItem {
     content: item.content,
     sourceTitle,
     topic: item.topic,
+    hour: (item.fetchedAt || '').slice(11, 16),
     publishedAt: item.publishedAt,
   }
 }
@@ -451,12 +452,30 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     await translateItems(picked, opts.translateClient, opts)
   }
 
+  // 持续热点检测：读当日 hourly.md，统计每条在几个 ## HH:mm 节出现（≥2=持续发酵）
+  try {
+    const hb = await readFile(join(opts.digestsDir, `${day}-hourly.md`), 'utf8')
+    const sections = hb.split(/^## \d{2}:\d{2}/m).slice(1)
+    if (sections.length >= 2) {
+      for (const it of picked) {
+        const key = it.link || it.title
+        it.hotCycles = sections.filter((sec) => key && sec.includes(key)).length
+      }
+    }
+  } catch { /* 无快报文件——热点检测跳过 */ }
+  const hotTopics = [...new Set(picked.filter((i) => (i.hotCycles ?? 0) >= 2).map((i) => i.topic || '综合'))]
+
   // 整体总结：>25 条走两段式——分块各总结→合并块总结再压一遍（单次调用压 100+ 条必然丢细节）
   const summaryItems = picked.map((i) => toSummarizable(i, sourcesById.get(i.sourceId)?.title ?? i.sourceId))
   opts.onItemDone?.(1, 1, 'finishing')
+  const notes = [
+    hotTopics.length ? `以下领域话题全天持续发酵，请在重点中体现纵深：${hotTopics.join('、')}` : '',
+    picked.length >= 15 ? '按上午/下午/晚间时间线组织重点；同一事件的多次报道归并到首发时段，不要重复' : '',
+  ].filter(Boolean).join('；')
   const sumReq = (items: typeof summaryItems, maxLength: number) => ({
     items, language: opts.language, mode: 'batch' as const, maxLength,
     maxTokens: opts.llmMaxTokens,
+    notes: notes || undefined,
     signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
   })
   const llmOn = opts.llmEnabled && !!opts.llmClient

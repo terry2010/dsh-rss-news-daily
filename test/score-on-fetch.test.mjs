@@ -159,3 +159,20 @@ test('sof: 全部有分时 digest 零评分调用', async () => {
   await runDailyDigest(mkOpts(store, { llmClient: client, summaryEnabled: false }))
   assert.equal(scoreCalls, 0) // 有分不补评——零评分调用
 })
+
+test('sof: 持续热点检测——跨时段条目打 hotCycles 并渲染徽标', async () => {
+  const { runDailyDigest, appendHourlyBrief } = await import('../lib/digest-pipeline.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-hot-'))
+  const it = mkItem(1, { llmScore: 8 })
+  const srcMap = new Map([['src1', { title: 'Src1' }]])
+  const base = { items: [it], sourcesById: srcMap, day: '2026-10-28', digestsDir: dir, minScore: 6, log: noopLog }
+  await appendHourlyBrief({ ...base, time: '09:00' })
+  await appendHourlyBrief({ ...base, time: '11:00' }) // 同条目出现两个时段
+  const store = await mkStore([it])
+  const doc = await runDailyDigest(mkOpts(store, {
+    llmEnabled: false, summaryEnabled: false, digestsDir: dir,
+    day: '2026-10-28', rescoreMissing: false,
+  }))
+  assert.equal(it.hotCycles, 2)
+  assert.match(doc.markdown, /🔥2时段/)
+})

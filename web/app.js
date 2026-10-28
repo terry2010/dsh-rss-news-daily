@@ -192,7 +192,8 @@ async function loadDigest() {
     const r = await api(`/digest/${day}${state.digestKind === 'hourly' ? '?kind=hourly' : ''}`)
     $('#digestView').innerHTML = mdLite(r.markdown)
   } catch {
-    $('#digestView').innerHTML = `<p class="empty">${esc(day)} 无日报（未到生成时间或抓取为空），可点「生成日报」手动触发。</p>`
+    const kindLabel = state.digestKind === 'hourly' ? '快报' : '日报'
+    $('#digestView').innerHTML = `<p class="empty">${esc(day)} 无${kindLabel}（未到生成时间或抓取为空），可点「生成${kindLabel}」手动触发。</p>`
   }
 }
 
@@ -235,6 +236,7 @@ $('#btnDigestRun').addEventListener('click', async () => {
   }, 900)
   if (state.digestKind === 'hourly') { // 快报=抓取+评分产出：跑一轮 fetch 自然生成
     clearInterval(dp)
+    $('#digestBusy').textContent = '⏳ 快报生成中…（抓取+评分）'
     try {
       await post('/fetch', { force: true })
       toast('已开始抓取+评分，快报稍后生成')
