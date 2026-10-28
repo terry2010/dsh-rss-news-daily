@@ -22,6 +22,8 @@ export interface SummarizableItem {
   content: string
   sourceTitle: string
   publishedAt: string
+  /** 分类/领域（领域分块总结用）；缺省按"综合" */
+  topic?: string
 }
 
 export interface SummarizeRequest {

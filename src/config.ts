@@ -28,6 +28,12 @@ export interface FetchSectionConfig {
   requestTimeoutMs: number
   /** feed 文档大小上限（字节） */
   sizeLimitBytes: number
+  /** 抓取后全量 LLM 评分（分块批量） */
+  scoreOnFetch: boolean
+  /** 评分后生成时段快报 */
+  hourlyBrief: boolean
+  /** 快报入选分阈值 */
+  hourlyMinScore: number
   /** 瞬时故障重试次数 */
   retries: number
   /** 每源每轮保留条目数 */
@@ -91,6 +97,8 @@ export interface DigestSectionConfig {
   minLlmScore: number
   /** 同题新闻合并去重 */
   dedupeStories: boolean
+  /** 日报补评无分候选（存量/评分失败兜底） */
+  rescoreMissing: boolean
   /** 分类→输出指令映射（覆盖内置默认，如 {"AI":"重点讲对从业者的影响"}） */
   categoryPrompts: Record<string, string>
 }
@@ -135,6 +143,9 @@ const FeedSourceSchema = Schema.object({
 const FetchSectionSchema = Schema.object({
   enabled: Schema.boolean().default(true),
   intervalMinutes: Schema.number().min(5).default(60),
+  scoreOnFetch: Schema.boolean().default(true).description('抓取后对新条目全量 LLM 评分（分块批量）'),
+  hourlyBrief: Schema.boolean().default(true).description('抓取评分后生成时段快报（{day}-hourly.md）'),
+  hourlyMinScore: Schema.number().min(0).max(10).default(6).description('时段快报入选分阈值'),
   onStartup: Schema.boolean().default(true),
   concurrency: Schema.natural().min(1).max(16).default(6),
   requestTimeoutMs: Schema.number().min(1000).default(15_000),
@@ -173,6 +184,7 @@ const DigestSectionSchema = Schema.object({
   llmScoreCandidates: Schema.natural().min(0).max(200).default(40).description('LLM 评分候选池；0=关闭 LLM 评分。'),
   minLlmScore: Schema.natural().min(1).max(10).default(5).description('LLM 评分入选阈值（1-10）。'),
   dedupeStories: Schema.boolean().default(true).description('同题新闻合并去重。'),
+  rescoreMissing: Schema.boolean().default(true).description('日报补评无分候选条目。'),
   categoryPrompts: Schema.dict(Schema.string()).default({}).description('分类→输出指令映射。'),
 }).description('日报格式。')
 

@@ -6,7 +6,7 @@ const applyTheme = (t) => { if (t === 'dark' || t === 'light') document.document
 applyTheme(new URLSearchParams(location.search).get('theme'))
 window.addEventListener('message', (e) => { if (e.data && e.data.type === 'rnd-theme') applyTheme(e.data.theme) })
 
-const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', total: 0, pageSize: 50 }
+const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', total: 0, pageSize: 50 }
 const $ = (sel) => document.querySelector(sel)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 /** 输出链接白名单：只放行 http(s)，javascript:/data: 一律清空 */
@@ -189,7 +189,7 @@ async function loadDigest() {
   const day = /^\d{4}-\d{2}-\d{2}$/.test(dv) ? dv : localDay // 本地日界：UTC toISOString 会让凌晨看到的日期停在昨天
   $('#digestDay').value = day
   try {
-    const r = await api(`/digest/${day}`)
+    const r = await api(`/digest/${day}${state.digestKind === 'hourly' ? '?kind=hourly' : ''}`)
     $('#digestView').innerHTML = mdLite(r.markdown)
   } catch {
     $('#digestView').innerHTML = `<p class="empty">${esc(day)} 无日报（未到生成时间或抓取为空），可点「生成日报」手动触发。</p>`
@@ -212,6 +212,9 @@ function mdLite(md) {
 }
 
 $('#digestDay').addEventListener('change', loadDigest)
+for (const [id, kind] of [['btnKindDigest', 'digest'], ['btnKindHourly', 'hourly']]) {
+  $(`#${id}`).addEventListener('click', () => { state.digestKind = kind; loadDigest() })
+}
 $('#btnDigestRun').addEventListener('click', async () => {
   const btn = $('#btnDigestRun')
   btn.disabled = true; btn.hidden = true // 生成中隐藏入口，防重入
@@ -409,6 +412,10 @@ async function loadPrefs() {
     $('#proxyUrl').value = r.prefs.proxyUrl || ''
     const d = r.prefs.digestOpts || {}
     for (const [id, k] of [['dItems','digestItems'],['dPerTopic','perTopicLimit'],['dMinScore','minLlmScore'],['dScoreN','llmScoreCandidates'],['dCandH','candidateHours'],['dSumN','summaryMaxItems'],['dConc','summaryConcurrency'],['dSumLen','digestMaxLength']]) $(`#${id}`).value = d[k] ?? ''
+    $('#dScoreFetch').checked = d.scoreOnFetch !== false
+    $('#dRescore').checked = d.rescoreMissing !== false
+    $('#dHourly').checked = d.hourlyBrief !== false
+    renderSubTopics(r.prefs)
   } catch { /* ignore */ }
 }
 $('#btnProxySave').addEventListener('click', async () => {
@@ -420,9 +427,25 @@ $('#btnProxySave').addEventListener('click', async () => {
 $('#btnDigestOptsSave').addEventListener('click', async () => {
   const num = (id) => { const v = $(`#${id}`).value.trim(); return v === '' ? undefined : Number(v) }
   try {
-    const r = await post('/prefs', { digestOpts: { digestItems: num('dItems'), perTopicLimit: num('dPerTopic'), minLlmScore: num('dMinScore'), llmScoreCandidates: num('dScoreN'), candidateHours: num('dCandH'), summaryMaxItems: num('dSumN'), summaryConcurrency: num('dConc'), digestMaxLength: num('dSumLen') } })
+    const r = await post('/prefs', { digestOpts: { digestItems: num('dItems'), perTopicLimit: num('dPerTopic'), minLlmScore: num('dMinScore'), llmScoreCandidates: num('dScoreN'), candidateHours: num('dCandH'), summaryMaxItems: num('dSumN'), summaryConcurrency: num('dConc'), digestMaxLength: num('dSumLen'), scoreOnFetch: $('#dScoreFetch').checked, rescoreMissing: $('#dRescore').checked, hourlyBrief: $('#dHourly').checked } })
     state.prefs = r.prefs
     toast('日报参数已保存，下次生成生效')
+  } catch (e) { toast(`保存失败: ${e.message}`) }
+})
+function renderSubTopics(p) {
+  const cats = [...new Set((state.sources || []).map((src) => src.category).filter(Boolean))].sort()
+  const subs = p?.subscribedTopics // undefined=全订阅
+  $('#subTopics').innerHTML = cats.length ? cats.map((c) =>
+    `<label><input type="checkbox" class="subTopic" value="${esc(c)}" ${!subs || subs.includes(c) ? 'checked' : ''}> ${esc(c)}</label>`).join('')
+    : '<span class="empty">暂无分类</span>'
+}
+$('#btnSubSave').addEventListener('click', async () => {
+  const checked = [...document.querySelectorAll('.subTopic')].filter((c) => c.checked).map((c) => c.value)
+  const all = checked.length === document.querySelectorAll('.subTopic').length
+  try {
+    const r = await post('/prefs', { subscribedTopics: all ? [] : checked }) // []=全订阅（undefined 会被 merge 保留旧值）
+    state.prefs = r.prefs; renderSubTopics(r.prefs)
+    toast(all ? '已订阅全部分类' : `已订阅 ${checked.length} 个分类`)
   } catch (e) { toast(`保存失败: ${e.message}`) }
 })
 $('#btnFetchTest').addEventListener('click', async () => {
