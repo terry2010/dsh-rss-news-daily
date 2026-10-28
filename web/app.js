@@ -119,6 +119,15 @@ function itemHtml(i) {
 }
 
 $('#itemList').addEventListener('click', async (e) => {
+  const link = e.target.closest('a.tlink') // 点标题=标已读（不阻塞跳转）
+  if (link) {
+    const it = state.items.find((x) => x.id === link.dataset.id)
+    if (it && !it.state.read) {
+      it.state.read = true
+      link.closest('.item')?.classList.add('read', 'collapsed')
+      post('/feedback', { id: it.id, action: 'read' }).catch(() => {}) // 静默,失败不打扰
+    }
+  }
   const btn = e.target.closest('button[data-act]')
   if (!btn) return
   if (btn.dataset.act === 'copy') {
