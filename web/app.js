@@ -738,5 +738,6 @@ $('#findNext').addEventListener('click', () => doFind(false))
 $('#findPrev').addEventListener('click', () => doFind(true))
 $('#findClose').addEventListener('click', () => { findbar.hidden = true; window.getSelection()?.removeAllRanges() })
 
+state.sort = 'published'; $('#sortSel').value = 'published' // 每次进入默认按发布时间（抓取后切过的 fetched 不残留）
 loadStatus(); loadSources().then(async () => { await loadItems(); if (pendingPos?.id) scrollToAnchor(pendingPos) })
 setInterval(loadStatus, 2000) // 未读计数 2s 轮询
