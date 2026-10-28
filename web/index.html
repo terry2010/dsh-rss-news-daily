@@ -113,8 +113,10 @@
       <label><input type="checkbox" id="dScoreFetch"> 抓取后评分</label>
       <label><input type="checkbox" id="dRescore"> 无分补评</label>
       <label><input type="checkbox" id="dHourly"> 时段快报</label>
+      <label>保留 <input type="number" id="dRetDays" min="0" style="width:55px" placeholder="90"> 天</label>
+      <label><input type="checkbox" id="dPruneQ"> 清退低质优先</label>
     </div>
-    <div class="hist">留空=跟随配置默认；每类上限 0=不限；LLM评分条数 0=关闭评分；候选窗口 0=不限；写摘要条数 0=不写AI摘要</div>
+    <div class="hist">留空=跟随配置默认；每类上限 0=不限；LLM评分条数 0=关闭评分；候选窗口 0=不限；写摘要条数 0=不写AI摘要；保留天数 0=仅数量上限</div>
     <h3>订阅分类</h3>
     <div id="subTopics" style="display:flex;gap:10px;flex-wrap:wrap;font-size:13px"></div>
     <div class="toolbar"><button id="btnSubSave">保存订阅</button></div>

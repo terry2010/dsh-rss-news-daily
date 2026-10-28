@@ -433,10 +433,11 @@ async function loadPrefs() {
     renderPrefs()
     $('#proxyUrl').value = r.prefs.proxyUrl || ''
     const d = r.prefs.digestOpts || {}
-    for (const [id, k] of [['dItems','digestItems'],['dPerTopic','perTopicLimit'],['dMinScore','minLlmScore'],['dScoreN','llmScoreCandidates'],['dCandH','candidateHours'],['dSumN','summaryMaxItems'],['dConc','summaryConcurrency'],['dSumLen','digestMaxLength']]) $(`#${id}`).value = d[k] ?? ''
+    for (const [id, k] of [['dItems','digestItems'],['dPerTopic','perTopicLimit'],['dMinScore','minLlmScore'],['dScoreN','llmScoreCandidates'],['dCandH','candidateHours'],['dSumN','summaryMaxItems'],['dConc','summaryConcurrency'],['dSumLen','digestMaxLength'],['dRetDays','retentionDays']]) $(`#${id}`).value = d[k] ?? ''
     $('#dScoreFetch').checked = d.scoreOnFetch !== false
     $('#dRescore').checked = d.rescoreMissing !== false
     $('#dHourly').checked = d.hourlyBrief !== false
+    $('#dPruneQ').checked = d.pruneLowQuality !== false
     renderSubTopics(r.prefs)
   } catch { /* ignore */ }
 }
@@ -449,7 +450,7 @@ $('#btnProxySave').addEventListener('click', async () => {
 $('#btnDigestOptsSave').addEventListener('click', async () => {
   const num = (id) => { const v = $(`#${id}`).value.trim(); return v === '' ? undefined : Number(v) }
   try {
-    const r = await post('/prefs', { digestOpts: { digestItems: num('dItems'), perTopicLimit: num('dPerTopic'), minLlmScore: num('dMinScore'), llmScoreCandidates: num('dScoreN'), candidateHours: num('dCandH'), summaryMaxItems: num('dSumN'), summaryConcurrency: num('dConc'), digestMaxLength: num('dSumLen'), scoreOnFetch: $('#dScoreFetch').checked, rescoreMissing: $('#dRescore').checked, hourlyBrief: $('#dHourly').checked } })
+    const r = await post('/prefs', { digestOpts: { digestItems: num('dItems'), perTopicLimit: num('dPerTopic'), minLlmScore: num('dMinScore'), llmScoreCandidates: num('dScoreN'), candidateHours: num('dCandH'), summaryMaxItems: num('dSumN'), summaryConcurrency: num('dConc'), digestMaxLength: num('dSumLen'), scoreOnFetch: $('#dScoreFetch').checked, rescoreMissing: $('#dRescore').checked, hourlyBrief: $('#dHourly').checked, retentionDays: num('dRetDays'), pruneLowQuality: $('#dPruneQ').checked } })
     state.prefs = r.prefs
     toast('日报参数已保存，下次生成生效')
   } catch (e) { toast(`保存失败: ${e.message}`) }

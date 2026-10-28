@@ -69,7 +69,11 @@ export function apply(ctx: Context, config: ConfigType) {
     return
   }
   const dataDir = resolveDataDir(config.dataDir)
-  const store = new Store({ path: join(dataDir, 'store.json'), maxItems: config.fetch.maxStoredItems, log })
+  const store = new Store({
+    path: join(dataDir, 'store.json'), maxItems: config.fetch.maxStoredItems, log,
+    retentionDays: () => prefs.get().digestOpts?.retentionDays ?? 90,
+    pruneLowQuality: () => prefs.get().digestOpts?.pruneLowQuality ?? true,
+  })
   const prefs = new PrefsStore(join(dataDir, 'prefs.json'), log)
   const fetcher = createFetcher({
     proxyUrl: () => (prefs.get() as { proxyUrl?: string }).proxyUrl || config.fetch.proxyUrl,
