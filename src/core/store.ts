@@ -28,6 +28,12 @@ export interface StoreMeta {
   lastDigestDay: string
   /** 最近一次抓取周期新增条目数（状态栏"本次新增"） */
   lastFetchAdded?: number
+  /** token 用量统计：按日+按功能分账（digest 日报/score 评分快报/translate 翻译） */
+  tokenStats?: {
+    totalIn: number
+    totalOut: number
+    days: Record<string, { in: number; out: number; digest: number; score: number; translate: number }>
+  }
 }
 
 export interface StoreData {

@@ -99,6 +99,16 @@ export function apply(ctx: Context, config: ConfigType) {
     dedupeWindowDays: config.dedupe.windowDays,
     log,
   })
+  // token 用量分账：把 client.usage 累计进 meta.tokenStats（按日+按功能）
+  const addTokens = (feature: 'digest' | 'score' | 'translate', usage?: { inputTokens: number; outputTokens: number }) => {
+    if (!usage || (usage.inputTokens + usage.outputTokens) <= 0) return
+    const day = zonedDayKey(new Date(), config.timezone || undefined)
+    const st = store.meta.tokenStats ?? (store.meta.tokenStats = { totalIn: 0, totalOut: 0, days: {} })
+    const d = st.days[day] ?? (st.days[day] = { in: 0, out: 0, digest: 0, score: 0, translate: 0 })
+    const total = usage.inputTokens + usage.outputTokens
+    st.totalIn += usage.inputTokens; st.totalOut += usage.outputTokens
+    d.in += usage.inputTokens; d.out += usage.outputTokens; d[feature] += total
+  }
   // P1+P8：评分+快报——fetch 完成后 fire-and-forget（调度/手动路径共用，不阻塞 fetch 返回）
   let scoringInFlight = false // 闩锁：与 digest rescoreMissing 互斥，防同批双评
   const scoreAndBrief = async (cycleStart: string, signal?: AbortSignal) => {
@@ -108,13 +118,15 @@ export function apply(ctx: Context, config: ConfigType) {
     scoringInFlight = true
     try {
       const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart)
-      const scored = await scoreNewItems(fresh, new DshLlmClient(llmRuntime!, pickRoute(), log), {
+      const scoreClient = new DshLlmClient(llmRuntime!, pickRoute(), log)
+      const scored = await scoreNewItems(fresh, scoreClient, {
         llmTimeoutMs: config.llm.timeoutMs,
         llmScoreCandidates: dopts?.llmScoreCandidates ?? config.digest.llmScoreCandidates,
         llmMaxTokens: config.llm.maxTokens,
         prefs: prefs.get(),
         signal,
       }, log)
+      addTokens('score', scoreClient.usage)
       if (scored) await store.save()
       if (dopts?.hourlyBrief ?? config.fetch.hourlyBrief) {
         const now = new Date()
@@ -147,6 +159,7 @@ export function apply(ctx: Context, config: ConfigType) {
       prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
       maxTokens: 1200,
     })
+    addTokens('translate', client.usage) // 每条独立 client——usage 即本条用量
     const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
     item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
   }
@@ -304,6 +317,7 @@ export function apply(ctx: Context, config: ConfigType) {
         items: store.items.length,
         todayAdded: store.items.filter((i) => { const d = new Date(i.fetchedAt); const t = new Date(); t.setHours(0, 0, 0, 0); return d.getTime() >= t.getTime() }).length,
         lastAdded: (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0,
+        todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate } : undefined })(),
         lastFetchAt: store.meta.lastFetchAt,
         lastDigestDay: store.meta.lastDigestDay,
         failures,
@@ -330,7 +344,8 @@ export function apply(ctx: Context, config: ConfigType) {
     digestBusy = true
     digestAbort = new AbortController()
     digestProg = { running: true, done: 0, total: 0, stage: '' }
-    return digestRun(force, day).finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0, stage: '' } })
+    return digestRun(force, day).then((doc) => { addTokens('digest', doc.tokens); return doc })
+      .finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0, stage: '' } })
   }
   const digestRun = (force: boolean, day?: string) => runDailyDigest({
     store,
