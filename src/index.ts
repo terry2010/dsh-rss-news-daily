@@ -36,6 +36,7 @@ import { digestFileName } from './digest.js'
 import { normalizeUrl } from './service.js'
 import { learnFromFeedback } from './core/tune.js'
 import { zonedDayKey } from './core/time.js'
+import { addTokenStats } from './core/token-stats.js'
 
 export { Config }
 
@@ -99,16 +100,9 @@ export function apply(ctx: Context, config: ConfigType) {
     dedupeWindowDays: config.dedupe.windowDays,
     log,
   })
-  // token 用量分账：把 client.usage 累计进 meta.tokenStats（按日+按功能）
-  const addTokens = (feature: 'digest' | 'score' | 'translate', usage?: { inputTokens: number; outputTokens: number }) => {
-    if (!usage || (usage.inputTokens + usage.outputTokens) <= 0) return
-    const day = zonedDayKey(new Date(), config.timezone || undefined)
-    const st = store.meta.tokenStats ?? (store.meta.tokenStats = { totalIn: 0, totalOut: 0, days: {} })
-    const d = st.days[day] ?? (st.days[day] = { in: 0, out: 0, digest: 0, score: 0, translate: 0 })
-    const total = usage.inputTokens + usage.outputTokens
-    st.totalIn += usage.inputTokens; st.totalOut += usage.outputTokens
-    d.in += usage.inputTokens; d.out += usage.outputTokens; d[feature] += total
-  }
+  // token 用量分账：把 client.usage 累计进 meta.tokenStats（按日+按功能，实现在 core/token-stats）
+  const addTokens = (feature: 'digest' | 'score' | 'translate', usage?: { inputTokens: number; outputTokens: number }) =>
+    addTokenStats(store.meta, feature, usage, zonedDayKey(new Date(), config.timezone || undefined))
   // P1+P8：评分+快报——fetch 完成后 fire-and-forget（调度/手动路径共用，不阻塞 fetch 返回）
   let scoringInFlight = false // 闩锁：与 digest rescoreMissing 互斥，防同批双评
   const scoreAndBrief = async (cycleStart: string, signal?: AbortSignal) => {
