@@ -1,0 +1,6 @@
+url: https://github.com/terry2010/dsh-rss-news-daily
+name: terry2010/dsh-rss-news-daily
+category: usage
+description:
+  en: 'RSS/News reader and AI-curated daily briefing: per-item scoring, story dedup, domain-blocked digest, hourly briefs, OPML import/export.'
+  zh: 'RSS/新闻阅读器 + AI 精选日报：逐条评分、同题合并、领域分块日报、时段快报、OPML 导入导出。'
