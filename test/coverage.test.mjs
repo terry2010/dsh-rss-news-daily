@@ -184,7 +184,7 @@ test('scheduler: 今天已生成日报→不补跑', async () => {
   startScheduler(timers, {
     fetch: { enabled: false, intervalMinutes: 60, onStartup: false, fetchTimes: [] },
     dailyTime: '08:00', timezone: '', catchUpHours: 24, enabled: true,
-    lastDigestDay: () => new Date().toISOString().slice(0, 10), // 今天已生成
+    lastDigestDay: () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}` }, // 今天已生成（本地日,与调度器同一基准）
     runFetchCycle: async () => ({}),
     runDailyDigest: async () => ({}),
     getSchedule: () => ({ digestTimes: [], fetchTimes: [] }),
