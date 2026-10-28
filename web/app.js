@@ -635,5 +635,23 @@ $('#btnResetPrefs').addEventListener('click', async () => {
 
 const pendingPos = restorePos()
 if (pendingPos) state.page = pendingPos.page
+// 页内查找条：Electron webview 无原生 Ctrl+F，自研——window.find() 高亮+跳转
+const findbar = $('#findbar'), findInput = $('#findInput')
+const doFind = (back) => { const q = findInput.value; if (q) window.find(q, false, back, true, false, true) }
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+    e.preventDefault()
+    findbar.hidden = false; findInput.focus(); findInput.select()
+  }
+})
+findInput.addEventListener('input', () => { window.getSelection()?.removeAllRanges(); doFind(false) })
+findInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); doFind(e.shiftKey) }
+  if (e.key === 'Escape') { findbar.hidden = true; window.getSelection()?.removeAllRanges() }
+})
+$('#findNext').addEventListener('click', () => doFind(false))
+$('#findPrev').addEventListener('click', () => doFind(true))
+$('#findClose').addEventListener('click', () => { findbar.hidden = true; window.getSelection()?.removeAllRanges() })
+
 loadStatus(); loadSources().then(async () => { await loadItems(); if (pendingPos?.id) scrollToAnchor(pendingPos) })
 setInterval(loadStatus, 2000) // 未读计数 2s 轮询
