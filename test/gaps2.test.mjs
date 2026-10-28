@@ -202,6 +202,18 @@ test('tools: news_add/remove/fetch/search/feedback/tune/digest 逐个执行', as
   assert.equal((await tools.news_tune.execute({ text: '多推AI' })).learned, '多推AI')
   assert.equal((await tools.news_digest.execute({})).markdown, 'md')
 })
+test('scheduler: 只勾启动即抓不开轮询→挂startup不挂interval', async () => {
+  const { startScheduler } = await import('../lib/scheduler.js')
+  const calls = []
+  const timers = { interval(fn, ms) { calls.push(['interval', ms]); return () => {} }, timeout(fn, ms) { calls.push(['timeout', ms]); return () => {} } }
+  startScheduler(timers, {
+    fetch: { enabled: true, intervalMinutes: 0, onStartup: true, fetchTimes: [] }, // interval 关
+    dailyTime: '', timezone: '', catchUpHours: 0, enabled: false,
+    lastDigestDay: () => '', runFetchCycle: async () => {}, runDailyDigest: async () => {}, getSchedule: () => ({}),
+  })
+  assert.equal(calls.filter(([k]) => k === 'timeout').length >= 1, true) // startup timer 挂了
+  assert.equal(calls.filter(([k]) => k === 'interval').length, 0) // 轮询没挂
+})
 // === PART 2 END ===
 
 // ---- service 源管理边界 ----

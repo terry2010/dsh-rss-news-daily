@@ -41,20 +41,22 @@ export function startScheduler(ctx: TimerSeam, options: SchedulerOptions): () =>
   let nextTimer: (() => void) | undefined
 
   // ---- 抓取轮询 ----
-  if (options.fetch.enabled && options.fetch.intervalMinutes >= 5) {
-    let fetchRunning = false
-    const cycle = (): void => {
-      if (fetchRunning) return // 防重入
-      fetchRunning = true
+  // 周期块只负责 interval；onStartup 独立挂钟——只勾"启动即抓"不开轮询也要生效
+  const mkCycle = () => {
+    let running = false
+    return (): void => {
+      if (running) return // 防重入
+      running = true
       void options
         .runFetchCycle()
         .catch((error) => log.error('scheduled fetch cycle failed', error))
-        .finally(() => { fetchRunning = false })
+        .finally(() => { running = false })
     }
-    if (options.fetch.onStartup) {
-      disposers.push(ctx.timeout(cycle, STARTUP_FETCH_DELAY_MS))
-    }
-    disposers.push(ctx.interval(cycle, options.fetch.intervalMinutes * 60_000))
+  }
+  if (options.fetch.enabled) {
+    const cycle = mkCycle()
+    if (options.fetch.onStartup) disposers.push(ctx.timeout(cycle, STARTUP_FETCH_DELAY_MS))
+    if (options.fetch.intervalMinutes >= 5) disposers.push(ctx.interval(cycle, options.fetch.intervalMinutes * 60_000))
   }
 
   // ---- 多时间点定时（fetch + digest 统一挂钟；同刻先 fetch 后 digest） ----
