@@ -10,7 +10,7 @@ import { join } from 'node:path'
 
 import type { DigestDocument, DigestLanguage, FeedItem, LogSink } from './core/types.js'
 import { noopLog } from './core/types.js'
-import type { Store } from './core/store.js'
+import type { StoreLike } from './core/store.js'
 import type { LlmClient } from './summarizer.js'
 import { summarize } from './summarizer.js'
 import type { SummarizableItem } from './summarizer.js'
@@ -22,7 +22,7 @@ import { effectiveSources } from './service.js'
 import { truncateCodePoints } from './core/parser.js'
 
 export interface DigestPipelineOptions {
-  store: Store
+  store: StoreLike
   configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean }>
   llmClient?: LlmClient
   llmEnabled: boolean

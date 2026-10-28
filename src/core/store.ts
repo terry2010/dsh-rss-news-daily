@@ -163,6 +163,25 @@ export interface StoreOptions {
  * In-memory working copy of the store document with persisted side effects.
  * Mutation methods update memory; persistence happens on {@link save}.
  */
+/** Store 公共契约——JSON Store 与 SqliteStore 共同实现（DESIGN-SQLITE.md P2） */
+export interface StoreLike {
+  readonly path: string
+  readonly maxItems: number
+  readonly meta: StoreMeta
+  readonly sources: FeedSource[]
+  readonly items: FeedItem[]
+  readonly health: Record<string, FeedSource['health']>
+  load(): Promise<void>
+  save(): Promise<void>
+  addItems(items: FeedItem[]): number
+  addSource(source: FeedSource): void
+  removeSource(id: string): boolean
+  setHealth(id: string, health: FeedSource['health']): void
+  getHealth(id: string): FeedSource['health'] | undefined
+  markDigested(ids: string[], day: string): void
+  countUndigested(day: string): number
+}
+
 export class Store {
   readonly path: string
   readonly maxItems: number

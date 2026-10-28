@@ -4,11 +4,11 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 
-import type { Store } from './core/store.js'
+import type { StoreLike } from './core/store.js'
 import type { PrefsStore } from './core/prefs.js'
 import type { NewsService } from './tools.js'
 import { effectiveSources } from './service.js'
@@ -72,7 +72,7 @@ function sameSite(req: Req): boolean {
 }
 
 export interface ApiDeps {
-  store: Store
+  store: StoreLike
   prefs: PrefsStore
   svc: NewsService
   configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean }>
@@ -109,6 +109,12 @@ function apiItems(deps: ApiDeps) {
     items = items.filter((i) => !i.state.hidden)
     if (q) items = items.filter((i) => `${i.title} ${i.summary}`.toLowerCase().includes(q))
     const sortKey = u.searchParams.get('sort') === 'fetched' ? 'fetched' : 'published'
+    const qi = (deps.store as { queryItems?: (o: { day?: string; category?: string; source?: string; unread?: boolean; q?: string; sort?: string; page?: number; pageSize?: number }) => { total: number; items: typeof items } }).queryItems
+    if (qi) { // SQLite 后端:filter/sort/FTS/分页全下推
+      const r = qi.call(deps.store, { day: day || undefined, category: category || undefined, source: source || undefined, unread, q: q || undefined, sort: sortKey, page, pageSize: deps.readerPageSize })
+      sendJson(res, 200, { ok: true, total: r.total, page, pageSize: deps.readerPageSize, items: r.items })
+      return
+    }
     const keyOf = (i: (typeof items)[number]) => sortKey === 'fetched' ? i.fetchedAt : (i.publishedAt || i.fetchedAt)
     const sorted = [...items].sort((a, b) => keyOf(b).localeCompare(keyOf(a))) // sort=fetched 按抓取时间;默认按发布时间缺则回退抓取时间
     const pageSize = deps.readerPageSize
@@ -402,6 +408,28 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     // 改为立即返回 + 前端轮询 /digest-progress 收尾
     deps.runDigest(!!body?.force, day).catch(() => { /* 错误经 progress/degraded 可见 */ })
     sendJson(r, 200, { ok: true, started: true })
+  }) }))
+  // P7 导出/导入：NDJSON 流式 bundle + .db 快照
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/export`, handler: guard(async (q, r) => {
+    const st = deps.store as { exportNdjson?: (f: string, d: string, s?: string) => Promise<number>; snapshot?: (f: string) => void }
+    if (!st.exportNdjson) return sendJson(r, 400, { ok: false, error: 'sqlite backend required' })
+    const u = new URL(q.url || '', 'http://x')
+    const kind = u.searchParams.get('kind') || 'ndjson' // ndjson | db
+    const scope = (u.searchParams.get('scope') || 'all') as 'all' | 'items' | 'digests'
+    const dir = join(dirname(deps.store.path), 'exports')
+    const file = join(dir, kind === 'db' ? `store-${Date.now()}.db` : `rss-export-${Date.now()}.ndjson`)
+    if (kind === 'db') { st.snapshot!(file); return sendJson(r, 200, { ok: true, file }) }
+    const n = await st.exportNdjson(file, deps.digestsDir, scope)
+    sendJson(r, 200, { ok: true, file, items: n })
+  }) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/import`, handler: guard(async (q, r) => {
+    if (q.method !== 'POST') { r.statusCode = 405; r.end(); return }
+    const st = deps.store as { importNdjson?: (f: string, d: string) => Promise<{ items: number; sources: number; digests: number }> }
+    if (!st.importNdjson) return sendJson(r, 400, { ok: false, error: 'sqlite backend required' })
+    const body = await readBody(q) as { path?: string }
+    if (!body.path) return sendJson(r, 400, { ok: false, error: 'path required' })
+    const counts = await st.importNdjson(body.path, deps.digestsDir)
+    sendJson(r, 200, { ok: true, ...counts })
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/status`, handler: guard((_q, r) => sendJson(r, 200, { ok: true, ...deps.svc.status() })) }))
 

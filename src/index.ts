@@ -36,6 +36,7 @@ import { digestFileName } from './digest.js'
 import { normalizeUrl } from './service.js'
 import { learnFromFeedback } from './core/tune.js'
 import { zonedDayKey } from './core/time.js'
+import { probeSqlite, SqliteStore } from './core/sqlite-store.js'
 import { addTokenStats } from './core/token-stats.js'
 
 export { Config }
@@ -70,10 +71,14 @@ export function apply(ctx: Context, config: ConfigType) {
     return
   }
   const dataDir = resolveDataDir(config.dataDir)
-  const store = new Store({
-    path: join(dataDir, 'store.json'), maxItems: config.fetch.maxStoredItems, log,
+  const probe = probeSqlite()
+  if (!probe.ok) throw new Error('node:sqlite unavailable in this host (requires Node >=22.5)')
+  if (!probe.fts) log.warn('SQLite FTS5/trigram unavailable in this host; search falls back to LIKE')
+  const store = new SqliteStore({
+    path: join(dataDir, 'store.db'), maxItems: config.fetch.maxStoredItems, log,
     retentionDays: () => prefs.get().digestOpts?.retentionDays ?? 90,
     pruneLowQuality: () => prefs.get().digestOpts?.pruneLowQuality ?? true,
+    fts: probe.fts,
   })
   const prefs = new PrefsStore(join(dataDir, 'prefs.json'), log)
   const fetcher = createFetcher({
@@ -308,7 +313,7 @@ export function apply(ctx: Context, config: ConfigType) {
       return {
         sources: list.length,
         enabled: list.filter((s) => s.enabled).length,
-        items: store.items.length,
+        items: (store as { count?: () => number }).count?.() ?? store.items.length,
         todayAdded: store.items.filter((i) => { const d = new Date(i.fetchedAt); const t = new Date(); t.setHours(0, 0, 0, 0); return d.getTime() >= t.getTime() }).length,
         lastAdded: (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0,
         todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate } : undefined })(),
