@@ -212,8 +212,13 @@ function mdLite(md) {
 }
 
 $('#digestDay').addEventListener('change', loadDigest)
+const syncRunBtn = () => {
+  const b = $('#btnDigestRun')
+  if (state.digestKind === 'hourly') { b.textContent = '▶ 生成快报'; b.title = '抓取新条目并评分生成本时段快报' }
+  else { b.textContent = '▶ 生成日报'; b.title = '立即生成今日日报' }
+}
 for (const [id, kind] of [['btnKindDigest', 'digest'], ['btnKindHourly', 'hourly']]) {
-  $(`#${id}`).addEventListener('click', () => { state.digestKind = kind; loadDigest() })
+  $(`#${id}`).addEventListener('click', () => { state.digestKind = kind; syncRunBtn(); loadDigest() })
 }
 $('#btnDigestRun').addEventListener('click', async () => {
   const btn = $('#btnDigestRun')
@@ -228,6 +233,21 @@ $('#btnDigestRun').addEventListener('click', async () => {
       clearInterval(dp); reset(); toast('日报生成完成'); loadDigest()
     } catch { /* 进度不可达不影响生成 */ }
   }, 900)
+  if (state.digestKind === 'hourly') { // 快报=抓取+评分产出：跑一轮 fetch 自然生成
+    clearInterval(dp)
+    try {
+      await post('/fetch', { force: true })
+      toast('已开始抓取+评分，快报稍后生成')
+      const poll = setInterval(async () => {
+        try {
+          const p = await api('/fetch-progress')
+          if (!p.running) { clearInterval(poll); reset(); toast('快报已生成'); loadDigest() }
+        } catch { /* 进度不可达不阻塞 */ }
+      }, 1500)
+      setTimeout(() => { clearInterval(poll); reset(); loadDigest() }, 120_000) // 2min 兜底
+    } catch (e) { toast(`生成失败: ${e.message}`); reset() }
+    return
+  }
   $('#digestBusy').textContent = '⏳ 日报生成中…（LLM 总结可能要几分钟）' // 忙文走 busybar，statusbar 保持状态行
   try {
     // 异步触发：大条数下 LLM 全链路远超 HTTP 请求超时，服务端立即返回，轮询收尾
