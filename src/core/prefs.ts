@@ -60,8 +60,8 @@ export function normalizePrefs(value: unknown): PrefsFile {
     schedule: Array.isArray(sched.digestTimes) || Array.isArray(sched.fetchTimes) || typeof sched.intervalMinutes === 'number' || typeof sched.onStartup === 'boolean'
       ? {
           digestTimes: times(sched.digestTimes), fetchTimes: times(sched.fetchTimes),
-          intervalMinutes: typeof sched.intervalMinutes === 'number' && Number.isFinite(sched.intervalMinutes) ? sched.intervalMinutes : undefined,
-          onStartup: typeof sched.onStartup === 'boolean' ? sched.onStartup : undefined,
+          ...(typeof sched.intervalMinutes === 'number' && Number.isFinite(sched.intervalMinutes) ? { intervalMinutes: sched.intervalMinutes } : {}),
+          ...(typeof sched.onStartup === 'boolean' ? { onStartup: sched.onStartup } : {}),
         }
       : undefined,
     proxyUrl: typeof r.proxyUrl === 'string' && r.proxyUrl ? r.proxyUrl : undefined,
