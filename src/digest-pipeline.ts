@@ -236,7 +236,7 @@ export async function appendHourlyBrief(opts: {
     lines.push(`### ${topic}`)
     for (const it of list) {
       const src = opts.sourcesById.get(it.sourceId)?.title ?? it.sourceId
-      const meta = [`评分 ${it.llmScore}`, src, ...(it.tags ?? []).map((t) => `#${t}`)].join(' · ')
+      const meta = [src, ...(it.tags ?? []).map((t) => `#${t}`)].join(' · ')
       const safeTitle = it.title.replace(/[\[\]()\n]/g, ' ').trim() // 防 []() 破坏 markdown 链接语法
       const safeLink = (it.link || '').replace(/[()\n]/g, '') || '#'
       lines.push(`- **[${safeTitle}](${safeLink})**  \n  ${meta}${it.llmReason ? ` — ${it.llmReason}` : ''}`)
