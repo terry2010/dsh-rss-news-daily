@@ -397,6 +397,8 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
     const clr = (deps.store as { clearItems?: () => number }).clearItems
     const deleted = clr ? clr.call(deps.store) : 0
+    deps.store.meta.lastFetchAdded = 0 // 上轮新增计数同步归零
+    await deps.store.save()
     sendJson(r, 200, { ok: true, deleted })
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.fetchProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))
