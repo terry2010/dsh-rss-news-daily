@@ -806,6 +806,68 @@ $('#btnSchedClear').addEventListener('click', async () => {
   })
 }
 
+// ---- 弹层：新人引导 + 升级提示（共用分步组件） ----
+function showSteps({ title, steps, doneText = '完成', onDone }) {
+  let idx = 0
+  const ov = document.createElement('div'); ov.className = 'obOverlay'
+  const render = () => {
+    const st = steps[idx]
+    ov.innerHTML = `<div class="obCard">
+      <h3>${esc(title)}</h3>
+      <h4>${esc(st.title)}</h4>
+      <div class="obBody">${st.bodyHtml || esc(st.body)}</div>
+      <div class="obNav">
+        <span>${idx + 1}/${steps.length}</span>
+        <span>
+          ${idx > 0 ? '<button data-ob="prev">上一步</button>' : ''}
+          <button data-ob="next">${idx === steps.length - 1 ? esc(doneText) : '下一步'}</button>
+        </span>
+      </div>
+      <button class="obSkip" data-ob="skip" title="跳过">✕</button>
+    </div>`
+  }
+  ov.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-ob]')?.dataset.ob
+    if (act === 'prev' && idx > 0) { idx--; render() }
+    else if (act === 'next') { if (idx < steps.length - 1) { idx++; render() } else close() }
+    else if (act === 'skip') close()
+  })
+  const close = () => { ov.remove(); onDone?.() }
+  render(); document.body.appendChild(ov)
+}
+const LS_SEEN_VER = 'rss_seen_version'
+const maybeShowOnboardAndUpgrade = (version) => {
+  if (!localStorage.getItem(ONBOARD_KEY)) { // 首启:先引导,完事顺手记版本不弹升级
+    showSteps({
+      title: '欢迎使用 RSS 每日精选',
+      steps: ONBOARD_STEPS,
+      doneText: '开始用',
+      onDone: () => { localStorage.setItem(ONBOARD_KEY, '1'); if (version) localStorage.setItem(LS_SEEN_VER, version) },
+    })
+    return
+  }
+  if (version && localStorage.getItem(LS_SEEN_VER) !== version) { // 升级:弹最新一节
+    const entry = (typeof CHANGELOG !== 'undefined' ? CHANGELOG : []).find((c) => c.v === version) || CHANGELOG[0]
+    if (entry) showSteps({
+      title: `已更新到 v${version}`,
+      steps: [{ title: '本次更新', bodyHtml: `<ul>${entry.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` }],
+      doneText: '知道了',
+      onDone: () => localStorage.setItem(LS_SEEN_VER, version),
+    })
+    else localStorage.setItem(LS_SEEN_VER, version)
+    if (entry) return; localStorage.setItem(LS_SEEN_VER, version)
+  }
+}
+api('/status').then((s) => maybeShowOnboardAndUpgrade(s.version)).catch(() => {})
+// 设置区手工触发
+$('#btnShowUpgrade')?.addEventListener('click', () => {
+  const entry = (typeof CHANGELOG !== 'undefined' ? CHANGELOG[0] : null)
+  if (entry) showSteps({ title: `v${entry.v} 更新内容`, steps: [{ title: '本次更新', bodyHtml: `<ul>${entry.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` }], doneText: '关闭' })
+})
+$('#btnShowOnboard')?.addEventListener('click', () => {
+  showSteps({ title: '功能引导', steps: ONBOARD_STEPS, doneText: '完成' })
+})
+
 // ---- token 统计（彩蛋：版本号点 10 次解锁） ----
 let statsData = null
 const fmtTok = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`

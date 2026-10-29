@@ -63,3 +63,13 @@ h3, h4 { color: var(--dim); font-weight: 600; }
 
 button.danger { background: #5a1f1f; color: #ffb4b4; border: 1px solid #8a3030; }
 button.danger.armed { background: #8a3030; color: #fff; }
+
+.obOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 99; }
+.obCard { background: #1c1c20; border: 1px solid #333; border-radius: 10px; padding: 18px 20px; width: 400px; max-width: 88vw; position: relative; }
+.obCard h3 { margin: 0 0 8px; font-size: 15px; color: #ddd; }
+.obCard h4 { margin: 0 0 8px; font-size: 13px; color: #8ab4f8; }
+.obBody { font-size: 13px; color: #bbb; line-height: 1.7; max-height: 50vh; overflow: auto; }
+.obBody ul { margin: 0; padding-left: 18px; }
+.obNav { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; font-size: 12px; color: #888; }
+.obNav button { margin-left: 6px; }
+.obSkip { position: absolute; top: 8px; right: 10px; background: none; border: none; color: #777; cursor: pointer; }
