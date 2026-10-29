@@ -17,6 +17,8 @@ main { padding: 8px 12px 14px; max-width: 860px; margin: 0 auto; }
 
 /* ---- 控件统一 ---- */
 input, select, button { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; transition: border-color .15s, box-shadow .15s; }
+.filebtn { display: inline-flex; align-items: center; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; transition: border-color .15s; }
+.filebtn:hover { border-color: var(--acc); }
 button { cursor: pointer; }
 button:hover { border-color: var(--acc); }
 input:focus, select:focus, button:focus-visible { outline: none; border-color: var(--acc); box-shadow: 0 0 0 2px color-mix(in srgb, var(--acc) 30%, transparent); }
