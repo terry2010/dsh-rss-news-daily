@@ -2,6 +2,10 @@
 const ONBOARD_KEY = 'rss_onboarded_v1'
 const ONBOARD_STEPS = [
   {
+    title: '感谢你成为早鸟用户 🐣',
+    bodyHtml: '这个插件还在开发早期——UI 不算精致，功能也在快速迭代。看到 GitHub / npm 上不少人在装，<b>核心功能开发完毕</b>，让先到的你们能正常用起来。<br><br>遇到问题或有想法？欢迎来 <a href="https://github.com/terry2010/dsh-rss-news-daily" target="_blank" rel="noopener">GitHub</a> 一起聊，每条反馈都会认真看。',
+  },
+  {
     title: '管线：抓取 → AI 评分 → 快报/日报',
     body: '插件按调度抓订阅源 → LLM 给每条打分 → 高分进时段快报(按小时累积) → 每天定点汇总日报。全部本地面板内完成,不进对话。',
   },
