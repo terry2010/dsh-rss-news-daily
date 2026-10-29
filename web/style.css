@@ -30,6 +30,7 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 .itemlist .item:hover { box-shadow: var(--shadow-hi); transform: translateY(-1px); }
 .item.read { opacity: .5; }
 .item.liked { box-shadow: var(--shadow), 0 0 0 1px var(--ok); }
+.item-src { position: absolute; top: -8px; right: 12px; font-size: 11px; color: var(--dim); background: var(--panel2); border-radius: 6px; padding: 1px 8px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item-head { display: flex; gap: 8px; align-items: baseline; }
 .item-head a { color: var(--fg); text-decoration: none; font-weight: 600; line-height: 1.4; }
 .item-head a:hover { color: var(--acc); }
@@ -40,7 +41,7 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 .item-meta { font-size: 12px; color: var(--dim); margin: 4px 0; }
 .item-lead { color: var(--lead); font-size: 13px; }
 .item.collapsed .item-lead { display: none; }
-.item-actions { display: none; position: absolute; right: 12px; bottom: -14px; gap: 5px; background: var(--panel); border-radius: 9px; padding: 4px 6px; box-shadow: var(--shadow-hi); z-index: 3; } /* 骑缝悬于卡片底缘,半个探出 */
+.item-actions { display: none; position: absolute; right: 12px; bottom: -7px; gap: 5px; z-index: 3; } /* 无底条:按钮各自悬浮,上移1/4高 */
 .item:hover .item-actions, .item:focus-within .item-actions { display: flex; }
 .item-tl { font-size: 13px; margin-bottom: 2px; }
 .item-actions button { padding: 2px 8px; font-size: 12px; border-radius: 6px; }

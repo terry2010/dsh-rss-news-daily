@@ -98,6 +98,7 @@ function itemHtml(i) {
     const st = i.state || {} // 老数据可能缺 state 字段——防御，防整个渲染挂掉（"翻页没反应"）
     return `
     <div class="item ${st.read ? 'read collapsed' : ''} ${st.liked === 1 ? 'liked' : ''}" data-id="${esc(i.id)}" style="--hue:${topicHue(i.topic)}">
+      <span class="item-src" title="${esc(i.sourceId)}">${esc(state.sources?.find((x) => x.id === i.sourceId || x.url === i.sourceId)?.title || i.sourceId)}</span>
       ${(() => { if (i.aiSummary || state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div class="item-tl" style="color:var(--acc)">译: ${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
       <div class="item-head">${scoreBadge(i)}
         <a class="tlink" data-id="${esc(i.id)}" href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
