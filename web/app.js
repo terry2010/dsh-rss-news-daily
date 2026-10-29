@@ -180,6 +180,7 @@ let fetchPoll = 0
 const fetchBtnIdle = () => { $('#btnFetch').textContent = '⟳ 抓取'; $('#btnFetch').disabled = false; if (fetchPoll) { clearInterval(fetchPoll); fetchPoll = 0 }; markFetchingSrc('') }
 // 正在抓的源行高亮（订阅源列表里对应按钮变⏳）
 const markFetchingSrc = (url) => {
+  if ($('#tab-sources')?.hidden) return // 订阅源页不在前台不动 DOM
   document.querySelectorAll('#srcList button[data-src-act="retry"]').forEach((b) => {
     if (b.dataset.fetching === '1') { b.textContent = b.dataset.origText || '↻ 抓取'; delete b.dataset.fetching; delete b.dataset.origText }
   })
@@ -198,7 +199,7 @@ const startFetchPoll = () => {
       const p = await api('/fetch-progress')
       if (p.running) {
         const st = p.stage === 'translate' ? '翻译中' : '抓取中'; b.textContent = `⏹ ${st}(${p.done}/${p.total}) 点我取消`; b.disabled = false; markFetchingSrc(p.current)
-        if (++tickN % 3 === 0) { // ~2.4s 静默刷新列表：锚点回滚防跳动
+        if (++tickN % 3 === 0 && !$('#tab-items')?.hidden) { // ~2.4s 静默刷新列表：仅在阅读器页执行（隐藏tab锚点会滚到顶）
           savePos(); await loadItems()
           const p2 = JSON.parse(localStorage.getItem(POS_KEY) || 'null')
           if (p2) scrollToAnchor(p2)
