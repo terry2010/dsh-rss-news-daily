@@ -98,8 +98,8 @@ function itemHtml(i) {
     const st = i.state || {} // 老数据可能缺 state 字段——防御，防整个渲染挂掉（"翻页没反应"）
     return `
     <div class="item ${st.read ? 'read collapsed' : ''} ${st.liked === 1 ? 'liked' : ''}" data-id="${esc(i.id)}" style="--hue:${topicHue(i.topic)}">
+      ${(() => { if (i.aiSummary || state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div class="item-tl" style="color:var(--acc)">译: ${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
       <div class="item-head">${scoreBadge(i)}
-        ${(() => { if (i.aiSummary || state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div style="color:var(--acc)">译: ${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
         <a class="tlink" data-id="${esc(i.id)}" href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
       <div class="item-meta">${esc(i.topic)} · ${(() => { const d = new Date(i.publishedAt || i.fetchedAt); const p = (n) => String(n).padStart(2, '0'); return isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}` })()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(() => {
