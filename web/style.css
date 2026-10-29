@@ -40,7 +40,7 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 .item-meta { font-size: 12px; color: var(--dim); margin: 4px 0; }
 .item-lead { color: var(--lead); font-size: 13px; }
 .item.collapsed .item-lead { display: none; }
-.item-actions { display: none; position: absolute; right: 10px; bottom: 8px; gap: 5px; background: var(--panel); border-radius: 8px; padding: 4px 6px; box-shadow: var(--shadow-hi); border: 1px solid var(--line); }
+.item-actions { display: none; position: absolute; right: 12px; bottom: -14px; gap: 5px; background: var(--panel); border-radius: 9px; padding: 4px 6px; box-shadow: var(--shadow-hi); z-index: 3; } /* 骑缝悬于卡片底缘,半个探出 */
 .item:hover .item-actions, .item:focus-within .item-actions { display: flex; }
 .item-tl { font-size: 13px; margin-bottom: 2px; }
 .item-actions button { padding: 2px 8px; font-size: 12px; border-radius: 6px; }
