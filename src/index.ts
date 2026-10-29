@@ -139,6 +139,7 @@ export function apply(ctx: Context, config: ConfigType) {
           day, time: hm,
           minScore: config.fetch.hourlyMinScore,
           digestsDir: join(dataDir, 'digests'), log,
+          llmClient: scoreClient, llmTimeoutMs: config.llm.timeoutMs,
         })
       }
     } catch (e) { log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }

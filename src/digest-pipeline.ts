@@ -221,6 +221,8 @@ export async function appendHourlyBrief(opts: {
   time: string // "HH:mm"
   minScore: number
   digestsDir: string
+  llmClient?: LlmClient
+  llmTimeoutMs?: number
   log?: LogSink
 }): Promise<number> {
   const log = opts.log || noopLog
@@ -231,9 +233,30 @@ export async function appendHourlyBrief(opts: {
     const t = it.topic || '综合'
     groups.set(t, [...(groups.get(t) ?? []), it])
   }
-  const lines = [`## ${opts.time} 时段快报`, '']
+  // 本时段总结：LLM 一句话概括（无 client→抽取式兜底）
+  let brief = ''
+  if (opts.llmClient) {
+    try {
+      brief = (await opts.llmClient.generateText({
+        system: '你是新闻快报编辑。用 1-2 句中文概括本时段新闻要点：抓主线、点出最重要事件，不复述列表。',
+        prompt: scored.slice(0, 30).map((it, i) => `${i + 1}. [${it.topic || '综合'}] ${it.title}`).join('\n'),
+        maxTokens: 300,
+        signal: AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000),
+      })).trim().replace(/\n+/g, ' ')
+    } catch (e) { log.warn(`hourly brief summary failed: ${String((e as Error)?.message || e)}`) }
+  }
+  if (!brief) brief = `本时段 ${scored.length} 条入选：${[...groups.keys()].slice(0, 4).join('、')} 领域有更新。`
+
+  const lines = [`## ${opts.time} 时段快报`, '', `> ${brief}`, '']
+  // 领域速览：有新闻才出——每域一行（条数+最高分）
+  lines.push('### 领域速览', '')
   for (const [topic, list] of groups) {
-    lines.push(`### ${topic}`)
+    const top = Math.max(...list.map((i) => i.llmScore ?? 0))
+    lines.push(`- **${topic}** ${list.length} 条 · 最高 ${top} 分`)
+  }
+  lines.push('', '### 重要新闻', '')
+  for (const [topic, list] of groups) {
+    lines.push(`#### ${topic}`)
     for (const it of list) {
       const src = opts.sourcesById.get(it.sourceId)?.title ?? it.sourceId
       const meta = [src, ...(it.tags ?? []).map((t) => `#${t}`)].join(' · ')
