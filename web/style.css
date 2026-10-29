@@ -22,7 +22,7 @@ button:hover { border-color: var(--acc); }
 input:focus, select:focus, button:focus-visible { outline: none; border-color: var(--acc); box-shadow: 0 0 0 2px color-mix(in srgb, var(--acc) 30%, transparent); }
 input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width: 160px; }
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; align-items: center; }
-.filterbar { position: sticky; top: 54px; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); padding: 6px 0; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+.filterbar { position: sticky; top: 54px; z-index: 8; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); padding: 6px 0; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
 
 /* ---- 条目卡片 ---- */
 .itemlist .item { position: relative; background: var(--panel); border-radius: 12px; padding: 11px 14px 11px 17px; margin-bottom: 10px; box-shadow: var(--shadow); transition: box-shadow .15s, transform .15s; }
