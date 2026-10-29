@@ -28,6 +28,7 @@ export interface StoreMeta {
   lastDigestDay: string
   /** 最近一次抓取周期新增条目数（状态栏"本次新增"） */
   lastFetchAdded?: number
+  lastFetchStartedAt?: string // 本轮抓取起点(UTC ISO)——「本次」实时计数以此为界
   /** token 用量统计：按日+按功能分账（digest 日报/score 评分快报/translate 翻译） */
   tokenStats?: {
     totalIn: number

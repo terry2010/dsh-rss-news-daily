@@ -148,17 +148,20 @@ export function apply(ctx: Context, config: ConfigType) {
   const translateFresh = async (cycleStart: string) => {
     if (!prefs.get().autoTranslate || !llmRuntime) return
     const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
-    if (fresh.length) fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate', current: '' }
+    if (fresh.length) { fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate', current: '' }; translateAbort = new AbortController() }
     for (const it of fresh) {
+      if (translateAbort?.signal.aborted || fetchAbort?.signal.aborted) break // 抓取/翻译取消联动
       try { await translateItemCore(it) }
       catch (e) { it.state.translationError = e instanceof Error ? e.message : String(e) }
       fetchProg.done += 1
       if (fetchProg.done % 10 === 0) void store.save()
     }
+    translateAbort = undefined
     if (fresh.length) { await store.save(); log.info(`autoTranslate: ${fresh.length} items translated`) }
   }
   const runFetch = () => {
     const cycleStart = new Date().toISOString()
+    store.meta.lastFetchStartedAt = cycleStart // 本轮起点:「本次」实时计数以此为界
     fetchProg = { running: true, done: 0, total: effectiveSources(config.sources, store).filter((s) => s.enabled).length, stage: 'fetch', current: '' }
     return runFetchCycle(makeFetchOpts())
       .then(async (r) => { await translateFresh(cycleStart); void scoreAndBrief(cycleStart); return r })
@@ -167,6 +170,7 @@ export function apply(ctx: Context, config: ConfigType) {
   let fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }
   let digestProg = { running: false, done: 0, total: 0, stage: '' }
   let fetchAbort: AbortController | undefined
+  let translateAbort: AbortController | undefined
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
   const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string } }) => {
     const client = new DshLlmClient(llmRuntime!, pickTranslateRoute(), log)
@@ -210,6 +214,7 @@ export function apply(ctx: Context, config: ConfigType) {
     fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length, stage: 'fetch', current: '' }
     fetchAbort = new AbortController()
     const cycleStart = new Date().toISOString()
+    store.meta.lastFetchStartedAt = cycleStart
     return runFetchCycle({ ...makeFetchOpts(pool), force, signal: fetchAbort.signal, onSourceDone: () => { fetchProg.done += 1 } })
       .then(async (result) => {
         await translateFresh(cycleStart) // 自动翻译：本轮新入库外文条目（与定时路径共用）
@@ -220,6 +225,7 @@ export function apply(ctx: Context, config: ConfigType) {
   } // svc/api：手动抓取可带 force 绕冷却
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => {
     const cycleStart = new Date().toISOString()
+    store.meta.lastFetchStartedAt = cycleStart
     return runFetchCycle(makeFetchOpts(sources)).then((r) => { void scoreAndBrief(cycleStart); return r })
   }
 
@@ -251,7 +257,7 @@ export function apply(ctx: Context, config: ConfigType) {
       const d = await fetcher(url, undefined, { proxy })
       return 'error' in d ? { error: d.error } : { status: d.status, body: d.body.slice(0, 600) }
     },
-    cancelFetch: async () => { fetchAbort?.abort(); return true },
+    cancelFetch: async () => { fetchAbort?.abort(); translateAbort?.abort(); return true },
     tune: async (text) => {
       const r = parseTune(text, prefs.get())
       if (!r.ok) return { ok: false, actions: [], error: r.error }
@@ -330,7 +336,12 @@ export function apply(ctx: Context, config: ConfigType) {
           return qi ? qi.call(store, { day: 'x', fetchedAfter: b.after, fetchedBefore: b.before, pageSize: 1 }).total
             : store.items.filter((i) => new Date(i.fetchedAt).getTime() >= t.getTime()).length
         })(),
-        lastAdded: (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0,
+        lastAdded: (() => { // 上轮起点以来新增(实时,被删的不算,清库竞态自愈)
+          const since = store.meta.lastFetchStartedAt as string | undefined
+          const qi = (store as { queryItems?: (o: { fetchedAfter?: string; fetchedBefore?: string; pageSize?: number }) => { total: number } }).queryItems
+          if (!qi || !since) return (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0
+          return qi.call(store, { fetchedAfter: since, fetchedBefore: '9999-12-31', pageSize: 1 }).total
+        })(),
         todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate } : undefined })(),
         tokenStats: store.meta.tokenStats,
         version: (() => { try { return (JSON.parse(readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '..', 'package.json'), 'utf8')) as { version?: string }).version } catch { return undefined } })(),
