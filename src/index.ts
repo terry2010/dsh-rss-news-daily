@@ -97,6 +97,8 @@ export function apply(ctx: Context, config: ConfigType) {
   const makeFetchOpts = (sources?: ReturnType<typeof effectiveSources>) => ({
     fetch: fetcher,
     store,
+    onSourceStart: (src: { url: string }) => { fetchProg.current = src.url },
+    onSourceDone: () => { fetchProg.done += 1 },
     sources: sources ?? effectiveSources(config.sources, store), // 每轮重取：用户改源/健康度实时生效
     maxItemsPerSource: config.fetch.maxItemsPerSource,
     storeContentChars: config.fetch.storeContentChars,
@@ -146,7 +148,7 @@ export function apply(ctx: Context, config: ConfigType) {
   const translateFresh = async (cycleStart: string) => {
     if (!prefs.get().autoTranslate || !llmRuntime) return
     const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
-    if (fresh.length) fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate' }
+    if (fresh.length) fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate', current: '' }
     for (const it of fresh) {
       try { await translateItemCore(it) }
       catch (e) { it.state.translationError = e instanceof Error ? e.message : String(e) }
@@ -157,10 +159,12 @@ export function apply(ctx: Context, config: ConfigType) {
   }
   const runFetch = () => {
     const cycleStart = new Date().toISOString()
+    fetchProg = { running: true, done: 0, total: effectiveSources(config.sources, store).filter((s) => s.enabled).length, stage: 'fetch', current: '' }
     return runFetchCycle(makeFetchOpts())
       .then(async (r) => { await translateFresh(cycleStart); void scoreAndBrief(cycleStart); return r })
+      .finally(() => { fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' } })
   }
-  let fetchProg = { running: false, done: 0, total: 0, stage: '' }
+  let fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }
   let digestProg = { running: false, done: 0, total: 0, stage: '' }
   let fetchAbort: AbortController | undefined
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
@@ -203,7 +207,7 @@ export function apply(ctx: Context, config: ConfigType) {
     // 界面筛选联动：选了源只抓该源，选了分类只抓该分类下所有源
     if (filter?.source) pool = pool.filter((s) => s.id === filter.source || s.url === filter.source)
     else if (filter?.category) pool = pool.filter((s) => s.category === filter.category)
-    fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length, stage: 'fetch' }
+    fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length, stage: 'fetch', current: '' }
     fetchAbort = new AbortController()
     const cycleStart = new Date().toISOString()
     return runFetchCycle({ ...makeFetchOpts(pool), force, signal: fetchAbort.signal, onSourceDone: () => { fetchProg.done += 1 } })
@@ -212,7 +216,7 @@ export function apply(ctx: Context, config: ConfigType) {
         void scoreAndBrief(cycleStart, fetchAbort?.signal) // fire-and-forget：评分不阻塞抓取返回
         return result
       })
-      .finally(() => { fetchProg = { running: false, done: 0, total: 0, stage: '' }; fetchAbort = undefined })
+      .finally(() => { fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }; fetchAbort = undefined })
   } // svc/api：手动抓取可带 force 绕冷却
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => {
     const cycleStart = new Date().toISOString()

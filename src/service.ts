@@ -23,6 +23,7 @@ export interface FetchCycleOptions {
   /** 中止信号：取消后 worker 不再领取新源（在飞的抓完收尾） */
   signal?: AbortSignal
   /** 每完成一个源回调一次（进度上报） */
+  onSourceStart?: (src: { url: string }) => void
   onSourceDone?: () => void
   fetch: ReturnType<typeof createFetcher>
   store: StoreLike
@@ -443,6 +444,7 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
       if (opts.signal?.aborted) return
       const src = queue.shift()
       if (!src) return
+      opts.onSourceStart?.(src)
       const r = await fetchOne(src, opts, now)
       result.sources.push(r)
       result.totalFetched += r.fetched

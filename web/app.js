@@ -177,24 +177,41 @@ const toTop = () => window.scrollTo(0, 0)
 $('#prevPage').addEventListener('click', () => { if (state.page > 1) { state.page--; loadItems().then(toTop) } })
 $('#nextPage').addEventListener('click', () => { if (state.page * state.pageSize < state.total) { state.page++; loadItems().then(toTop) } })
 let fetchPoll = 0
-const fetchBtnIdle = () => { $('#btnFetch').textContent = '⟳ 抓取'; $('#btnFetch').disabled = false; if (fetchPoll) { clearInterval(fetchPoll); fetchPoll = 0 } }
+const fetchBtnIdle = () => { $('#btnFetch').textContent = '⟳ 抓取'; $('#btnFetch').disabled = false; if (fetchPoll) { clearInterval(fetchPoll); fetchPoll = 0 }; markFetchingSrc('') }
+// 正在抓的源行高亮（订阅源列表里对应按钮变⏳）
+const markFetchingSrc = (url) => {
+  document.querySelectorAll('#srcList button[data-src-act="retry"]').forEach((b) => {
+    if (b.dataset.fetching === '1') { b.textContent = b.dataset.origText || '↻ 抓取'; delete b.dataset.fetching; delete b.dataset.origText }
+  })
+  if (!url) return
+  const btn = document.querySelector(`#srcList button[data-src-act="retry"][data-id="${CSS.escape(url)}"]`)
+  if (btn && btn.dataset.fetching !== '1') { btn.dataset.origText = btn.textContent; btn.dataset.fetching = '1'; btn.textContent = '⏳ 抓取中' }
+}
+// 抓取进度轮询：手动/定时/启动抓取统一显示
+const startFetchPoll = () => {
+  if (fetchPoll) return
+  const b = $('#btnFetch')
+  b.textContent = '⟳ 抓取中…'
+  fetchPoll = setInterval(async () => {
+    try {
+      const p = await api('/fetch-progress')
+      if (p.running) { const st = p.stage === 'translate' ? '翻译中' : '抓取中'; b.textContent = `⏹ ${st}(${p.done}/${p.total}) 点我取消`; b.disabled = false; markFetchingSrc(p.current) }
+      else { fetchBtnIdle(); toast('抓取完成'); state.page = 1; state.sort = 'fetched'; $('#sortSel').value = 'fetched'; localStorage.removeItem(POS_KEY); loadItems(); loadStatus(); loadSources() }
+    } catch { /* 进度不可达不阻塞 */ }
+  }, 800)
+}
 $('#btnFetch').addEventListener('click', async () => {
   const b = $('#btnFetch')
   // 抓取中再点=取消
   try { const p = await api('/fetch-progress'); if (p.running) { await post('/fetch-cancel', {}); toast('已请求取消，在飞的源收尾后停止'); b.textContent = `⏹ 停止中(${p.done}/${p.total})`; b.disabled = true; return } } catch { /* 按未运行处理 */ }
   const src = $('#srcFilter').value, cat = $('#category').value
-  b.textContent = '⟳ 抓取中…'
-  fetchPoll = setInterval(async () => { // 轮询进度进按钮文案
-    try {
-      const p = await api('/fetch-progress')
-      if (p.running) { const st = p.stage === 'translate' ? '翻译中' : '抓取中'; b.textContent = `⏹ ${st}(${p.done}/${p.total}) 点我取消`; b.disabled = false }
-      else { fetchBtnIdle(); toast('抓取完成'); state.page = 1; state.sort = 'fetched'; $('#sortSel').value = 'fetched'; localStorage.removeItem(POS_KEY); loadItems(); loadStatus() }
-    } catch { /* 进度不可达不阻塞 */ }
-  }, 800)
+  startFetchPoll()
   try {
     await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) })
   } catch (e) { toast(`抓取失败: ${e.message}`); fetchBtnIdle() }
 })
+// 进入面板时探测：定时/启动抓取已在跑就直接接管进度显示
+api('/fetch-progress').then((p) => { if (p.running) startFetchPoll() }).catch(() => {})
 
 $('#autoTranslate').addEventListener('change', async (e) => {
   $('#autoTlWarn').hidden = !e.target.checked
