@@ -44,6 +44,7 @@ async function loadItems() {
   if ($('#unread').checked) p.set('unread', '1')
   p.set('sort', state.sort)
   p.set('page', state.page)
+  $('#itemList').innerHTML = '<div class="skel"><div></div><div></div></div>'.repeat(3) // 骨架屏
   try {
     const r = await api(`/items?${p}`)
     state.items = r.items; state.total = r.total; state.pageSize = r.pageSize
@@ -89,11 +90,15 @@ $('#btnTopPage').addEventListener('click', () => {
   loadItems().then(() => window.scrollTo(0, 0))
 })
 
+// 分类→色相（字符串哈希稳定取色，卡片左色条按领域着色）
+const topicHue = (t) => { let h = 0; for (const c of String(t || '综合')) h = (h * 31 + c.charCodeAt(0)) % 360; return h }
+const scoreBadge = (i) => { const s = i.llmScore; if (typeof s !== 'number' || s <= 0) return ''; const cls = s >= 8 ? 's-hi' : s >= 5 ? 's-mid' : 's-lo'; return `<span class="score ${cls}" title="AI 评分 ${s}/10">${s}</span>` }
+
 function itemHtml(i) {
     const st = i.state || {} // 老数据可能缺 state 字段——防御，防整个渲染挂掉（"翻页没反应"）
     return `
-    <div class="item ${st.read ? 'read collapsed' : ''} ${st.liked === 1 ? 'liked' : ''}" data-id="${esc(i.id)}">
-      <div class="item-head">
+    <div class="item ${st.read ? 'read collapsed' : ''} ${st.liked === 1 ? 'liked' : ''}" data-id="${esc(i.id)}" style="--hue:${topicHue(i.topic)}">
+      <div class="item-head">${scoreBadge(i)}
         ${(() => { if (i.aiSummary || state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); return t ? `<div style="color:var(--acc)">译: ${esc((nl > 0 ? t.slice(0, nl) : t).trim())}</div>` : '' })()}
         <a class="tlink" data-id="${esc(i.id)}" href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
