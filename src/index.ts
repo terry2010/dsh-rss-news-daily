@@ -35,7 +35,7 @@ import { readFile } from 'node:fs/promises'
 import { digestFileName } from './digest.js'
 import { normalizeUrl } from './service.js'
 import { learnFromFeedback } from './core/tune.js'
-import { zonedDayKey } from './core/time.js'
+import { zonedDayKey, zonedDayBounds } from './core/time.js'
 import { probeSqlite, SqliteStore } from './core/sqlite-store.js'
 import { addTokenStats } from './core/token-stats.js'
 
@@ -325,8 +325,9 @@ export function apply(ctx: Context, config: ConfigType) {
         items: (store as { count?: () => number }).count?.() ?? store.items.length,
         todayAdded: (() => { // SQL COUNT（窗口外的也算,且不受手动删库幻影影响）
           const t = new Date(); t.setHours(0, 0, 0, 0)
-          const qi = (store as { queryItems?: (o: { day?: string; pageSize?: number }) => { total: number } }).queryItems
-          return qi ? qi.call(store, { day: zonedDayKey(new Date(), config.timezone || undefined), pageSize: 1 }).total
+          const qi = (store as { queryItems?: (o: { day?: string; fetchedAfter?: string; fetchedBefore?: string; pageSize?: number }) => { total: number } }).queryItems
+          const b = zonedDayBounds(zonedDayKey(new Date(), config.timezone || undefined), config.timezone || undefined)
+          return qi ? qi.call(store, { day: 'x', fetchedAfter: b.after, fetchedBefore: b.before, pageSize: 1 }).total
             : store.items.filter((i) => new Date(i.fetchedAt).getTime() >= t.getTime()).length
         })(),
         lastAdded: (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0,

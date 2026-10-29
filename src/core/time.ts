@@ -120,3 +120,19 @@ export function nextZonedOccurrence(time: string, timezone: string | undefined, 
   const secondsUntil = Math.max(0, Math.floor((guess.getTime() - now.getTime()) / 1000))
   return { next: guess, secondsUntil }
 }
+/** 本地日历日 → UTC 时刻范围（含 DST 二次修正）。fetchedAt 存 UTC ISO，day 过滤要按此窗口比。 */
+export function zonedDayBounds(day: string, timezone?: string): { after: string; before: string } {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone || undefined, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })
+  const offAt = (t: number): number => { // 该瞬间在 tz 下的墙上时钟 − UTC 时刻 = 偏移
+    const p = fmt.formatToParts(new Date(t))
+    const get = (k: string) => Number(p.find((x) => x.type === k)?.value)
+    return Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second')) - t
+  }
+  const utcMid = Date.parse(`${day}T00:00:00Z`)
+  let start = utcMid - offAt(utcMid) // 第一次近似
+  start = utcMid - offAt(start)      // 第二次修正（DST 边界）
+  return { after: new Date(start).toISOString(), before: new Date(start + 86_399_999).toISOString() }
+}

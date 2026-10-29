@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
+import { zonedDayBounds } from './core/time.js'
 
 import type { StoreLike } from './core/store.js'
 import type { PrefsStore } from './core/prefs.js'
@@ -111,7 +112,8 @@ function apiItems(deps: ApiDeps) {
     const sortKey = u.searchParams.get('sort') === 'fetched' ? 'fetched' : 'published'
     const qi = (deps.store as { queryItems?: (o: { day?: string; category?: string; source?: string; unread?: boolean; q?: string; sort?: string; page?: number; pageSize?: number }) => { total: number; items: typeof items } }).queryItems
     if (qi) { // SQLite 后端:filter/sort/FTS/分页全下推
-      const r = qi.call(deps.store, { day: day || undefined, category: category || undefined, source: source || undefined, unread, q: q || undefined, sort: sortKey, page, pageSize: deps.readerPageSize })
+      const b = day ? zonedDayBounds(day, deps.timezone || undefined) : undefined
+      const r = qi.call(deps.store, { day: day || undefined, fetchedAfter: b?.after, fetchedBefore: b?.before, category: category || undefined, source: source || undefined, unread, q: q || undefined, sort: sortKey, page, pageSize: deps.readerPageSize })
       sendJson(res, 200, { ok: true, total: r.total, page, pageSize: deps.readerPageSize, items: r.items })
       return
     }

@@ -247,12 +247,12 @@ export class SqliteStore {
 
   /** 跨窗口查询（/items 下推）：filter+sort+FTS+分页全在 SQL */
   queryItems(opts: {
-    day?: string; category?: string; source?: string; unread?: boolean; q?: string
+    day?: string; fetchedAfter?: string; fetchedBefore?: string; category?: string; source?: string; unread?: boolean; q?: string
     sort?: 'published' | 'fetched'; page?: number; pageSize?: number
   }): { total: number; items: FeedItem[] } {
     const where: string[] = ["json_extract(state,'$.hidden') IS NOT 1"]
     const args: unknown[] = []
-    if (opts.day) { where.push('fetchedAt >= ? AND fetchedAt < ?'); args.push(`${opts.day}T00:00:00`, `${opts.day}T23:59:59.999Z`) }
+    if (opts.day) { where.push('fetchedAt >= ? AND fetchedAt <= ?'); args.push(opts.fetchedAfter || `${opts.day}T00:00:00`, opts.fetchedBefore || `${opts.day}T23:59:59.999Z`) }
     if (opts.category) { where.push('topic = ?'); args.push(opts.category) }
     if (opts.source) { where.push('sourceId LIKE ?'); args.push(`%${opts.source}%`) }
     if (opts.unread) { where.push("json_extract(state,'$.read') IS NOT 1") }
