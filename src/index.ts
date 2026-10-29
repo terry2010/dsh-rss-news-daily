@@ -163,9 +163,10 @@ export function apply(ctx: Context, config: ConfigType) {
     const cycleStart = new Date().toISOString()
     store.meta.lastFetchStartedAt = cycleStart // 本轮起点:「本次」实时计数以此为界
     fetchProg = { running: true, done: 0, total: effectiveSources(config.sources, store).filter((s) => s.enabled).length, stage: 'fetch', current: '' }
-    return runFetchCycle(makeFetchOpts())
+    fetchAbort = new AbortController()
+    return runFetchCycle({ ...makeFetchOpts(), signal: fetchAbort.signal })
       .then(async (r) => { await translateFresh(cycleStart); void scoreAndBrief(cycleStart); return r })
-      .finally(() => { fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' } })
+      .finally(() => { fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }; fetchAbort = undefined })
   }
   let fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }
   let digestProg = { running: false, done: 0, total: 0, stage: '' }
@@ -226,7 +227,10 @@ export function apply(ctx: Context, config: ConfigType) {
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => {
     const cycleStart = new Date().toISOString()
     store.meta.lastFetchStartedAt = cycleStart
-    return runFetchCycle(makeFetchOpts(sources)).then((r) => { void scoreAndBrief(cycleStart); return r })
+    fetchAbort = new AbortController()
+    return runFetchCycle({ ...makeFetchOpts(sources), signal: fetchAbort.signal })
+      .then((r) => { void scoreAndBrief(cycleStart); return r })
+      .finally(() => { fetchAbort = undefined })
   }
 
   // 对外操作门面：tools（M2）与 HTTP API（M4）共用同一组语义
