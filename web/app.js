@@ -852,23 +852,32 @@ const maybeShowOnboardAndUpgrade = (version) => {
     })
     return
   }
-  if (version && localStorage.getItem(LS_SEEN_VER) !== version) { // 升级:弹最新一节
+  if (version && localStorage.getItem(LS_SEEN_VER) !== version) { // 升级:第1页致谢+第2页更新
     const entry = (typeof CHANGELOG !== 'undefined' ? CHANGELOG : []).find((c) => c.v === version) || CHANGELOG[0]
     if (entry) showSteps({
       title: `已更新到 v${version}`,
-      steps: [{ title: '本次更新', bodyHtml: `<ul>${entry.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` }],
+      steps: [
+        { title: ONBOARD_STEPS[0].title, bodyHtml: ONBOARD_STEPS[0].bodyHtml },
+        { title: '本次更新', bodyHtml: `<ul>${entry.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` },
+      ],
       doneText: '知道了',
       onDone: () => localStorage.setItem(LS_SEEN_VER, version),
     })
     else localStorage.setItem(LS_SEEN_VER, version)
-    if (entry) return; localStorage.setItem(LS_SEEN_VER, version)
   }
 }
 api('/status').then((s) => maybeShowOnboardAndUpgrade(s.version)).catch(() => {})
 // 设置区手工触发
 $('#btnShowUpgrade')?.addEventListener('click', () => {
   const entry = (typeof CHANGELOG !== 'undefined' ? CHANGELOG[0] : null)
-  if (entry) showSteps({ title: `v${entry.v} 更新内容`, steps: [{ title: '本次更新', bodyHtml: `<ul>${entry.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` }], doneText: '关闭' })
+  if (entry) showSteps({
+    title: `v${entry.v} 更新内容`,
+    steps: [
+      { title: ONBOARD_STEPS[0].title, bodyHtml: ONBOARD_STEPS[0].bodyHtml },
+      { title: '本次更新', bodyHtml: `<ul>${entry.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` },
+    ],
+    doneText: '关闭',
+  })
 })
 $('#btnShowOnboard')?.addEventListener('click', () => {
   showSteps({ title: '功能引导', steps: ONBOARD_STEPS, doneText: '完成' })
