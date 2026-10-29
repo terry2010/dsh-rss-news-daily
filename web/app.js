@@ -218,8 +218,8 @@ $('#btnFetch').addEventListener('click', async () => {
     await post('/fetch', { force: true, source: src || undefined, category: src ? undefined : (cat || undefined) })
   } catch (e) { toast(`抓取失败: ${e.message}`); fetchBtnIdle() }
 })
-// 进入面板时探测：定时/启动抓取已在跑就直接接管进度显示
-api('/fetch-progress').then((p) => { if (p.running) startFetchPoll() }).catch(() => {})
+// 周期性探测：打开面板后定时/启动抓取随时开始,5s一查,发现运行即接管（运行期靠 fetchPoll 自身轮询）
+setInterval(() => { if (!fetchPoll) api('/fetch-progress').then((p) => { if (p.running) startFetchPoll() }).catch(() => {}) }, 5000)
 
 $('#autoTranslate').addEventListener('change', async (e) => {
   $('#autoTlWarn').hidden = !e.target.checked
