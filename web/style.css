@@ -30,7 +30,7 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 .itemlist .item:hover { box-shadow: var(--shadow-hi); transform: translateY(-1px); z-index: 5; } /* 悬停卡整体压过下一张卡的源标签 */
 .item.read { opacity: .5; }
 .item.liked { box-shadow: var(--shadow), 0 0 0 1px var(--ok); }
-.item-src { position: absolute; top: -8px; right: 12px; font-size: 11px; color: var(--dim); background: var(--panel2); border-radius: 6px; padding: 1px 8px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-src { position: absolute; top: -4px; right: 12px; font-size: 11px; color: var(--dim); background: var(--panel2); border-radius: 6px; padding: 1px 8px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item-head { display: flex; gap: 8px; align-items: baseline; }
 .item-head a { color: var(--fg); text-decoration: none; font-weight: 600; line-height: 1.4; }
 .item-head a:hover { color: var(--acc); }
