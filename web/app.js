@@ -755,6 +755,25 @@ $('#btnSchedClear').addEventListener('click', async () => {
   loadSchedule()
 })
 
+// ---- 危险区：删除所有新闻（二次确认） ----
+{
+  let armTimer = 0
+  $('#btnClearAll')?.addEventListener('click', async (e) => {
+    const b = e.target
+    if (b.dataset.armed !== '1') { // 第一次点：武装 5 秒
+      b.dataset.armed = '1'; b.textContent = '⚠ 确认删除全部新闻？再点一次执行'; b.classList.add('armed')
+      armTimer = setTimeout(() => { b.dataset.armed = ''; b.textContent = '删除所有新闻'; b.classList.remove('armed') }, 5000)
+      return
+    }
+    clearTimeout(armTimer); b.dataset.armed = ''; b.disabled = true; b.textContent = '删除中…'
+    try {
+      const r = await post('/items/clear', {})
+      toast(`已删除 ${r.deleted} 条新闻`); state.page = 1; state.sort = 'published'; localStorage.removeItem(POS_KEY); loadItems(); loadStatus()
+    } catch (err) { toast(`删除失败: ${err.message}`) }
+    b.disabled = false; b.textContent = '删除所有新闻'; b.classList.remove('armed')
+  })
+}
+
 // ---- token 统计（彩蛋：版本号点 10 次解锁） ----
 let statsData = null
 const fmtTok = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`

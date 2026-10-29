@@ -393,6 +393,12 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
       .catch(() => { /* 错误经 progress/日志可见 */ })
     sendJson(r, 200, { ok: true, started: true })
   }) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/items/clear`, handler: guard(async (q, r) => {
+    if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
+    const clr = (deps.store as { clearItems?: () => number }).clearItems
+    const deleted = clr ? clr.call(deps.store) : 0
+    sendJson(r, 200, { ok: true, deleted })
+  }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.fetchProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.digestProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-test`, handler: guard(async (q, r) => {

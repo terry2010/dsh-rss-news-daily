@@ -223,6 +223,14 @@ export class SqliteStore {
     this.prune()
   }
 
+  /** 清空全部条目（含 FTS 联动+内存窗口）；返回删除数 */
+  clearItems(): number {
+    const n = this.count()
+    this.db.exec('DELETE FROM items')
+    this.window = []
+    return n
+  }
+
   /** 清退：先过期后配额（低质优先 or 最老优先），SQL DELETE */
   private prune(): void {
     const days = this.retentionDays()

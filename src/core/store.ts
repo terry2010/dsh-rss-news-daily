@@ -165,6 +165,8 @@ export interface StoreOptions {
  */
 /** Store 公共契约——JSON Store 与 SqliteStore 共同实现（DESIGN-SQLITE.md P2） */
 export interface StoreLike {
+  /** 清空全部条目（SQLite 实现提供）；返回删除数 */
+  clearItems?(): number
   readonly path: string
   readonly maxItems: number
   readonly meta: StoreMeta

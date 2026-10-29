@@ -60,3 +60,6 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 .hist { font-size: 12px; color: var(--dim); padding: 2px 0; }
 .filebtn { cursor: pointer; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
 h3, h4 { color: var(--dim); font-weight: 600; }
+
+button.danger { background: #5a1f1f; color: #ffb4b4; border: 1px solid #8a3030; }
+button.danger.armed { background: #8a3030; color: #fff; }
