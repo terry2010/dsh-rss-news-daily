@@ -44,7 +44,7 @@ async function loadItems() {
   if ($('#unread').checked) p.set('unread', '1')
   p.set('sort', state.sort)
   p.set('page', state.page)
-  $('#itemList').innerHTML = '<div class="skel"><div></div><div></div></div>'.repeat(3) // 骨架屏
+  if (!state.items.length) $('#itemList').innerHTML = '<div class="skel"><div></div><div></div></div>'.repeat(3) // 骨架屏:仅空列表时,刷新不闪
   try {
     const r = await api(`/items?${p}`)
     state.items = r.items; state.total = r.total; state.pageSize = r.pageSize
