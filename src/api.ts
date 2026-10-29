@@ -398,6 +398,19 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
       .catch(() => { /* 错误经 progress/日志可见 */ })
     sendJson(r, 200, { ok: true, started: true })
   }) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digests/clear`, handler: guard(async (q, r) => {
+    if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
+    const { readdir, unlink } = await import('node:fs/promises')
+    let deleted = 0
+    try {
+      for (const f of await readdir(deps.digestsDir)) {
+        if (!f.endsWith('.md')) continue // 只清日报/快报,index.json 等保留
+        await unlink(join(deps.digestsDir, f)).catch(() => {})
+        deleted += 1
+      }
+    } catch { /* 目录不存在=本来就空 */ }
+    sendJson(r, 200, { ok: true, deleted })
+  }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/items/clear`, handler: guard(async (q, r) => {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
     const clr = (deps.store as { clearItems?: () => number }).clearItems

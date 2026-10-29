@@ -773,22 +773,36 @@ $('#btnSchedClear').addEventListener('click', async () => {
   loadSchedule()
 })
 
-// ---- 危险区：删除所有新闻（二次确认） ----
+// ---- 危险区：二次确认删除（共用武装模式） ----
 {
-  let armTimer = 0
+  const armOnce = (b, label, armText) => { // 返回 true=已确认可执行
+    if (b.dataset.armed !== '1') {
+      b.dataset.armed = '1'; b.textContent = armText; b.classList.add('armed')
+      setTimeout(() => { b.dataset.armed = ''; b.textContent = label; b.classList.remove('armed') }, 5000)
+      return false
+    }
+    b.dataset.armed = ''; b.classList.remove('armed'); return true
+  }
   $('#btnClearAll')?.addEventListener('click', async (e) => {
     const b = e.target
-    if (b.dataset.armed !== '1') { // 第一次点：武装 5 秒
-      b.dataset.armed = '1'; b.textContent = '⚠ 确认删除全部新闻？再点一次执行'; b.classList.add('armed')
-      armTimer = setTimeout(() => { b.dataset.armed = ''; b.textContent = '删除所有新闻'; b.classList.remove('armed') }, 5000)
-      return
-    }
-    clearTimeout(armTimer); b.dataset.armed = ''; b.disabled = true; b.textContent = '删除中…'
+    if (!armOnce(b, '删除所有新闻', '⚠ 确认删除全部新闻？再点一次执行')) return
+    b.disabled = true; b.textContent = '删除中…'
     try {
       const r = await post('/items/clear', {})
       toast(`已删除 ${r.deleted} 条新闻`); state.page = 1; state.sort = 'published'; localStorage.removeItem(POS_KEY); loadItems(); loadStatus()
     } catch (err) { toast(`删除失败: ${err.message}`) }
-    b.disabled = false; b.textContent = '删除所有新闻'; b.classList.remove('armed')
+    b.disabled = false; b.textContent = '删除所有新闻'
+  })
+  $('#btnClearDigests')?.addEventListener('click', async (e) => {
+    const b = e.target
+    if (!armOnce(b, '清除日报/快报', '⚠ 确认删除全部日报与快报？再点一次执行')) return
+    b.disabled = true; b.textContent = '删除中…'
+    try {
+      const r = await post('/digests/clear', {})
+      toast(`已删除 ${r.deleted} 个日报/快报文件`)
+      if (!$('#tab-digest')?.hidden) loadDigest()
+    } catch (err) { toast(`删除失败: ${err.message}`) }
+    b.disabled = false; b.textContent = '清除日报/快报'
   })
 }
 
