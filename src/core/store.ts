@@ -29,6 +29,7 @@ export interface StoreMeta {
   /** 最近一次抓取周期新增条目数（状态栏"本次新增"） */
   lastFetchAdded?: number
   lastFetchStartedAt?: string // 本轮抓取起点(UTC ISO)——「本次」实时计数以此为界
+  deletedBuiltin?: string[] // 用户删除的内置源 URL(归一化)——墓碑,restart 后不复活
   /** token 用量统计：按日+按功能分账（digest 日报/score 评分快报/translate 翻译） */
   tokenStats?: {
     totalIn: number

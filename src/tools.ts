@@ -15,6 +15,7 @@ export interface NewsService {
   setEnabled(urlOrId: string, enabled: boolean): Promise<void>
   setSummarize(urlOrId: string, summarize: boolean): Promise<void>
   removeSource(urlOrId: string): Promise<boolean>
+  restoreSource?(url: string): Promise<boolean>
   importOpml(opmlText: string): Promise<{ added: number; duplicated: number; skipped: number; details?: Array<{ url: string; action: string; reason?: string }> }>
   exportOpml(): Promise<string>
   runFetch(force?: boolean, onlyFailed?: boolean, filter?: { source?: string; category?: string }): Promise<FetchCycleResult>

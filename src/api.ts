@@ -186,6 +186,7 @@ function apiSources(deps: ApiDeps) {
     if (method === 'GET' && !sub) {
       return sendJson(res, 200, {
         ok: true,
+        deletedBuiltins: (deps.store.meta.deletedBuiltin || []),
         sources: deps.svc.listSources()
           .sort((a, b) => (a.builtin === b.builtin ? (a.builtin ? 0 : (b.addedAt || '').localeCompare(a.addedAt || '')) : a.builtin ? 1 : -1)) // 用户源在最上且按添加时间倒序
           .map((s) => ({
@@ -206,6 +207,10 @@ function apiSources(deps: ApiDeps) {
     const id = decodeURIComponent((sub || '').split('?')[0])
     if (method === 'PATCH') {
       const body = await readBody(req) as { enabled?: boolean; title?: string; action?: string; summarize?: boolean; category?: string; proxy?: string | boolean | null; cooldownHours?: number | null }
+      if (body.action === 'restore') {
+        const ok = await (deps.svc as { restoreSource?: (u: string) => Promise<boolean> }).restoreSource?.(id)
+        return sendJson(res, ok ? 200 : 404, { ok: !!ok })
+      }
       if (body.action === 'retry') {
         const found = await deps.svc.retrySource(id) // 冷却源手动复活：清 cooldownUntil + failStreak
         return sendJson(res, found ? 200 : 404, { ok: found })

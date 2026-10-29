@@ -112,8 +112,9 @@ export function effectiveSources(
   store: StoreLike,
 ): FeedSource[] {
   const byUrl = new Map<string, FeedSource>()
+  const tomb = new Set((store.meta.deletedBuiltin || []).map(normalizeUrl)) // 用户删过的内置源
   for (const s of builtinCatalog()) {
-    if (s.defaultEnabled === false) continue
+    if (s.defaultEnabled === false || tomb.has(normalizeUrl(s.url))) continue
     byUrl.set(normalizeUrl(s.url), toFeedSource({
       url: s.url, title: s.name, category: s.category, tier: s.tier,
       lang: s.lang, method: s.method, enabled: true, builtin: true,
@@ -122,6 +123,7 @@ export function effectiveSources(
   for (const s of configSources) {
     if (!s?.url) continue
     const key = normalizeUrl(s.url)
+    if (tomb.has(key)) continue
     const prev = byUrl.get(key)
     byUrl.set(key, toFeedSource({
       url: s.url, title: s.title || prev?.title || s.url, category: s.category || prev?.category,
@@ -278,7 +280,25 @@ export async function addSource(
 }
 
 /** 移除源（连带其条目）并落盘。内置源只支持停用不支持删除——停用走 store 覆盖层。 */
-export async function removeSource(store: StoreLike, urlOrId: string): Promise<boolean> {
+export async function restoreBuiltinSource(store: StoreLike, url: string): Promise<boolean> {
+  const list = store.meta.deletedBuiltin || []
+  const i = list.indexOf(normalizeUrl(url))
+  if (i < 0) return false
+  list.splice(i, 1)
+  await store.save()
+  return true
+}
+
+export async function removeSource(store: StoreLike, urlOrId: string, isBuiltin = false): Promise<boolean> {
+  if (isBuiltin) { // 内置源→墓碑:不从 store 删,记 deletedBuiltin 让 effectiveSources 跳过
+    const list = store.meta.deletedBuiltin || (store.meta.deletedBuiltin = [])
+    if (!list.includes(normalizeUrl(urlOrId))) list.push(normalizeUrl(urlOrId))
+    // 顺带清掉该源的覆盖层(改名/状态),恢复时回到出厂设置
+    const i = store.sources.findIndex((s) => normalizeUrl(s.url) === normalizeUrl(urlOrId))
+    if (i >= 0) store.sources.splice(i, 1)
+    await store.save()
+    return true
+  }
   const id = normalizeUrl(urlOrId)
   const removed = store.removeSource(id) || store.removeSource(urlOrId)
   if (removed) await store.save()

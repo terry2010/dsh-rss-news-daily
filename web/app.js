@@ -354,11 +354,17 @@ async function loadSources() {
   try {
     const r = await api('/sources')
     state.sources = r.sources
+    state.deletedBuiltins = r.deletedBuiltins || []
     renderSources()
     fillFilters(r.sources)
   } catch (e) { $('#srcList').innerHTML = `<p class="err">${esc(e.message)}</p>` }
 }
 
+function renderDeletedSrcs() {
+  const del = state.deletedBuiltins || []
+  return del.length ? `<div class="src-del-zone"><h4>已删除的内置源</h4>${del.map((u) =>
+    `<div class="src"><div class="src-info"><b>${esc(u)}</b></div><div class="src-actions"><button data-src-act="restore" data-id="${esc(u)}">↩ 恢复</button></div></div>`).join('')}</div>` : ''
+}
 function renderSources() {
   const cats = [...new Set(state.sources.map((x) => x.category).filter(Boolean))]
   $('#newSrcCat').innerHTML = '<option value="">分类…</option>' + cats.map((c) => `<option>${esc(c)}</option>`).join('') + '<option value="__new">＋ 自定义…</option>'
@@ -375,7 +381,7 @@ function renderSources() {
         <button data-src-act="toggle" data-id="${esc(s.url)}" data-en="${s.enabled ? 0 : 1}">${s.enabled ? '停用' : '启用'}</button>
         <button data-src-act="sum" data-id="${esc(s.url)}" data-sum="${s.summarize !== false ? 0 : 1}" title="该源条目是否生成 AI 摘要">${s.summarize !== false ? '摘要✓' : '摘要✗'}</button>
         <button data-src-act="edit" data-id="${esc(s.url)}" title="编辑源属性">⚙ 编辑</button>
-        ${s.builtin ? '' : `<button data-src-act="del" data-id="${esc(s.url)}">删除</button>`}
+        <button data-src-act="del" data-id="${esc(s.url)}" title="${s.builtin ? '删除内置源(可在下方已删区恢复)' : '删除该源'}">删除</button>
       </div>
     </div>
     ${state.editing === s.id ? `
@@ -389,7 +395,7 @@ function renderSources() {
       <label>最小冷却小时 <input type="number" min="0" step="1" data-f="cooldownHours" value="${s.cooldownHours ?? ''}" placeholder="24"></label>
       <button data-src-act="cancel" data-id="${esc(s.url)}">完成</button>
     </div>` : ''}
-    </div>`).join('')
+    </div>`).join('') + renderDeletedSrcs()
 }
 
 document.addEventListener('change', (e) => { // 分类选「＋自定义…」时换出输入框
@@ -435,6 +441,9 @@ $('#srcList').addEventListener('click', async (e) => {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'retry' }) })
       const s2 = (await api('/sources')).sources.find((x) => encodeURIComponent(x.url) === id)
       toast(s2?.health?.lastError ? `仍失败: ${s2.health.lastError.slice(0, 60)}` : `已恢复: ✓ ${s2?.health?.ok ?? 0} 次成功`)
+    } else if (btn.dataset.srcAct === 'restore') {
+      await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'restore' }) })
+      toast('已恢复内置源')
     } else if (btn.dataset.srcAct === 'sum') {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ summarize: btn.dataset.sum === '1' }) })
     } else if (btn.dataset.srcAct === 'edit') {
