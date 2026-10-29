@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -26,6 +26,8 @@ const mkDeps = async (svcOver = {}) => {
   const { PrefsStore } = await import('../lib/core/prefs.js')
   const prefs = new PrefsStore(join(mkdtempSync(join(tmpdir(), 'rnd-g2p-')), 'p.json'))
   const store = await mkStore()
+  const digestsDir = join(mkdtempSync(join(tmpdir(), 'rnd-g2d-')), 'digests')
+  mkdirSync(digestsDir, { recursive: true })
   const calls = []
   const svc = {
     listSources: () => [], addSource: async (a) => { calls.push(['addSource', a]); return { id: 'u1', url: a.url, title: a.title || 'T' } },
@@ -42,13 +44,13 @@ const mkDeps = async (svcOver = {}) => {
     fetchTest: async (url) => { calls.push(['fetchTest', url]); return { status: 200, body: 'x' } },
     ...svcOver,
   }
-  return { prefs, store, svc, calls }
+  return { prefs, store, svc, calls, digestsDir }
 }
 const mount = async (deps) => {
   const { mountApi } = await import('../lib/api.js')
   const regs = []
   mountApi({ register: (o) => { regs.push(o); return () => {} } }, {
-    store: deps.store, prefs: deps.prefs, svc: deps.svc, readerPageSize: 50, digestsDir: '/tmp', timezone: '',
+    store: deps.store, prefs: deps.prefs, svc: deps.svc, readerPageSize: 50, digestsDir: deps.digestsDir, timezone: '',
     runDigest: deps.svc.runDigest, fetchTest: deps.svc.fetchTest,
   })
   return regs
@@ -128,6 +130,50 @@ test('api /fetch-cancel POST → svc.cancelFetch', async () => {
   const h = findH(regs, '/dsh-rss-news-daily/api/fetch-cancel')
   const res = mkRes(); await h(mkReq('POST', '/dsh-rss-news-daily/api/fetch-cancel', {}), res)
   assert.equal(json(res).ok, true)
+})
+
+test('api /items/clear: 清空条目并归零本次计数，保留订阅源/偏好', async () => {
+  const deps = await mkDeps()
+  deps.store.addSource({ id: 'source-1', url: 'https://source.example/feed', title: 'source', enabled: true, addedAt: '', category: 'AI', tier: 1, lang: 'en', method: 'direct', builtin: false, weight: 1, summarize: true, health: {} })
+  deps.store.addItems([mkItem('clear-1', { sourceId: 'source-1' }), mkItem('clear-2', { sourceId: 'source-1' })])
+  deps.store.meta.lastFetchAdded = 2
+  deps.prefs.save({ topics: { AI: 1.5 } })
+  await deps.store.save()
+  const regs = await mount(deps)
+  const h = findH(regs, '/dsh-rss-news-daily/api/items/clear')
+  let res = mkRes()
+  await h(mkReq('GET', '/dsh-rss-news-daily/api/items/clear'), res)
+  assert.equal(res.statusCode, 405)
+  res = mkRes()
+  await h(mkReq('POST', '/dsh-rss-news-daily/api/items/clear', {}), res)
+  assert.deepEqual(json(res), { ok: true, deleted: 2 })
+  assert.equal(deps.store.count(), 0)
+  assert.equal(deps.store.queryItems({ q: 'T-clear' }).total, 0)
+  assert.equal(deps.store.sources.length, 1)
+  assert.equal(deps.store.meta.lastFetchAdded, 0)
+  assert.equal(deps.prefs.get().topics.AI, 1.5)
+})
+
+test('api /digests/clear: 仅删 Markdown，保留索引及其他文件；空目录安全', async () => {
+  const deps = await mkDeps()
+  writeFileSync(join(deps.digestsDir, '2026-10-29-rss-briefing.md'), '# daily')
+  writeFileSync(join(deps.digestsDir, '2026-10-29-hourly.md'), '# hourly')
+  writeFileSync(join(deps.digestsDir, 'index.json'), '{}')
+  writeFileSync(join(deps.digestsDir, 'notes.txt'), 'keep')
+  const regs = await mount(deps)
+  const h = findH(regs, '/dsh-rss-news-daily/api/digests/clear')
+  let res = mkRes()
+  await h(mkReq('GET', '/dsh-rss-news-daily/api/digests/clear'), res)
+  assert.equal(res.statusCode, 405)
+  res = mkRes()
+  await h(mkReq('POST', '/dsh-rss-news-daily/api/digests/clear', {}), res)
+  assert.deepEqual(json(res), { ok: true, deleted: 2 })
+  assert.deepEqual(readdirSync(deps.digestsDir).sort(), ['index.json', 'notes.txt'])
+  const empty = await mkDeps()
+  const emptyRegs = await mount(empty)
+  res = mkRes()
+  await findH(emptyRegs, '/dsh-rss-news-daily/api/digests/clear')(mkReq('POST', '/dsh-rss-news-daily/api/digests/clear', {}), res)
+  assert.deepEqual(json(res), { ok: true, deleted: 0 })
 })
 
 test('api /digest-run POST 转发 day/force', async () => {
@@ -244,6 +290,20 @@ test('service: updateSource/removeSource 链路', async () => {
   assert.equal(st.sources.find((s) => s.id === src.id), undefined)
 })
 
+test('service: 删除内置源写墓碑、删除对应新闻，恢复后重新出现', async () => {
+  const { effectiveSources, normalizeUrl, removeSource, restoreBuiltinSource } = await import('../lib/service.js')
+  const st = await mkStore()
+  const url = 'https://www.ruanyifeng.com/blog/atom.xml'
+  const id = normalizeUrl(url)
+  st.addSource({ id, url, title: '用户覆盖', enabled: false, addedAt: '', category: '科技', tier: 1, lang: 'zh', method: 'direct', builtin: false, weight: 1, summarize: true, health: {} })
+  st.addItems([mkItem('builtin-item', { sourceId: id })])
+  assert.equal(await removeSource(st, url, true), true)
+  assert.equal(st.count(), 0)
+  assert.equal(effectiveSources([], st).some((s) => s.id === id), false)
+  assert.equal(await restoreBuiltinSource(st, url), true)
+  assert.equal(effectiveSources([], st).some((s) => s.id === id), true)
+})
+
 // ---- scheduler 同刻顺序 ----
 
 test('scheduler: 同刻 fetch→digest 串行顺序', async () => {
@@ -302,6 +362,21 @@ test('time: zonedDayKey 时区日界+parseClockTime', async () => {
   assert.equal(zonedDayKey(d, 'UTC'), '2026-10-28') // UTC 15:30 同日
   assert.deepEqual(parseClockTime('08:30'), { hour: 8, minute: 30 })
   assert.equal(parseClockTime('bad'), undefined)
+})
+
+test('time: 夏令时切换日边界按23/25小时计算，调度跳过不存在时刻', async () => {
+  const { nextZonedOccurrence, zonedDayBounds } = await import('../lib/core/time.js')
+  const spring = zonedDayBounds('2026-03-08', 'America/New_York')
+  assert.deepEqual(spring, { after: '2026-03-08T05:00:00.000Z', before: '2026-03-09T03:59:59.999Z' })
+  const fall = zonedDayBounds('2026-11-01', 'America/New_York')
+  assert.deepEqual(fall, { after: '2026-11-01T04:00:00.000Z', before: '2026-11-02T04:59:59.999Z' })
+
+  const afterSpringJump = nextZonedOccurrence('03:30', 'America/New_York', new Date('2026-03-08T06:30:00Z'))
+  assert.equal(afterSpringJump.next.toISOString(), '2026-03-08T07:30:00.000Z')
+  const nonexistent = nextZonedOccurrence('02:30', 'America/New_York', new Date('2026-03-08T06:30:00Z'))
+  assert.equal(nonexistent.next.toISOString(), '2026-03-09T06:30:00.000Z')
+  const fallBack = nextZonedOccurrence('01:30', 'America/New_York', new Date('2026-11-01T05:45:00Z'))
+  assert.equal(fallBack.next.toISOString(), '2026-11-02T06:30:00.000Z')
 })
 
 // ---- sqlite 快照+损坏恢复 ----

@@ -131,8 +131,14 @@ export function zonedDayBounds(day: string, timezone?: string): { after: string;
     const get = (k: string) => Number(p.find((x) => x.type === k)?.value)
     return Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second')) - t
   }
+  const localMidnightUtc = (utcMid: number): number => {
+    let result = utcMid - offAt(utcMid) // 第一次近似
+    result = utcMid - offAt(result) // 第二次修正（DST 边界）
+    return result
+  }
   const utcMid = Date.parse(`${day}T00:00:00Z`)
-  let start = utcMid - offAt(utcMid) // 第一次近似
-  start = utcMid - offAt(start)      // 第二次修正（DST 边界）
-  return { after: new Date(start).toISOString(), before: new Date(start + 86_399_999).toISOString() }
+  const nextUtcMid = utcMid + DAY_MS
+  const start = localMidnightUtc(utcMid)
+  const end = localMidnightUtc(nextUtcMid) - 1
+  return { after: new Date(start).toISOString(), before: new Date(end).toISOString() }
 }

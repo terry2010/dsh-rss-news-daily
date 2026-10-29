@@ -136,3 +136,23 @@ test('store.addItems: id 去重，已有项不被覆盖（merge 语义）', asyn
   assert.equal(st.items.find((i) => i.id === 'i1').title, 'old')
   assert.equal(st.items.find((i) => i.id === 'i1').fetchedAt, '2026-10-01')
 })
+
+test('JSON store: 删除源级联清条目，clearItems 持久化清空', async () => {
+  const { Store } = await import(core + 'store.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-store-clear-'))
+  const file = join(dir, 's.json')
+  const st = new Store({ path: file })
+  await st.load()
+  st.addSource({ id: 'source-1', url: 'https://x/feed', title: 'X', enabled: true, addedAt: '', category: 'AI', tier: 1, health: { ok: 0, fail: 0, failStreak: 0 } })
+  st.addItems([
+    { id: 'item-1', sourceId: 'source-1', title: 'one', link: '', summary: '', content: '', publishedAt: '', fetchedAt: '2026-10-27', hash: 'h1', digestedDay: '', topic: 'AI', score: 0, reasons: [], state: { read: false, hidden: false, liked: 0 } },
+    { id: 'item-2', sourceId: 'source-2', title: 'two', link: '', summary: '', content: '', publishedAt: '', fetchedAt: '2026-10-27', hash: 'h2', digestedDay: '', topic: 'AI', score: 0, reasons: [], state: { read: false, hidden: false, liked: 0 } },
+  ])
+  assert.equal(st.removeSource('source-1'), true)
+  assert.deepEqual(st.items.map((item) => item.id), ['item-2'])
+  assert.equal(st.clearItems(), 1)
+  await st.save()
+  const restored = new Store({ path: file })
+  await restored.load()
+  assert.equal(restored.items.length, 0)
+})

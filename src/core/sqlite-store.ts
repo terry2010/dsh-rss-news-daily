@@ -175,10 +175,25 @@ export class SqliteStore {
     const i = this.srcList.findIndex((s) => s.id === source.id)
     if (i >= 0) this.srcList[i] = source; else this.srcList.push(source)
   }
+  removeItemsBySource(sourceId: string): number {
+    const removed = Number(this.db.prepare('DELETE FROM items WHERE sourceId=?').run(sourceId).changes)
+    if (removed > 0) this.refreshWindow()
+    return removed
+  }
   removeSource(id: string): boolean {
-    this.db.prepare('DELETE FROM sources WHERE id=?').run(id)
     const i = this.srcList.findIndex((s) => s.id === id)
     if (i < 0) return false
+    this.db.exec('BEGIN')
+    let removedItems = 0
+    try {
+      this.db.prepare('DELETE FROM sources WHERE id=?').run(id)
+      removedItems = Number(this.db.prepare('DELETE FROM items WHERE sourceId=?').run(id).changes)
+      this.db.exec('COMMIT')
+    } catch (e) {
+      this.db.exec('ROLLBACK')
+      throw e
+    }
+    if (removedItems > 0) this.refreshWindow()
     this.srcList.splice(i, 1); return true
   }
 

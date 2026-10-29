@@ -69,6 +69,32 @@ test('runFetchCycle: 冷却中的源被跳过', async () => {
   assert.equal(r.sources.length, 0)
 })
 
+test('runFetchCycle: 取消会中止当前请求、不拉取队列余项且不累计源故障', async () => {
+  const { runFetchCycle } = await import('../lib/service.js')
+  const store = await mkStore()
+  const controller = new AbortController()
+  const started = []
+  let notifyStarted
+  const began = new Promise((resolve) => { notifyStarted = resolve })
+  const fetch = (url, signal) => new Promise((resolve) => {
+    started.push(url)
+    notifyStarted()
+    signal.addEventListener('abort', () => resolve({ url, status: 0, error: 'aborted', retryable: false }), { once: true })
+  })
+  const sources = [mkSource(), mkSource({ id: 'https://y/feed', url: 'https://y/feed' })]
+  const pending = runFetchCycle({
+    fetch, store, sources, signal: controller.signal,
+    maxItemsPerSource: 50, storeContentChars: 4000, concurrency: 1, dedupeThreshold: 0.85,
+  })
+  await began
+  controller.abort()
+  const result = await pending
+  assert.deepEqual(started, [sources[0].url])
+  assert.equal(result.sources[0].error, undefined)
+  assert.equal(sources[0].health.fail, 0)
+  assert.equal(sources[1].health.fail, 0)
+})
+
 test('runFetchCycle: 连续3次失败触发冷却', async () => {
   const { runFetchCycle } = await import('../lib/service.js')
   const store = await mkStore()

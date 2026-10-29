@@ -32,6 +32,18 @@ test('sql: addItems 去重(hash)+count+窗口', async () => {
   assert.equal(st.items.length, 2)
 })
 
+test('sql: 删除订阅源时删除其全部历史新闻并同步 FTS/内存窗口', async () => {
+  const { st } = await mk()
+  const source = { id: 'https://x/feed', url: 'https://x/feed', title: 'X', enabled: true, addedAt: '', category: 'AI', tier: 1, lang: 'en', method: 'direct', builtin: false, weight: 1, summarize: true, proxy: null, health: {} }
+  st.addSource(source)
+  st.addItems([mkItem('a', { sourceId: source.id, title: '删除源新闻测试' }), mkItem('b', { sourceId: 'other' })])
+  assert.equal(st.removeSource(source.id), true)
+  assert.equal(st.count(), 1)
+  assert.equal(st.items.length, 1)
+  assert.equal(st.items[0].id, 'b')
+  assert.equal(st.queryItems({ q: '删除源新闻' }).total, 0)
+})
+
 test('sql: 老 store.json 归档+sources 保留', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'rnd-sql-'))
   const legacy = join(dir, 'store.json')
@@ -86,6 +98,18 @@ test('sql: queryItems filter+sort+分页', async () => {
   assert.equal(r.items[0].id, 'b') // fetched 序:b 最新
   r = st.queryItems({ pageSize: 2, page: 2 })
   assert.equal(r.total, 3); assert.equal(r.items.length, 1)
+})
+
+test('sql: fetchedAfter 单独过滤用于实时本轮新增计数', async () => {
+  const { st } = await mk()
+  st.addItems([
+    mkItem('before', { fetchedAt: '2026-10-28T09:59:59.999Z' }),
+    mkItem('during-1', { fetchedAt: '2026-10-28T10:00:00.000Z' }),
+    mkItem('during-2', { fetchedAt: '2026-10-28T10:00:01.000Z' }),
+  ])
+  const r = st.queryItems({ fetchedAfter: '2026-10-28T10:00:00.000Z', fetchedBefore: '9999-12-31', pageSize: 1 })
+  assert.equal(r.total, 2)
+  assert.equal(r.items.length, 1)
 })
 
 test('sql: FTS 中文子串搜索（trigram）', async () => {

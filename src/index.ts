@@ -89,6 +89,9 @@ export function apply(ctx: Context, config: ConfigType) {
   })
   const sources = effectiveSources(config.sources, store)
   const enabledCount = sources.filter((s) => s.enabled).length
+  let fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }
+  let digestProg = { running: false, done: 0, total: 0, stage: '' }
+  let fetchAbort: AbortController | undefined
   log.info(
     `loaded: ${sources.length} sources (${enabledCount} enabled) digestItems=${config.digest.digestItems} `
     + `dailyTime=${config.dailyTime} tz=${config.timezone || 'host-local'} dataDir=${dataDir}`,
@@ -146,40 +149,55 @@ export function apply(ctx: Context, config: ConfigType) {
     finally { scoringInFlight = false }
   }
   // autoTranslate：本轮新入库外文条目逐条翻译（手动+定时两路径共用）
-  const translateFresh = async (cycleStart: string) => {
+  const translateFresh = async (cycleStart: string, signal?: AbortSignal) => {
     if (!prefs.get().autoTranslate || !llmRuntime) return
     const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
-    if (fresh.length) { fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate', current: '' }; translateAbort = new AbortController() }
+    if (fresh.length && !signal?.aborted) fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate', current: '' }
+    let translated = 0
     for (const it of fresh) {
-      if (translateAbort?.signal.aborted || fetchAbort?.signal.aborted) break // 抓取/翻译取消联动
-      try { await translateItemCore(it) }
-      catch (e) { it.state.translationError = e instanceof Error ? e.message : String(e) }
+      if (signal?.aborted) break // 抓取/翻译共用信号；取消后不再开始下一条
+      try { await translateItemCore(it, signal) }
+      catch (e) {
+        if (signal?.aborted) break
+        it.state.translationError = e instanceof Error ? e.message : String(e)
+      }
       fetchProg.done += 1
+      translated += 1
       if (fetchProg.done % 10 === 0) void store.save()
     }
-    translateAbort = undefined
-    if (fresh.length) { await store.save(); log.info(`autoTranslate: ${fresh.length} items translated`) }
+    if (fresh.length) {
+      await store.save()
+      log.info(`autoTranslate: ${translated}/${fresh.length} items translated`)
+    }
   }
-  const runFetch = () => {
+  const runFetchPool = (pool: ReturnType<typeof effectiveSources>, force = false) => {
     const cycleStart = new Date().toISOString()
     store.meta.lastFetchStartedAt = cycleStart // 本轮起点:「本次」实时计数以此为界
-    fetchProg = { running: true, done: 0, total: effectiveSources(config.sources, store).filter((s) => s.enabled).length, stage: 'fetch', current: '' }
-    fetchAbort = new AbortController()
-    return runFetchCycle({ ...makeFetchOpts(), signal: fetchAbort.signal })
-      .then(async (r) => { await translateFresh(cycleStart); void scoreAndBrief(cycleStart); return r })
-      .finally(() => { fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }; fetchAbort = undefined })
+    const controller = new AbortController()
+    fetchAbort = controller
+    fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length, stage: 'fetch', current: '' }
+    return runFetchCycle({ ...makeFetchOpts(pool), force, signal: controller.signal })
+      .then(async (result) => {
+        await translateFresh(cycleStart, controller.signal)
+        void scoreAndBrief(cycleStart, controller.signal)
+        return result
+      })
+      .finally(() => {
+        if (fetchAbort === controller) {
+          fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }
+          fetchAbort = undefined
+        }
+      })
   }
-  let fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }
-  let digestProg = { running: false, done: 0, total: 0, stage: '' }
-  let fetchAbort: AbortController | undefined
-  let translateAbort: AbortController | undefined
+  const runFetch = () => runFetchPool(effectiveSources(config.sources, store))
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
-  const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string } }) => {
+  const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string } }, signal?: AbortSignal) => {
     const client = new DshLlmClient(llmRuntime!, pickTranslateRoute(), log)
     const text = await client.generateText({
       system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
       prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
       maxTokens: 1200,
+      signal,
     })
     addTokens('translate', client.usage) // 每条独立 client——usage 即本条用量
     const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
@@ -213,25 +231,10 @@ export function apply(ctx: Context, config: ConfigType) {
     // 界面筛选联动：选了源只抓该源，选了分类只抓该分类下所有源
     if (filter?.source) pool = pool.filter((s) => s.id === filter.source || s.url === filter.source)
     else if (filter?.category) pool = pool.filter((s) => s.category === filter.category)
-    fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length, stage: 'fetch', current: '' }
-    fetchAbort = new AbortController()
-    const cycleStart = new Date().toISOString()
-    store.meta.lastFetchStartedAt = cycleStart
-    return runFetchCycle({ ...makeFetchOpts(pool), force, signal: fetchAbort.signal, onSourceDone: () => { fetchProg.done += 1 } })
-      .then(async (result) => {
-        await translateFresh(cycleStart) // 自动翻译：本轮新入库外文条目（与定时路径共用）
-        void scoreAndBrief(cycleStart, fetchAbort?.signal) // fire-and-forget：评分不阻塞抓取返回
-        return result
-      })
-      .finally(() => { fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }; fetchAbort = undefined })
+    return runFetchPool(pool, force) // 手动抓取与定时/源重试共用进度、取消、翻译和评分流程
   } // svc/api：手动抓取可带 force 绕冷却
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => {
-    const cycleStart = new Date().toISOString()
-    store.meta.lastFetchStartedAt = cycleStart
-    fetchAbort = new AbortController()
-    return runFetchCycle({ ...makeFetchOpts(sources), signal: fetchAbort.signal })
-      .then((r) => { void scoreAndBrief(cycleStart); return r })
-      .finally(() => { fetchAbort = undefined })
+    return runFetchPool(sources)
   }
 
   // 对外操作门面：tools（M2）与 HTTP API（M4）共用同一组语义
@@ -266,7 +269,7 @@ export function apply(ctx: Context, config: ConfigType) {
       const d = await fetcher(url, undefined, { proxy })
       return 'error' in d ? { error: d.error } : { status: d.status, body: d.body.slice(0, 600) }
     },
-    cancelFetch: async () => { fetchAbort?.abort(); translateAbort?.abort(); return true },
+    cancelFetch: async () => { fetchAbort?.abort(); return true },
     tune: async (text) => {
       const r = parseTune(text, prefs.get())
       if (!r.ok) return { ok: false, actions: [], error: r.error }

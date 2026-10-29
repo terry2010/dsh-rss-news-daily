@@ -207,7 +207,7 @@ async function fetchOne(
   const t0 = performance.now()
   const res: SourceFetchResult = { sourceId: src.id, sourceUrl: src.url, fetched: 0, added: 0, duplicated: 0 }
   try {
-    const doc = await opts.fetch(src.url, undefined, { proxy: src.proxy })
+    const doc = await opts.fetch(src.url, opts.signal, { proxy: src.proxy })
     if ('error' in doc) throw new Error(doc.error)
     const feed = parseFeedDocument(doc.body)
     const seen = new Set(opts.store.items.map((i) => i.id))
@@ -231,6 +231,7 @@ async function fetchOne(
     res.added = opts.store.addItems(fresh)
     recordHealth(src, true, performance.now() - t0, undefined, now)
   } catch (e) {
+    if (opts.signal?.aborted) return res // 取消不计作源故障,也不触发冷却
     res.error = String((e as Error)?.message || e).slice(0, 200)
     recordHealth(src, false, performance.now() - t0, res.error, now)
   }
@@ -291,6 +292,7 @@ export async function restoreBuiltinSource(store: StoreLike, url: string): Promi
 
 export async function removeSource(store: StoreLike, urlOrId: string, isBuiltin = false): Promise<boolean> {
   if (isBuiltin) { // 内置源→墓碑:不从 store 删,记 deletedBuiltin 让 effectiveSources 跳过
+    store.removeItemsBySource(normalizeUrl(urlOrId))
     const list = store.meta.deletedBuiltin || (store.meta.deletedBuiltin = [])
     if (!list.includes(normalizeUrl(urlOrId))) list.push(normalizeUrl(urlOrId))
     // 顺带清掉该源的覆盖层(改名/状态),恢复时回到出厂设置

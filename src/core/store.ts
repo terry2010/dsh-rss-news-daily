@@ -167,8 +167,8 @@ export interface StoreOptions {
  */
 /** Store 公共契约——JSON Store 与 SqliteStore 共同实现（DESIGN-SQLITE.md P2） */
 export interface StoreLike {
-  /** 清空全部条目（SQLite 实现提供）；返回删除数 */
-  clearItems?(): number
+  /** 清空全部条目；返回删除数 */
+  clearItems(): number
   readonly path: string
   readonly maxItems: number
   readonly meta: StoreMeta
@@ -179,6 +179,7 @@ export interface StoreLike {
   save(): Promise<void>
   addItems(items: FeedItem[]): number
   addSource(source: FeedSource): void
+  removeItemsBySource(sourceId: string): number
   removeSource(id: string): boolean
   setHealth(id: string, health: FeedSource['health']): void
   getHealth(id: string): FeedSource['health'] | undefined
@@ -337,8 +338,14 @@ export class Store {
     const index = this.data.sources.findIndex((source) => source.id === id)
     if (index < 0) return false
     this.data.sources.splice(index, 1)
-    this.data.items = this.data.items.filter((item) => item.sourceId !== id)
+    this.removeItemsBySource(id)
     return true
+  }
+
+  removeItemsBySource(sourceId: string): number {
+    const before = this.data.items.length
+    this.data.items = this.data.items.filter((item) => item.sourceId !== sourceId)
+    return before - this.data.items.length
   }
 
   /** Append items not yet present by id, marking duplicates by identity. */
@@ -352,6 +359,13 @@ export class Store {
       added += 1
     }
     return added
+  }
+
+  clearItems(): number {
+    const removed = this.data.items.length
+    this.data.items = []
+    this.dirty = true
+    return removed
   }
 
   /** Mark digest inclusion: set digestedDay for the given item ids. */

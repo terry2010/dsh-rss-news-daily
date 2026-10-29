@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -129,6 +129,33 @@ test('sof: appendHourlyBrief 按节追加+同刻覆盖幂等', async () => {
   await appendHourlyBrief({ ...base, time: '09:00' }) // 同刻覆盖不重复
   md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
   assert.equal((md.match(/## 09:00/g) || []).length, 1)
+})
+
+test('sof: 快报输出总结/领域速览/重要新闻三段，并在 LLM 失败时回退', async () => {
+  const { appendHourlyBrief } = await import('../lib/digest-pipeline.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-hb-format-'))
+  const items = [
+    mkItem(1, { topic: 'AI', llmScore: 9, title: 'AI breakthrough', llmReason: '影响广泛' }),
+    mkItem(2, { topic: '科学', llmScore: 7, title: 'Space discovery' }),
+  ]
+  const base = { items, sourcesById: new Map([['src1', { title: 'Src1' }]]), day: '2026-10-28', time: '11:00', minScore: 6, digestsDir: dir, log: noopLog }
+  await appendHourlyBrief({ ...base, llmClient: mkClient(() => 'AI 领域发布重要进展，科学领域也有新发现。') })
+  let md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
+  assert.match(md, /> AI 领域发布重要进展，科学领域也有新发现。/)
+  assert.match(md, /### 领域速览/)
+  assert.match(md, /### 重要新闻/)
+  assert.match(md, /#### AI/)
+  assert.match(md, /#### 科学/)
+
+  const fallbackDir = mkdtempSync(join(tmpdir(), 'rnd-hb-fallback-'))
+  await appendHourlyBrief({ ...base, digestsDir: fallbackDir, llmClient: mkClient(() => { throw new Error('offline') }) })
+  md = readFileSync(join(fallbackDir, '2026-10-28-hourly.md'), 'utf8')
+  assert.match(md, /> 本时段 2 条入选：AI、科学 领域有更新。/)
+
+  const emptyDir = mkdtempSync(join(tmpdir(), 'rnd-hb-empty-'))
+  const n = await appendHourlyBrief({ ...base, items: [], digestsDir: emptyDir })
+  assert.equal(n, 0)
+  assert.equal(existsSync(join(emptyDir, '2026-10-28-hourly.md')), false)
 })
 
 test('sof: 评分块失败不阻塞后续块', async () => {
