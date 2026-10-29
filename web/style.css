@@ -27,7 +27,7 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 /* ---- 条目卡片 ---- */
 .itemlist .item { position: relative; background: var(--panel); border-radius: 12px; padding: 11px 14px 11px 17px; margin-bottom: 10px; box-shadow: var(--shadow); transition: box-shadow .15s, transform .15s; }
 .itemlist .item::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 3px; background: hsl(var(--hue, 215) 55% 55%); }
-.itemlist .item:hover { box-shadow: var(--shadow-hi); transform: translateY(-1px); }
+.itemlist .item:hover { box-shadow: var(--shadow-hi); transform: translateY(-1px); z-index: 5; } /* 悬停卡整体压过下一张卡的源标签 */
 .item.read { opacity: .5; }
 .item.liked { box-shadow: var(--shadow), 0 0 0 1px var(--ok); }
 .item-src { position: absolute; top: -8px; right: 12px; font-size: 11px; color: var(--dim); background: var(--panel2); border-radius: 6px; padding: 1px 8px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
