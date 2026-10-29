@@ -192,10 +192,18 @@ const startFetchPoll = () => {
   if (fetchPoll) return
   const b = $('#btnFetch')
   b.textContent = '⟳ 抓取中…'
+  let tickN = 0
   fetchPoll = setInterval(async () => {
     try {
       const p = await api('/fetch-progress')
-      if (p.running) { const st = p.stage === 'translate' ? '翻译中' : '抓取中'; b.textContent = `⏹ ${st}(${p.done}/${p.total}) 点我取消`; b.disabled = false; markFetchingSrc(p.current) }
+      if (p.running) {
+        const st = p.stage === 'translate' ? '翻译中' : '抓取中'; b.textContent = `⏹ ${st}(${p.done}/${p.total}) 点我取消`; b.disabled = false; markFetchingSrc(p.current)
+        if (++tickN % 3 === 0) { // ~2.4s 静默刷新列表：锚点回滚防跳动
+          savePos(); await loadItems()
+          const p2 = JSON.parse(localStorage.getItem(POS_KEY) || 'null')
+          if (p2) scrollToAnchor(p2)
+        }
+      }
       else { fetchBtnIdle(); toast('抓取完成'); state.page = 1; state.sort = 'fetched'; $('#sortSel').value = 'fetched'; localStorage.removeItem(POS_KEY); loadItems(); loadStatus(); loadSources() }
     } catch { /* 进度不可达不阻塞 */ }
   }, 800)
