@@ -3,7 +3,7 @@ const ONBOARD_KEY = 'rss_onboarded_v1'
 const ONBOARD_STEPS = [
   {
     title: '感谢你成为早鸟用户 🐣',
-    bodyHtml: '这个插件还在开发早期——UI 不算精致，功能也在快速迭代。看到 GitHub / npm 上不少人在装，<b>核心功能开发完毕</b>，让先到的你们能正常用起来。<br><br>遇到问题或有想法？欢迎来 <a href="https://github.com/terry2010/dsh-rss-news-daily" target="_blank" rel="noopener">GitHub</a> 一起聊，每条反馈都会认真看。',
+    bodyHtml: '这个插件还处于开发早期，界面还比较粗糙，功能也在持续迭代。看到 GitHub 和 npm 上的下载量，发现不少朋友第一时间就安装了它。为了让大家能尽快用起来，我连夜把核心功能开发并上线了。<br><br>使用中遇到问题，或有什么想法和建议，欢迎来 GitHub 一起讨论：<br><a href="https://github.com/terry2010/dsh-rss-news-daily" target="_blank" rel="noopener">https://github.com/terry2010/dsh-rss-news-daily</a><br><br>每一条反馈，我都会认真看。',
   },
   {
     title: '管线：抓取 → AI 评分 → 快报/日报',
