@@ -52,11 +52,20 @@
 
 ## 安装
 
-在 dsh 的插件管理中搜索 `dsh-rss-news-daily` 并安装。也可以使用命令行：
+在 dsh 的插件管理中搜索 `dsh-rss-news-daily` 并安装。也可以使用命令行，按当前使用的运行模式安装到对应 profile：
 
 ```bash
+# 桌面版
+dsh plugin --profile desktop add dsh-rss-news-daily
+
+# Web / 浏览器版
 dsh plugin --profile web add dsh-rss-news-daily
+
+# 其他运行模式：把 <你的profile名> 换成实际 profile 名称
+dsh plugin --profile <你的profile名> add dsh-rss-news-daily
 ```
+
+插件是按 profile 分别安装的；如果同时用多个运行模式，请在对应 profile 中各安装一次。
 
 ## 反馈与项目
 
