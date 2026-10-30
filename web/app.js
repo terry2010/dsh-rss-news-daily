@@ -6,7 +6,7 @@ const applyTheme = (t) => { if (t === 'dark' || t === 'light') document.document
 applyTheme(new URLSearchParams(location.search).get('theme'))
 window.addEventListener('message', (e) => { if (e.data && e.data.type === 'rnd-theme') applyTheme(e.data.theme) })
 
-const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', generating: false, sort: 'published', total: 0, pageSize: 50 }
+const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', generating: false, sort: 'published', total: 0, pageSize: 50, daySetOn: '' }
 const $ = (sel) => document.querySelector(sel)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 /** 输出链接白名单：只放行 http(s)，javascript:/data: 一律清空 */
@@ -238,9 +238,10 @@ function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTi
 
 // ---- 今日精选日报 ----
 
+const dayStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 async function loadDigest() {
   const ld = new Date()
-  const localDay = `${ld.getFullYear()}-${String(ld.getMonth() + 1).padStart(2, '0')}-${String(ld.getDate()).padStart(2, '0')}`
+  const localDay = dayStr(ld)
   const dv = $('#digestDay').value.trim()
   const day = /^\d{4}-\d{2}-\d{2}$/.test(dv) ? dv : localDay // 本地日界：UTC toISOString 会让凌晨看到的日期停在昨天
   $('#digestDay').value = day
@@ -251,7 +252,7 @@ async function loadDigest() {
     // 请求的是"今天"且无日报→回退前一天（刚过0点新一天还没生成）
     if (state.digestKind === 'digest' && day === localDay) {
       const y = new Date(ld); y.setDate(y.getDate() - 1)
-      const yday = `${y.getFullYear()}-${String(y.getMonth() + 1).padStart(2, '0')}-${String(y.getDate()).padStart(2, '0')}`
+      const yday = dayStr(y)
       try {
         const r = await api(`/digest/${yday}`)
         $('#digestDay').value = yday
@@ -281,7 +282,7 @@ function mdLite(md) {
   }).join('')
 }
 
-$('#digestDay').addEventListener('change', loadDigest)
+$('#digestDay').addEventListener('change', () => { state.daySetOn = dayStr(new Date()); loadDigest() })
 const syncRunBtn = () => {
   const b = $('#btnDigestRun')
   if (state.digestKind === 'hourly') { b.textContent = '▶ 生成快报'; b.title = '抓取新条目并评分生成本时段快报' }
@@ -306,6 +307,8 @@ $('#btnDigestRun').addEventListener('click', async () => {
   }, 900)
   if (state.digestKind === 'hourly') { // 快报=抓取+评分产出：跑一轮 fetch 自然生成
     clearInterval(dp)
+    // 生成始终针对今天：跨零点时日期框可能还停在昨天（日报回退改的），先拨回本地当天
+    $('#digestDay').value = dayStr(new Date())
     $('#digestBusy').textContent = '⏳ 快报生成中…（抓取+评分）'
     try {
       await post('/fetch', { force: true })
@@ -937,7 +940,12 @@ document.querySelectorAll('.tab').forEach((btn) => {
     for (const sec of document.querySelectorAll('main > section')) sec.hidden = true
     $(`#tab-${btn.dataset.tab}`).hidden = false
     $('#statusbar').hidden = btn.dataset.tab === 'digest'
-    if (btn.dataset.tab === 'digest') loadDigest()
+    if (btn.dataset.tab === 'digest') {
+      const today = dayStr(new Date())
+      const sel = $('#digestDay').value
+      if (sel && sel !== today && state.daySetOn !== today) $('#digestDay').value = today // 隔天的旧选择不带进来
+      loadDigest()
+    }
     if (btn.dataset.tab === 'sources') loadSources()
     if (btn.dataset.tab === 'prefs') { loadPrefs(); loadLlm(); loadSchedule() }
   })

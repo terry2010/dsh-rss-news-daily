@@ -1,6 +1,6 @@
 {
   "name": "dsh-rss-news-daily",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "dsh plugin: daily curated RSS briefing (overall summary + top-N items), sidebar reader, preference tuning — panel/reader only, never touches the conversation.",
   "type": "module",
   "main": "lib/index.js",
