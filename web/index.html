@@ -48,7 +48,10 @@
   <!-- 今日精选日报 -->
   <section id="tab-digest" hidden>
     <div class="toolbar">
-      <input type="date" id="digestDay" title="查看历史日报（生成始终针对今天）">
+      <div class="daypick-wrap">
+        <input type="date" id="digestDay" readonly title="查看历史日报（生成始终针对今天）">
+        <div id="dayPop" class="daypop" hidden></div>
+      </div>
       <button id="btnKindDigest" title="当日精选日报">日报</button>
       <button id="btnKindHourly" title="逐时段快报">快报</button>
       <button id="btnDigestRun" title="立即生成今日日报">▶ 生成日报</button>

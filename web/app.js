@@ -250,7 +250,8 @@ async function loadDigest() {
     $('#digestView').innerHTML = mdLite(r.markdown)
   } catch {
     // 请求的是"今天"且无日报→回退前一天（刚过0点新一天还没生成）
-    if (state.digestKind === 'digest' && day === localDay) {
+    // 仅限默认进入/跨天复位：用户当天手动选了今天就尊重选择，显示空态而不是跳回昨天
+    if (state.digestKind === 'digest' && day === localDay && state.daySetOn !== localDay) {
       const y = new Date(ld); y.setDate(y.getDate() - 1)
       const yday = dayStr(y)
       try {
@@ -283,6 +284,44 @@ function mdLite(md) {
 }
 
 $('#digestDay').addEventListener('change', () => { state.daySetOn = dayStr(new Date()); loadDigest() })
+
+// 自绘日期选择：Electron webview 没有原生 date picker 弹层，点了没反应
+let popMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+const renderDayPop = () => {
+  const y = popMonth.getFullYear(), m = popMonth.getMonth()
+  const startDow = (new Date(y, m, 1).getDay() + 6) % 7 // 周一开头
+  const dim = new Date(y, m + 1, 0).getDate()
+  const today = dayStr(new Date()), cur = $('#digestDay').value
+  let cells = ''
+  for (let i = 0; i < startDow; i++) cells += '<span></span>'
+  for (let d = 1; d <= dim; d++) {
+    const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    cells += `<span class="dp-day${ds === today ? ' today' : ''}${ds === cur ? ' sel' : ''}" data-day="${ds}">${d}</span>`
+  }
+  $('#dayPop').innerHTML = `<div class="dp-head"><button type="button" data-nav="-1">‹</button><span>${y}-${String(m + 1).padStart(2, '0')}</span><button type="button" data-nav="1">›</button></div><div class="dp-grid"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>${cells}</div>`
+}
+const openDayPop = () => {
+  const v = $('#digestDay').value, d = v ? new Date(`${v}T00:00:00`) : new Date()
+  popMonth = new Date(d.getFullYear(), d.getMonth(), 1)
+  renderDayPop()
+  $('#dayPop').hidden = false
+}
+// pointerdown 更可靠：date input 在部分 webview 里会吞 click
+$('#digestDay').addEventListener('pointerdown', (e) => { e.preventDefault(); openDayPop() })
+$('#digestDay').addEventListener('click', openDayPop)
+const pickDay = (e) => {
+  const nav = e.target.closest('button[data-nav]')
+  if (nav) { popMonth = new Date(popMonth.getFullYear(), popMonth.getMonth() + Number(nav.dataset.nav), 1); renderDayPop(); return }
+  const day = e.target.closest('.dp-day')
+  if (!day) return
+  $('#digestDay').value = day.dataset.day
+  $('#dayPop').hidden = true
+  state.daySetOn = dayStr(new Date())
+  loadDigest() // 直接调用，不走 change 事件转发
+}
+$('#dayPop').addEventListener('pointerdown', (e) => { if (e.target.closest('.dp-day')) { e.preventDefault(); pickDay(e) } })
+$('#dayPop').addEventListener('click', pickDay)
+document.addEventListener('click', (e) => { const dp = $('#dayPop'); if (dp && !dp.hidden && !e.target.closest('.daypick-wrap')) dp.hidden = true })
 const syncRunBtn = () => {
   const b = $('#btnDigestRun')
   if (state.digestKind === 'hourly') { b.textContent = '▶ 生成快报'; b.title = '抓取新条目并评分生成本时段快报' }

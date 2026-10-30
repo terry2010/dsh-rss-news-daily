@@ -167,3 +167,18 @@ button.danger.armed { background: #8a3030; color: #fff; }
 .settings-sched .sched-group { display: block; }
 .settings-sched .sched-label { display: block; margin-bottom: 4px; line-height: 1.5; }
 @media (max-width: 600px) { .settings-sched { grid-template-columns: 1fr; } }
+
+/* 自绘日期选择弹层（Electron 无原生 date picker） */
+.daypick-wrap { position: relative; display: inline-block; }
+.daypick-wrap input { cursor: pointer; }
+.daypop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 50; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); width: 216px; }
+.dp-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.dp-head span { font-size: 13px; font-weight: 600; }
+.dp-head button { padding: 0 8px; font-size: 14px; line-height: 20px; }
+.dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; font-size: 12px; }
+.dp-grid > span { padding: 4px 0; }
+.dp-grid > span:not(.dp-day) { color: var(--dim); font-size: 11px; }
+.dp-day { cursor: pointer; border-radius: 6px; }
+.dp-day:hover { background: var(--acc); color: #fff; }
+.dp-day.today { border: 1px solid var(--acc); }
+.dp-day.sel { background: var(--acc); color: #fff; }
