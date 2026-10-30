@@ -818,7 +818,7 @@ async function saveSchedule() { // function 声明提升:timeRow 先引用后定
   const fetchTimes = collectTimes('#schedFetchRows')
   const iv = $('#schedInterval').value.trim()
   try {
-    await post('/schedule', { digestTimes, fetchTimes, intervalMinutes: iv === '' ? undefined : Number(iv), onStartup: $('#schedStartup').checked || undefined })
+    await post('/schedule', { digestTimes, fetchTimes, intervalMinutes: iv === '' ? undefined : Number(iv), onStartup: $('#schedStartup').checked })
     toast('调度已保存')
   } catch { /* 行内空值时静默 */ }
 }
