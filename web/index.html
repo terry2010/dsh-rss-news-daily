@@ -73,103 +73,201 @@
     <div id="srcList" class="srclist"></div>
   </section>
 
-  <!-- 偏好调教 -->
-  <section id="tab-prefs" hidden>
-    <div class="toolbar"><input type="text" id="tuneText" placeholder="例：多推 AI Agent、少推币圈、屏蔽裁员"><button id="btnTune">应用调教</button><button id="btnResetPrefs">↺ 重置</button></div>
-    <div id="tuneResult"></div>
-    <h3>定时调度</h3>
-    <div class="sched-group"><span class="sched-label">生成日报</span><div id="schedDigestRows"></div></div>
-    <div class="sched-group"><span class="sched-label">更新数据</span><div id="schedFetchRows"></div></div>
-    <div class="sched-group"><span class="sched-label">轮询间隔</span>
-      <label style="font-size:13px"><input type="number" id="schedInterval" min="5" style="width:70px"> 分钟（留空=默认60，≥5）</label>
-      <label style="font-size:13px"><input type="checkbox" id="schedStartup"> 启动即抓一轮</label>
+  <!-- 设置：先呈现日常选择，低频参数按用途独立折叠 -->
+  <section id="tab-prefs" class="settings-page" hidden>
+    <div class="settings-intro">
+      <h2>设置</h2>
+      <p>先选择关心的内容并安排更新时间；其他选项都可以保持默认，之后需要时再调整。</p>
     </div>
-    <div class="toolbar">
-      <button id="btnSchedSave">保存</button>
-      <button id="btnSchedClear">恢复配置</button>
-    </div>
-    <div id="schedInfo" class="hist"></div>
-    <h3>全局代理</h3>
-    <div class="toolbar">
-      <input type="text" id="proxyUrl" placeholder="http://127.0.0.1:7890（留空=跟随环境变量）">
-      <button id="btnProxySave">保存</button>
-    </div>
-    <h3>连通测试</h3>
-    <div class="toolbar">
-      <input type="text" id="testUrl" placeholder="http://ip.zhuikan.com/ip.php" value="http://ip.zhuikan.com/ip.php">
-      <label><input type="checkbox" id="testProxy"> 走代理</label>
-      <button id="btnFetchTest">测试</button>
-    </div>
-    <pre id="fetchTestOut" class="hist" hidden></pre>
-    <h3>日报参数</h3>
-    <div class="toolbar" style="flex-wrap:wrap;gap:6px">
-      <label style="font-size:12px">条数 <input type="number" id="dItems" min="1" max="200" style="width:60px" placeholder="20"></label>
-      <label style="font-size:12px">每类上限 <input type="number" id="dPerTopic" min="0" style="width:60px" placeholder="4"></label>
-      <label style="font-size:12px">评分阈值 <input type="number" id="dMinScore" min="0" max="10" style="width:60px" placeholder="5"></label>
-      <label style="font-size:12px">LLM评分条数 <input type="number" id="dScoreN" min="0" style="width:60px" placeholder="40"></label>
-      <label style="font-size:12px">候选窗口h <input type="number" id="dCandH" min="0" style="width:60px" placeholder="不限"></label>
-      <label style="font-size:12px">写摘要条数 <input type="number" id="dSumN" min="0" style="width:60px" placeholder="20"></label>
-      <label style="font-size:12px">摘要并发 <input type="number" id="dConc" min="1" max="8" style="width:60px" placeholder="3"></label>
-      <label style="font-size:12px">总结字数 <input type="number" id="dSumLen" min="50" max="3000" style="width:70px" placeholder="800"></label>
-      <button id="btnDigestOptsSave">保存</button>
-    </div>
-    <div style="display:flex;gap:14px;font-size:12px;margin:2px 0">
-      <label><input type="checkbox" id="dScoreFetch"> 抓取后评分</label>
-      <label><input type="checkbox" id="dRescore"> 无分补评</label>
-      <label><input type="checkbox" id="dHourly"> 时段快报</label>
-      <label>保留 <input type="number" id="dRetDays" min="0" style="width:55px" placeholder="90"> 天</label>
-      <label><input type="checkbox" id="dPruneQ"> 清退低质优先</label>
-    </div>
-    <div class="hist">留空=跟随配置默认；每类上限 0=不限；LLM评分条数 0=关闭评分；候选窗口 0=不限；写摘要条数 0=不写AI摘要；保留天数 0=仅数量上限</div>
-    <h3>订阅分类</h3>
-    <div id="subTopics" style="display:flex;gap:10px;flex-wrap:wrap;font-size:13px"></div>
-    <div class="toolbar"><button id="btnSubSave">保存订阅</button></div>
-    <div class="hist">未勾选的分类不进日报（仍抓取+评分；全勾=默认全部订阅）</div>
-    <h3>翻译模型</h3>
-    <div class="toolbar">
-      <select id="tlProvider"><option value="">provider…</option></select>
-      <select id="tlModel"><option value="">model…</option></select>
-      <button id="btnTlSave">保存</button>
-    </div>
-    <label style="font-size:13px"><input type="checkbox" id="autoTranslate"> 自动翻译所有外文新闻</label>
-    <div id="autoTlWarn" hidden style="color:#e5534b;font-size:12px;margin:4px 0 8px">⚠ 开启后每轮抓取都会给全部外文条目调翻译模型——按条计费，量大时 token/费用消耗显著，请确认再开启。</div>
-    <div id="tlInfo" class="hist"></div>
-    <h3>日报模型</h3>
-    <div class="toolbar">
-      <select id="llmProvider"><option value="">provider…</option></select>
-      <select id="llmModel"><option value="">model…</option></select>
-      <button id="btnLlmSave">保存</button>
-      <button id="btnLlmClear">恢复自动路由</button>
-    </div>
-    <div id="llmInfo" class="hist"></div>
-    <h3>当前权重</h3>
-    <div id="prefsView"></div>
-    <div id="statsSection" hidden>
-      <h3>Token 用量</h3>
-      <div class="toolbar">
-        <select id="statsView">
-          <option value="day">按日</option>
-          <option value="feature">按功能</option>
-          <option value="total">总计</option>
-        </select>
-        <select id="statsRange">
-          <option value="7">近 7 天</option>
-          <option value="30">近 30 天</option>
-          <option value="0">全部</option>
-        </select>
+
+    <details class="settings-fold" open>
+      <summary><span>个性化内容</span><small>想多看/少看什么、关注哪些分类、用什么模型</small></summary>
+      <div class="settings-fold-body">
+      <p class="settings-help">告诉插件你喜欢什么，或哪些内容不想看。例如：多推 AI Agent、少推币圈、屏蔽裁员。</p>
+      <div class="toolbar settings-tune">
+        <input type="text" id="tuneText" placeholder="写下你想多看、少看或屏蔽的内容">
+        <button id="btnTune">应用</button>
+        <button id="btnResetPrefs">重置推荐偏好</button>
       </div>
-      <div id="statsBody" class="hist"></div>
-      <div class="field" style="margin-top:10px">
-        <button id="btnShowUpgrade">查看更新内容</button>
-        <button id="btnShowOnboard">重新看引导</button>
+      <div id="tuneResult"></div>
+      <div class="settings-subsection">
+        <h4>每日精选关注分类</h4>
+        <p class="settings-help">未选择的分类仍会采集并显示在「全部新闻」，只是不进入每日精选。</p>
+        <div id="subTopics" class="settings-topics"></div>
+        <div class="toolbar"><button id="btnSubSave">保存订阅</button></div>
       </div>
-    </div>
-    <div style="text-align:center;color:#666;font-size:11px;margin-top:24px;padding-bottom:8px">
-    <h3>危险区</h3>
-    <div class="field"><button id="btnClearAll" class="danger">删除所有新闻</button> <span class="hint">清空所有已抓取的新闻条目，不可恢复</span></div>
-    <div class="field"><button id="btnClearDigests" class="danger">清除日报/快报</button> <span class="hint">删除 digests/ 下全部日报与快报文件，不可恢复</span></div>
-      © 2026 terry · MIT License · <span id="versionTag" style="user-select:none">v?.?.?</span>
-    </div>
+
+      <div class="settings-subsection">
+        <h4>每日精选模型</h4>
+        <p class="settings-help">留空时使用 dsh 的默认模型。</p>
+        <div class="toolbar">
+          <select id="llmProvider"><option value="">跟随 dsh 默认</option></select>
+          <select id="llmModel"><option value="">选择模型</option></select>
+          <button id="btnLlmSave">保存</button>
+          <button id="btnLlmClear">恢复默认</button>
+        </div>
+        <div id="llmInfo" class="hist"></div>
+      </div>
+      <div class="settings-subsection">
+        <h4>外文新闻翻译</h4>
+        <p class="settings-help">可指定翻译模型；留空时跟随 dsh 默认模型。</p>
+        <div class="toolbar">
+          <select id="tlProvider"><option value="">跟随 dsh 默认</option></select>
+          <select id="tlModel"><option value="">选择模型</option></select>
+          <button id="btnTlSave">保存</button>
+        </div>
+        <label class="setting-check"><input type="checkbox" id="autoTranslate"> 自动翻译抓取到的外文新闻</label>
+        <div id="autoTlWarn" class="settings-warning" hidden>开启后会调用模型翻译外文新闻，条目较多时会增加模型用量。</div>
+        <div id="tlInfo" class="hist"></div>
+      </div>
+      </div>
+    </details>
+
+    <details class="settings-fold" open>
+      <summary><span>自动更新</span><small>每日精选和新闻的更新时间与频率</small></summary>
+      <div class="settings-fold-body">
+      <p class="settings-help">设置每日精选生成时间和新闻更新时刻。若同时安排在同一时刻，会先更新新闻，再生成精选。</p>
+      <div class="settings-sched">
+        <div class="sched-group"><span class="sched-label">生成每日精选</span><div id="schedDigestRows"></div></div>
+        <div class="sched-group"><span class="sched-label">更新新闻</span><div id="schedFetchRows"></div></div>
+      </div>
+      <div class="setting-grid setting-grid-compact">
+        <label class="setting-control">自动检查频率
+          <span class="setting-input"><input type="number" id="schedInterval" min="5" style="width:90px"> 分钟</span>
+          <small>至少 5 分钟；留空使用默认间隔（60 分钟）。</small>
+        </label>
+        <label class="setting-check"><input type="checkbox" id="schedStartup"> 启动 dsh 时立即更新一次</label>
+      </div>
+      <div class="toolbar settings-actions">
+        <button id="btnSchedSave">保存</button>
+        <button id="btnSchedClear">恢复默认时间</button>
+      </div>
+      <div id="schedInfo" class="hist"></div>
+      </div>
+    </details>
+
+    <details class="settings-fold">
+      <summary><span>每日精选与新闻保留</span><small>调整精选数量、筛选方式和历史新闻保留时间</small></summary>
+      <div class="settings-fold-body">
+        <p class="settings-help">这些选项会影响每日精选的内容和本机保留的新闻数量。修改后自动保存；不确定时保持默认即可。</p>
+        <div class="setting-grid">
+          <label class="setting-control">每日精选新闻数
+            <input type="number" id="dItems" min="1" max="200" placeholder="默认 20">
+            <small>控制每日精选收录多少条新闻。</small>
+          </label>
+          <label class="setting-control">每个分类最多收录
+            <input type="number" id="dPerTopic" min="0" placeholder="默认 4">
+            <small>设为 0 表示不限制每个分类的条数。</small>
+          </label>
+          <label class="setting-control">入选最低评分
+            <input type="number" id="dMinScore" min="0" max="10" placeholder="默认 5">
+            <small>只让评分达到此分数的新闻进入精选。</small>
+          </label>
+          <label class="setting-control">精选参考最近几小时的新闻
+            <input type="number" id="dCandH" min="0" placeholder="默认不限">
+            <small>设为 0 表示不限制时间范围。</small>
+          </label>
+          <label class="setting-control">生成逐条 AI 摘要的新闻数
+            <input type="number" id="dSumN" min="0" placeholder="默认 20">
+            <small>设为 0 可关闭逐条摘要。</small>
+          </label>
+          <label class="setting-control">每日总结长度（字数）
+            <input type="number" id="dSumLen" min="50" max="3000" placeholder="默认 800">
+            <small>控制每日精选开头总结的大致长度。</small>
+          </label>
+          <label class="setting-control">新闻保留天数
+            <input type="number" id="dRetDays" min="0" placeholder="默认 90">
+            <small>设为 0 时不按天数清理，仍受数量上限影响。</small>
+          </label>
+        </div>
+        <label class="setting-check"><input type="checkbox" id="dHourly"> 生成时段快报</label>
+      </div>
+    </details>
+
+
+
+    <details class="settings-fold">
+      <summary><span>评分与整理选项</span><small>高级选项：评分数量、摘要处理和历史清理策略</small></summary>
+      <div class="settings-fold-body">
+        <p class="settings-help">以下设置面向希望细调处理方式的用户。调整后自动保存；恢复默认可还原插件建议值。</p>
+        <div class="setting-grid">
+          <label class="setting-control">每轮最多评分新闻数
+            <input type="number" id="dScoreN" min="0" placeholder="默认 40">
+            <small>设为 0 表示关闭自动评分。</small>
+          </label>
+          <label class="setting-control">同时生成摘要的数量
+            <input type="number" id="dConc" min="1" max="8" placeholder="默认 3">
+            <small>越大处理越快，但模型服务负担也更高。</small>
+          </label>
+        </div>
+        <div class="settings-checks">
+          <label class="setting-check"><input type="checkbox" id="dScoreFetch"> 抓取后自动评分</label>
+          <label class="setting-check"><input type="checkbox" id="dRescore"> 为缺少评分的新闻补评分</label>
+          <label class="setting-check"><input type="checkbox" id="dPruneQ"> 清理时优先移除低评分新闻</label>
+        </div>
+      </div>
+    </details>
+
+    <details class="settings-fold">
+      <summary><span>网络连接与排障</span><small>代理和订阅源连接测试，遇到抓取问题时使用</small></summary>
+      <div class="settings-fold-body">
+        <div class="settings-subsection">
+          <h4>网络代理</h4>
+          <p class="settings-help">仅当部分新闻网站无法连接时再设置；留空时使用 dsh 的默认代理设置。</p>
+          <div class="toolbar">
+            <input type="text" id="proxyUrl" placeholder="例如：http://127.0.0.1:7890">
+            <button id="btnProxySave">保存</button>
+          </div>
+        </div>
+        <div class="settings-subsection">
+          <h4>测试网站连接</h4>
+          <div class="toolbar">
+            <input type="text" id="testUrl" placeholder="输入要测试的网址" value="http://ip.zhuikan.com/ip.php">
+            <label class="setting-check"><input type="checkbox" id="testProxy"> 通过代理测试</label>
+            <button id="btnFetchTest">测试连接</button>
+          </div>
+          <pre id="fetchTestOut" class="hist" hidden></pre>
+        </div>
+      </div>
+    </details>
+
+    <details class="settings-fold">
+      <summary><span>推荐偏好明细</span><small>查看系统根据反馈逐步调整的推荐倾向</small></summary>
+      <div class="settings-fold-body"><div id="prefsView"></div></div>
+    </details>
+
+    <details id="statsDetails" class="settings-fold" hidden>
+      <summary><span>Token 用量与项目说明</span><small>开发者统计和引导内容</small></summary>
+      <div id="statsSection" class="settings-fold-body" hidden>
+        <h3>Token 用量</h3>
+        <div class="toolbar">
+          <select id="statsView">
+            <option value="day">按日</option>
+            <option value="feature">按功能</option>
+            <option value="total">总计</option>
+          </select>
+          <select id="statsRange">
+            <option value="7">近 7 天</option>
+            <option value="30">近 30 天</option>
+            <option value="0">全部</option>
+          </select>
+        </div>
+        <div id="statsBody" class="hist"></div>
+        <div class="field" style="margin-top:10px">
+          <button id="btnShowUpgrade">查看更新内容</button>
+          <button id="btnShowOnboard">重新看引导</button>
+        </div>
+      </div>
+    </details>
+
+    <section class="settings-card settings-danger">
+      <h3>危险操作</h3>
+      <p class="settings-help">以下操作不可恢复，请谨慎使用。</p>
+      <div class="field"><button id="btnClearAll" class="danger">删除所有新闻</button><span class="hint">清空已抓取的新闻条目；来源、偏好和日报快报会保留。</span></div>
+      <div class="field"><button id="btnClearDigests" class="danger">清除日报/快报</button><span class="hint">删除本机保存的日报和快报文件。</span></div>
+    </section>
+
+    <div class="settings-footer">© 2026 terry · MIT License · <span id="versionTag" style="user-select:none">v?.?.?</span></div>
   </section>
 </main>
 

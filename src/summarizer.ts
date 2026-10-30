@@ -53,7 +53,7 @@ export interface LlmClient {
 }
 
 export interface LlmTextRequest {
-  system: string
+  system?: string
   prompt: string
   maxTokens?: number
   temperature?: number

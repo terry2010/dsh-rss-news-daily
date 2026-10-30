@@ -44,3 +44,43 @@ test('DshLlmClient: 转发路由/请求/取消信号，累计流式文本与 tok
   assert.equal(client.usage.inputTokens, 8)
   assert.equal(client.usage.outputTokens, 3)
 })
+
+test('DshLlmClient: 模型不支持 system 首条时折进 user 重试（translategemma 类）', async () => {
+  const { DshLlmClient } = await import('../lib/dsh-llm.js')
+  const calls = []
+  const llm = {
+    listProviders: () => [{ id: 'omlx' }],
+    listModels: async () => [{ id: 'translategemma-4b-it-4bit' }],
+    stream: async function* (value) {
+      calls.push(value)
+      if (value.system !== undefined) {
+        yield { type: 'finish', reason: { kind: 'error', failure: { message: 'omlx API error (400): {"message":"Chat template error: Conversations must start with a user prompt."}', code: 'INVALID_REQUEST' } } }
+        return
+      }
+      yield { type: 'text-delta', text: '标题：译题\n正文：译文' }
+    },
+  }
+  const client = new DshLlmClient(llm, { provider: '', model: '' }, silentLog)
+  const text = await client.generateText({ system: '你是翻译助手', prompt: '标题：hello\n\n正文：world' })
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0].system, '你是翻译助手')
+  assert.equal(calls[1].system, undefined) // 重试不再带 system
+  assert.equal(calls[1].messages[0].content[0].text, '你是翻译助手\n\n标题：hello\n\n正文：world')
+  assert.equal(text, '标题：译题\n正文：译文')
+})
+
+test('DshLlmClient: 非模板类错误不触发 system 折叠重试', async () => {
+  const { DshLlmClient } = await import('../lib/dsh-llm.js')
+  let calls = 0
+  const llm = {
+    listProviders: () => [{ id: 'p' }],
+    listModels: async () => [{ id: 'm' }],
+    stream: async function* () {
+      calls++
+      yield { type: 'finish', reason: { kind: 'error', failure: { message: 'HTTP 500 internal', code: 'INTERNAL' } } }
+    },
+  }
+  const client = new DshLlmClient(llm, { provider: '', model: '' }, silentLog)
+  await assert.rejects(client.generateText({ system: 's', prompt: 'p' }), /HTTP 500/)
+  assert.equal(calls, 1) // 不重试
+})

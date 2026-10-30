@@ -109,3 +109,61 @@ button.danger.armed { background: #8a3030; color: #fff; }
 .obNav { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; font-size: 12px; color: var(--dim); }
 .obNav button { margin-left: 6px; }
 .obSkip { position: absolute; top: 8px; right: 10px; background: none; border: none; color: var(--dim); cursor: pointer; }
+
+/* ---- Settings: task-oriented sections and progressive disclosure ---- */
+.settings-page { display: grid; gap: 12px; }
+.settings-intro { padding: 8px 2px 2px; }
+.settings-intro h2 { margin: 0; font-size: 20px; }
+.settings-intro p, .settings-help { margin: 4px 0 10px; color: var(--dim); font-size: 13px; }
+.settings-card, .settings-fold { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.settings-card { padding: 14px; }
+.settings-card > h3 { margin: 0 0 6px; color: var(--fg); font-size: 15px; }
+.settings-subsection { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line); }
+.settings-subsection h4 { margin: 0 0 4px; color: var(--lead); font-size: 13px; }
+.settings-subsection .settings-help { margin-bottom: 8px; }
+.settings-tune input { min-width: 220px; }
+.settings-topics { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; }
+.settings-topics label { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 7px; background: var(--panel2); }
+.settings-actions { margin-top: 8px; }
+.settings-page .sched-group { margin: 10px 0; }
+.settings-page .sched-group > div { flex: 1; min-width: 0; }
+.settings-page .sched-label { min-width: 7.5em; }
+.settings-fold { overflow: hidden; }
+.settings-fold > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 12px 14px; cursor: pointer; list-style: none; }
+.settings-fold > summary::-webkit-details-marker { display: none; }
+.settings-fold > summary::before { content: '›'; color: var(--acc); font-size: 18px; line-height: 1; transition: transform .15s; }
+.settings-fold[open] > summary::before { transform: rotate(90deg); }
+.settings-fold > summary span { font-size: 14px; font-weight: 600; }
+.settings-fold > summary small { flex: 1; color: var(--dim); font-size: 12px; }
+.settings-fold[open] > summary { border-bottom: 1px solid var(--line); }
+.settings-fold-body { padding: 12px 14px 14px; }
+.setting-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 8px 0 12px; }
+.setting-grid-compact { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.setting-control { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; color: var(--fg); font-size: 13px; }
+.setting-control input, .setting-control select { width: 100%; max-width: 220px; }
+.setting-control small { color: var(--dim); font-size: 11px; line-height: 1.4; }
+.setting-input { display: flex; align-items: center; gap: 6px; }
+.setting-input input { width: 90px !important; }
+.setting-check { display: inline-flex; align-items: center; gap: 6px; color: var(--lead); font-size: 13px; }
+.setting-check input { flex: 0 0 auto; }
+.settings-checks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.settings-warning { margin: 6px 0; padding: 8px 10px; border-left: 3px solid var(--err); border-radius: 4px; background: color-mix(in srgb, var(--err) 10%, var(--panel)); color: var(--err); font-size: 12px; }
+.settings-danger { border-color: color-mix(in srgb, var(--err) 55%, var(--line)); }
+.settings-danger > h3 { color: var(--err); }
+.settings-danger .field { align-items: flex-start; }
+.settings-danger .hint { flex: 1; min-width: 220px; padding-top: 5px; }
+.settings-footer { padding: 8px 0 4px; color: var(--dim); font-size: 11px; text-align: center; }
+@media (max-width: 600px) {
+  .settings-card { padding: 12px; }
+  .settings-page .sched-group { display: block; }
+  .settings-page .sched-label { display: block; line-height: 1.5; margin-bottom: 4px; }
+  .settings-fold > summary { gap: 5px 8px; }
+  .settings-fold > summary small { flex-basis: 100%; margin-left: 24px; }
+  .settings-danger .hint { min-width: 100%; }
+}
+
+/* ---- Settings: schedule side-by-side ---- */
+.settings-sched { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+.settings-sched .sched-group { display: block; }
+.settings-sched .sched-label { display: block; margin-bottom: 4px; line-height: 1.5; }
+@media (max-width: 600px) { .settings-sched { grid-template-columns: 1fr; } }

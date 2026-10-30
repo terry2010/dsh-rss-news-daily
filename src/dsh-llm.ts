@@ -101,6 +101,21 @@ export class DshLlmClient implements LlmClient {
   }
 
   async generateText(request: LlmTextRequest): Promise<string> {
+    try {
+      return await this.call(request)
+    } catch (error) {
+      // 部分本地模型（translategemma 等）chat template 不支持 system 首条——
+      // 把 system 折进 user prompt 重试一次，而不是整条翻译链失败
+      const reason = error instanceof Error ? error.message : String(error)
+      if (request.system !== undefined && /chat template|must start with a user/i.test(reason)) {
+        this.log.warn(`LLM rejected system prompt, retrying folded into user message: ${reason.slice(0, 140)}`)
+        return this.call({ ...request, system: undefined, prompt: `${request.system}\n\n${request.prompt}` })
+      }
+      throw error
+    }
+  }
+
+  private async call(request: LlmTextRequest): Promise<string> {
     const route = this.resolution ??= await resolveDshRoute(this.llm, this.route)
     this.log.info(`LLM summary via provider=${route.provider} model=${route.model}`)
     const message = createUserMessage({
@@ -111,7 +126,7 @@ export class DshLlmClient implements LlmClient {
       provider: route.provider,
       model: route.model,
       messages: [message],
-      system: request.system,
+      ...(request.system !== undefined ? { system: request.system } : {}),
       maxTokens: request.maxTokens,
       temperature: request.temperature,
       ...(request.signal !== undefined ? { signal: request.signal } : {}),

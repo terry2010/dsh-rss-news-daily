@@ -122,6 +122,7 @@ export function apply(ctx: Context, config: ConfigType) {
     scoringInFlight = true
     try {
       const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart)
+      if (!signal?.aborted) fetchProg = { ...fetchProg, running: true, done: 0, total: fresh.length, stage: 'score', current: '' }
       const scoreClient = new DshLlmClient(llmRuntime!, pickRoute(), log)
       const scored = await scoreNewItems(fresh, scoreClient, {
         llmTimeoutMs: config.llm.timeoutMs,
@@ -179,7 +180,7 @@ export function apply(ctx: Context, config: ConfigType) {
     return runFetchCycle({ ...makeFetchOpts(pool), force, signal: controller.signal })
       .then(async (result) => {
         await translateFresh(cycleStart, controller.signal)
-        void scoreAndBrief(cycleStart, controller.signal)
+        await scoreAndBrief(cycleStart, controller.signal) // 纳入生命周期：快报写完前 running 不置闲
         return result
       })
       .finally(() => {
@@ -206,6 +207,7 @@ export function apply(ctx: Context, config: ConfigType) {
     addTokens('translate', client.usage) // 每条独立 client——usage 即本条用量
     const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
     item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
+    delete item.state.translationError // 成功后清掉历史失败标记（换模型重试成功后不再误报失败）
   }
   const isForeign = (i: { title: string; summary?: string }) => {
     const t = i.title + (i.summary || '')
@@ -334,8 +336,9 @@ export function apply(ctx: Context, config: ConfigType) {
       // 不同步的话 runFetchFor 的 inCooldown 过滤还会把这个源跳过（点了重试却抓不到）
       src.health = { ok: h.ok, fail: h.fail, avgMs: h.avgMs, cooldownUntil: '', failStreak: 0, lastError: '' }
       await store.save()
-      // 清完锁立刻单抓这个源：成功 health.ok 立涨，用户不用等下一轮 interval
-      await runFetchFor([src]).catch((e) => log.warn(`retry fetch failed for ${src.id}: ${String(e)}`))
+      // 清完锁立刻单抓这个源：后台跑（翻译+评分可能几分钟），PATCH 立即返回，
+      // 前端走 /fetch-progress 轮询；健康度由 runFetchCycle 落库
+      void runFetchFor([src]).catch((e) => log.warn(`retry fetch failed for ${src.id}: ${String(e)}`))
       return true
     },
     stopDigest: async () => { digestAbort?.abort(); return true },

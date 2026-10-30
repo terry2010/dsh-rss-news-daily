@@ -204,7 +204,7 @@ const startFetchPoll = () => {
     try {
       const p = await api('/fetch-progress')
       if (p.running) {
-        const st = p.stage === 'translate' ? '翻译中' : '抓取中'; b.textContent = `⏹ ${st}(${p.done}/${p.total}) 点我取消`; b.disabled = false; markFetchingSrc(p.current)
+        const st = p.stage === 'translate' ? '翻译中' : p.stage === 'score' ? '评分中' : '抓取中'; b.textContent = `⏹ ${st}(${p.done}/${p.total}) 点我取消`; b.disabled = false; markFetchingSrc(p.current)
         if (++tickN % 3 === 0 && !$('#tab-items')?.hidden) { // ~2.4s 静默刷新列表：仅在阅读器页执行（隐藏tab锚点会滚到顶）
           savePos(); await loadItems()
           const p2 = JSON.parse(localStorage.getItem(POS_KEY) || 'null')
@@ -300,7 +300,7 @@ $('#btnDigestRun').addEventListener('click', async () => {
   const dp = setInterval(async () => {
     try {
       const p = await api('/digest-progress')
-      if (p.running) { const stage = p.stage === 'translate' ? '翻译中' : p.stage === 'finishing' ? '收尾中' : '日报生成中'; $('#digestBusy').textContent = `⏳ ${stage}…${p.total ? ` (${p.done}/${p.total})` : ''}`; return }
+      if (p.running) { const stage = p.stage === 'translate' ? '翻译中' : p.stage === 'score' ? '评分中' : p.stage === 'finishing' ? '收尾中' : '日报生成中'; $('#digestBusy').textContent = `⏳ ${stage}…${p.total ? ` (${p.done}/${p.total})` : ''}`; return }
       clearInterval(dp); reset(); toast('日报生成完成'); loadDigest()
     } catch { /* 进度不可达不影响生成 */ }
   }, 900)
@@ -344,8 +344,8 @@ $('#btnRetryAll').addEventListener('click', async () => {
   toast('重试全部失败源中…')
   retryPoll = setInterval(refreshRetryBtn, 800)
   try {
-    const r = await post('/fetch', { force: true, onlyFailed: true })
-    toast(`重试完成: +${r.added} 条${r.errors ? ` · ${r.errors} 仍失败` : ''}`)
+    await post('/fetch', { force: true, onlyFailed: true })
+    toast('已开始重试，完成后自动刷新')
     loadSources(); loadStatus()
   } catch (e) { toast(`重试失败: ${e.message}`) }
   finally { if (retryPoll) { clearInterval(retryPoll); retryPoll = 0 } $('#btnRetryAll').textContent = '↻ 重试全部失败源' }
@@ -444,10 +444,19 @@ $('#srcList').addEventListener('click', async (e) => {
     if (btn.dataset.srcAct === 'toggle') {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: btn.dataset.en === '1' }) })
     } else if (btn.dataset.srcAct === 'retry') {
-      toast('重试中（抓取可能需几秒）…')
+      toast('已开始抓取该源（含翻译/评分，稍后自动刷新）…')
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'retry' }) })
-      const s2 = (await api('/sources')).sources.find((x) => encodeURIComponent(x.url) === id)
-      toast(s2?.health?.lastError ? `仍失败: ${s2.health.lastError.slice(0, 60)}` : `已恢复: ✓ ${s2?.health?.ok ?? 0} 次成功`)
+      const poll = setInterval(async () => {
+        try {
+          const p = await api('/fetch-progress')
+          if (!p.running) {
+            clearInterval(poll); loadSources(); loadStatus()
+            const s2 = (await api('/sources')).sources.find((x) => encodeURIComponent(x.url) === id)
+            toast(s2?.health?.lastError ? `仍失败: ${s2.health.lastError.slice(0, 60)}` : `已恢复: ✓ ${s2?.health?.ok ?? 0} 次成功`)
+          }
+        } catch { /* 进度不可达不阻塞 */ }
+      }, 1500)
+      setTimeout(() => clearInterval(poll), 180_000) // 3min 兜底
     } else if (btn.dataset.srcAct === 'restore') {
       await api(`/sources/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'restore' }) })
       toast('已恢复内置源')
@@ -689,7 +698,8 @@ async function loadTlModels(provider, selected) {
 
 const saveTlModel = async () => {
   try {
-    await post('/llm', { provider: $('#tlProvider').value, model: $('#tlModel').value, scope: 'translate' })
+    const r = await post('/llm', { provider: $('#tlProvider').value, model: $('#tlModel').value, scope: 'translate' })
+    if (state.prefs) state.prefs.translateLlm = r.translateLlm // 同步本地缓存：loadLlm 用它重渲下拉，避免被旧值刷回
     toast('翻译模型已保存'); loadLlm()
   } catch (e) { toast(`保存失败: ${e.message}`) }
 }
@@ -912,6 +922,7 @@ $('#versionTag')?.addEventListener('click', () => {
   clearTimeout(verTimer); verTimer = setTimeout(() => { verClicks = 0 }, 1500)
   if (++verClicks >= 10) {
     verClicks = 0; $('#statsSection').hidden = false
+    $('#statsDetails').hidden = false; $('#statsDetails').open = true
     api('/status').then((s) => { statsData = s.tokenStats; renderStats() })
     toast('已解锁 Token 统计')
   }

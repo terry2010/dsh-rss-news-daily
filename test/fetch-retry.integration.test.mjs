@@ -92,7 +92,17 @@ test('单源重试显示进度并走自动翻译，翻译完成后恢复空闲�
     assert.equal(progress.current, feedUrl)
     releaseFeed()
     await patchPromise
-    assert.equal(patchRes.statusCode, 200)
+    assert.equal(patchRes.statusCode, 200) // PATCH 异步返回：不再等抓取+翻译+评分
+    const waitIdle = async () => {
+      for (let i = 0; i < 200; i++) {
+        const pr = res()
+        await route('/dsh-rss-news-daily/api/fetch-progress')(req('GET', '/dsh-rss-news-daily/api/fetch-progress'), pr)
+        if (!json(pr).running) return
+        await new Promise((r2) => setTimeout(r2, 25))
+      }
+      throw new Error('fetch-progress did not go idle')
+    }
+    await waitIdle()
 
     const itemsRes = res()
     await route('/dsh-rss-news-daily/api/items')(req('GET', '/dsh-rss-news-daily/api/items'), itemsRes)
@@ -123,8 +133,9 @@ test('单源重试显示进度并走自动翻译，翻译完成后恢复空闲�
     const cancelRes = res()
     await route('/dsh-rss-news-daily/api/fetch-cancel')(req('POST', '/dsh-rss-news-daily/api/fetch-cancel', {}), cancelRes)
     assert.equal(json(cancelRes).ok, true)
-    await retryPromise2
+    await retryPromise2 // PATCH 早已返回；取消效果要等后台循环收尾
     assert.equal(retryRes2.statusCode, 200)
+    await waitIdle()
     blockTranslation = false
     const finalItemsRes = res()
     await route('/dsh-rss-news-daily/api/items')(req('GET', '/dsh-rss-news-daily/api/items'), finalItemsRes)
@@ -192,10 +203,17 @@ test('翻译 LLM 挂起不返回 → llm.timeoutMs 超时释放抓取循环，�
     const patchRes = res()
     const started = Date.now()
     const patchPromise = patch(req('PATCH', `/dsh-rss-news-daily/api/sources/${encodeURIComponent(feedUrl)}`, { action: 'retry' }), patchRes)
-    // llm.timeoutMs=5000：整条链路必须自行恢复，而不是永远挂住
+    // llm.timeoutMs=5000：PATCH 异步立即返回，整条链路必须自行恢复——轮询到空闲
     await patchPromise
-    assert.ok(Date.now() - started < 12_000, 'fetch cycle should settle after llm timeout')
     assert.equal(patchRes.statusCode, 200)
+    for (let i = 0; i < 150; i++) {
+      const pr = res()
+      await route('/dsh-rss-news-daily/api/fetch-progress')(req('GET', '/dsh-rss-news-daily/api/fetch-progress'), pr)
+      if (!json(pr).running) break
+      if (i === 149) throw new Error('fetch-progress did not go idle after llm timeout')
+      await new Promise((r2) => setTimeout(r2, 100))
+    }
+    assert.ok(Date.now() - started < 15_000, 'fetch cycle should settle after llm timeout')
     assert.equal(llmSignalAborted, true) // 超时信号确实中止了挂起的 LLM 流
 
     const itemsRes = res()
