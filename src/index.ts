@@ -190,6 +190,10 @@ export function apply(ctx: Context, config: ConfigType) {
       })
   }
   const runFetch = () => runFetchPool(effectiveSources(config.sources, store))
+  // 所有 LLM 调用必须带超时——本地模型半死（连接挂起不响应）会把 runFetchPool 永不 settle，
+  // 调度 mkCycle 的 running 锁随之卡死，后续每轮定时抓取全部跳过（生产曾停摆 11 小时）。
+  const llmSignal = (signal?: AbortSignal) =>
+    AbortSignal.any([AbortSignal.timeout(config.llm.timeoutMs), ...(signal ? [signal] : [])])
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
   const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string } }, signal?: AbortSignal) => {
     const client = new DshLlmClient(llmRuntime!, pickTranslateRoute(), log)
@@ -197,7 +201,7 @@ export function apply(ctx: Context, config: ConfigType) {
       system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
       prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
       maxTokens: 1200,
-      signal,
+      signal: llmSignal(signal),
     })
     addTokens('translate', client.usage) // 每条独立 client——usage 即本条用量
     const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
@@ -219,6 +223,7 @@ export function apply(ctx: Context, config: ConfigType) {
         system: `把 RSS 源归类到这些分类之一：${CLASSIFY_CATS.join('、')}。只输出分类名，不要解释。`,
         prompt: `频道：${feed.title}\n\n条目：${feed.items.slice(0, 5).map((i) => i.title).join('；')}`,
         maxTokens: 20,
+        signal: llmSignal(),
       })
       return CLASSIFY_CATS.find((c) => text.trim().includes(c)) || ''
     } catch { return '' }

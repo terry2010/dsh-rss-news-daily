@@ -139,3 +139,77 @@ test('单源重试显示进度并走自动翻译，翻译完成后恢复空闲�
     globalThis.fetch = oldFetch
   }
 })
+
+test('翻译 LLM 挂起不返回 → llm.timeoutMs 超时释放抓取循环，调度不被卡死', async () => {
+  const { Config, apply } = await import('../lib/index.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-llm-hang-'))
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'prefs.json'), JSON.stringify({ autoTranslate: true }))
+  const feedUrl = 'https://news.example/feed'
+  const oldFetch = globalThis.fetch
+  globalThis.fetch = (_url, init) => new Promise((resolve, reject) => {
+    init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+    resolve(new Response(RSS, { status: 200, headers: { 'content-type': 'application/rss+xml' } }))
+  })
+
+  const registrations = []
+  let toolsReady
+  const ready = new Promise((resolve) => { toolsReady = resolve })
+  let llmSignalAborted = false
+  const llm = {
+    listProviders: () => [{ id: 'test-provider' }],
+    listModels: async () => [{ id: 'test-model' }],
+    // 模拟本地模型半死：连接建立但永不产出 chunk，直到信号中止
+    stream: async function* (request) {
+      await new Promise((resolve) => request.signal.addEventListener('abort', resolve, { once: true }))
+      llmSignalAborted = true
+      yield { type: 'finish', reason: { kind: 'aborted', failure: { message: 'aborted', code: 'ABORTED' } } }
+    },
+  }
+  const ctx = {
+    logger: () => ({ info() {}, warn() {}, error() {} }),
+    tools: { register: () => { toolsReady(); return () => {} } },
+    timeout: () => () => {},
+    interval: () => () => {},
+    inject(names, callback) {
+      if (names[0] === 'llm') callback({ llm })
+      if (names[0] === 'webServer') callback({ webServer: { register: (entry) => { registrations.push(entry); return () => {} } } })
+    },
+  }
+  const config = Config({
+    dataDir: dir,
+    sources: [{ url: feedUrl, title: 'Hang feed', category: '科学' }],
+    fetch: { enabled: false, scoreOnFetch: false, hourlyBrief: false },
+    llm: { timeoutMs: 5000 },
+  })
+  const dispose = apply(ctx, config)
+  // AbortSignal.timeout 是 unref 定时器不撑事件循环——测试进程需要显式保活才能等到 5s 超时
+  const keepAlive = setInterval(() => {}, 1000)
+  try {
+    await ready
+    const route = (path, kind) => registrations.find((entry) => entry.path === path && (kind === undefined || entry.kind === kind))?.handler
+    const patch = route('/dsh-rss-news-daily/api/sources', 'prefix')
+    const patchRes = res()
+    const started = Date.now()
+    const patchPromise = patch(req('PATCH', `/dsh-rss-news-daily/api/sources/${encodeURIComponent(feedUrl)}`, { action: 'retry' }), patchRes)
+    // llm.timeoutMs=5000：整条链路必须自行恢复，而不是永远挂住
+    await patchPromise
+    assert.ok(Date.now() - started < 12_000, 'fetch cycle should settle after llm timeout')
+    assert.equal(patchRes.statusCode, 200)
+    assert.equal(llmSignalAborted, true) // 超时信号确实中止了挂起的 LLM 流
+
+    const itemsRes = res()
+    await route('/dsh-rss-news-daily/api/items')(req('GET', '/dsh-rss-news-daily/api/items'), itemsRes)
+    const item = json(itemsRes).items[0]
+    assert.equal(item.state.translation, undefined)
+    assert.ok(item.state.translationError, 'timed-out translation should record translationError')
+
+    const progRes = res()
+    await route('/dsh-rss-news-daily/api/fetch-progress')(req('GET', '/dsh-rss-news-daily/api/fetch-progress'), progRes)
+    assert.equal(json(progRes).running, false) // 锁释放：下一轮定时抓取能正常进入
+  } finally {
+    clearInterval(keepAlive)
+    dispose()
+    globalThis.fetch = oldFetch
+  }
+})
