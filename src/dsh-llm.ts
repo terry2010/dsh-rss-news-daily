@@ -90,14 +90,16 @@ export class DshLlmClient implements LlmClient {
   private readonly llm: LlmRuntime
   private readonly route: DshLlmRoute
   private readonly log: LogSink
+  private readonly idleTimeoutMs: number
   private resolution?: { provider: string; model: string }
   /** 本 client 生命周期内的累计 token 用量（pipeline 每次 digest 新建实例 → 即单次日报用量） */
   readonly usage: { inputTokens: number; outputTokens: number; _seen?: number; _seenOut?: number } = { inputTokens: 0, outputTokens: 0 }
 
-  constructor(llm: LlmRuntime, route: DshLlmRoute, log: LogSink) {
+  constructor(llm: LlmRuntime, route: DshLlmRoute, log: LogSink, idleTimeoutMs = LLM_IDLE_MS) {
     this.llm = llm
     this.route = route
     this.log = log
+    this.idleTimeoutMs = idleTimeoutMs
   }
 
   async generateText(request: LlmTextRequest): Promise<string> {
@@ -131,6 +133,29 @@ export class DshLlmClient implements LlmClient {
       temperature: request.temperature,
       ...(request.signal !== undefined ? { signal: request.signal } : {}),
     })
-    return collectText(stream, this.usage)
+    return collectText(idleWatch(stream, this.idleTimeoutMs, this.log), this.usage)
+  }
+}
+/** 流每块输出间隔上限：只掐"连上但不出字"的死连接；推理模型持续吐 reasoning 不受影响。 */
+const LLM_IDLE_MS = 45_000
+
+async function* idleWatch<T>(stream: AsyncIterable<T>, idleMs: number, log: LogSink): AsyncGenerator<T> {
+  const it = stream[Symbol.asyncIterator]()
+  try {
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const r = await Promise.race([
+        it.next(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new RssServiceError(`LLM stream idle for ${Math.round(idleMs / 1000)}s`)), idleMs)
+        }),
+      ]).finally(() => { if (timer !== undefined) clearTimeout(timer) })
+      if (r.done) return
+      yield r.value
+    }
+  } catch (e) {
+    log.warn(`LLM stream aborted by idle watchdog: ${e instanceof Error ? e.message : e}`)
+    try { await it.return?.() } catch { /* 尽力收尾，吞掉底层异常 */ }
+    throw e
   }
 }

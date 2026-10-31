@@ -28,6 +28,7 @@ import type { NewsService } from './tools.js'
 import { runDailyDigest, scoreNewItems, appendHourlyBrief } from './digest-pipeline.js'
 import { DshLlmClient } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
+import type { FeedItem } from './core/types.js'
 import { mountApi } from './api.js'
 import { parseTune } from './core/tune.js'
 import { execFile } from 'node:child_process'
@@ -115,13 +116,33 @@ export function apply(ctx: Context, config: ConfigType) {
     addTokenStats(store.meta, feature, usage, zonedDayKey(new Date(), config.timezone || undefined))
   // P1+P8：评分+快报——fetch 完成后 fire-and-forget（调度/手动路径共用，不阻塞 fetch 返回）
   let scoringInFlight = false // 闩锁：与 digest rescoreMissing 互斥，防同批双评
+  const briefEnabled = (dopts?: { hourlyBrief?: boolean }) => dopts?.hourlyBrief ?? config.fetch.hourlyBrief
+  const briefNow = async (fresh: FeedItem[]) => {
+    const now = new Date()
+    const day = zonedDayKey(now, config.timezone || undefined)
+    const hm = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: config.timezone || undefined }).format(now)
+    await appendHourlyBrief({
+      items: fresh,
+      sourcesById: new Map(effectiveSources(config.sources, store).map((src) => [src.id, { title: src.title }])),
+      day, time: hm,
+      minScore: config.fetch.hourlyMinScore,
+      digestsDir: join(dataDir, 'digests'), log,
+      llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log) : undefined,
+      llmTimeoutMs: config.llm.timeoutMs,
+    })
+  }
   const scoreAndBrief = async (cycleStart: string, signal?: AbortSignal) => {
     const dopts = prefs.get().digestOpts
     const doScore = (dopts?.scoreOnFetch ?? config.fetch.scoreOnFetch) && config.llm.enabled && llmRuntime
-    if (!doScore || scoringInFlight) return
+    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart)
+    // 评分在跑不挡快报：用已评出的分照样追加一段（长评分窗口期快报不停更）
+    if (scoringInFlight) {
+      if (briefEnabled(dopts)) await briefNow(fresh)
+      return
+    }
+    if (!doScore) return
     scoringInFlight = true
     try {
-      const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart)
       if (!signal?.aborted) fetchProg = { ...fetchProg, running: true, done: 0, total: fresh.length, stage: 'score', current: '' }
       const scoreClient = new DshLlmClient(llmRuntime!, pickRoute(), log)
       const scored = await scoreNewItems(fresh, scoreClient, {
@@ -133,19 +154,7 @@ export function apply(ctx: Context, config: ConfigType) {
       }, log)
       addTokens('score', scoreClient.usage)
       if (scored) await store.save()
-      if (dopts?.hourlyBrief ?? config.fetch.hourlyBrief) {
-        const now = new Date()
-        const day = zonedDayKey(now, config.timezone || undefined)
-        const hm = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: config.timezone || undefined }).format(now)
-        await appendHourlyBrief({
-          items: fresh,
-          sourcesById: new Map(effectiveSources(config.sources, store).map((src) => [src.id, { title: src.title }])),
-          day, time: hm,
-          minScore: config.fetch.hourlyMinScore,
-          digestsDir: join(dataDir, 'digests'), log,
-          llmClient: scoreClient, llmTimeoutMs: config.llm.timeoutMs,
-        })
-      }
+      if (briefEnabled(dopts)) await briefNow(fresh)
     } catch (e) { log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }
     finally { scoringInFlight = false }
   }
