@@ -10,7 +10,7 @@
  * 会话零注入：apply 只注册工具/定时器/路由，不写 systemPrompt、不发 followup。
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -116,6 +116,13 @@ export function apply(ctx: Context, config: ConfigType) {
     addTokenStats(store.meta, feature, usage, zonedDayKey(new Date(), config.timezone || undefined))
   // P1+P8：评分+快报——fetch 完成后 fire-and-forget（调度/手动路径共用，不阻塞 fetch 返回）
   let scoringInFlight = false // 闩锁：与 digest rescoreMissing 互斥，防同批双评
+  const dbgScore = (phase: string, extra?: Record<string, unknown>) => {
+    try {
+      writeFileSync(join(dataDir, 'score-debug.json'), JSON.stringify({
+        at: new Date().toISOString(), phase, scoringInFlight, ...extra,
+      }, null, 1))
+    } catch { /* 调试写盘失败不影响主流程 */ }
+  }
   const briefEnabled = (dopts?: { hourlyBrief?: boolean }) => dopts?.hourlyBrief ?? config.fetch.hourlyBrief
   const briefNow = async (fresh: FeedItem[]) => {
     const now = new Date()
@@ -135,6 +142,7 @@ export function apply(ctx: Context, config: ConfigType) {
     const dopts = prefs.get().digestOpts
     const doScore = (dopts?.scoreOnFetch ?? config.fetch.scoreOnFetch) && config.llm.enabled && llmRuntime
     const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart)
+    dbgScore('enter', { doScore, fresh: fresh.length, llmEnabled: config.llm.enabled, hasRuntime: !!llmRuntime })
     // 评分在跑不挡快报：用已评出的分照样追加一段（长评分窗口期快报不停更）
     if (scoringInFlight) {
       if (briefEnabled(dopts)) await briefNow(fresh)
@@ -152,10 +160,12 @@ export function apply(ctx: Context, config: ConfigType) {
         prefs: prefs.get(),
         signal,
       }, log)
+      dbgScore('scored', { scored })
       addTokens('score', scoreClient.usage)
       if (scored) await store.save()
       if (briefEnabled(dopts)) await briefNow(fresh)
-    } catch (e) { log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }
+      dbgScore('done', { scored })
+    } catch (e) { dbgScore('error', { error: e instanceof Error ? e.message : String(e) }); log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }
     finally { scoringInFlight = false }
   }
   // autoTranslate：本轮新入库外文条目逐条翻译（手动+定时两路径共用）

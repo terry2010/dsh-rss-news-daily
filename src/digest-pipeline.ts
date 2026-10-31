@@ -274,14 +274,14 @@ export async function appendHourlyBrief(opts: {
   try { body = await readFile(file, 'utf8') } catch { /* 新文件 */ }
   if (body.startsWith(head)) body = body.slice(head.length)
   const marker = `## ${opts.time} 时段快报`
-  // 幂等：同刻已存在则替换该节（到下一个 ## 或文件尾），否则追加
+  // 幂等：同刻已存在则替换该节（到下一个 ## 或文件尾），否则插到最前（新快报在上）
   const idx = body.indexOf(marker)
   if (idx >= 0) {
     const rest = body.slice(idx + marker.length)
     const nextH = rest.indexOf('\n## ')
     body = body.slice(0, idx) + section + (nextH >= 0 ? rest.slice(nextH + 1) : '')
   } else {
-    body = body + section
+    body = section + body
   }
   await writeFile(file, head + body, 'utf8')
   log.info(`hourlyBrief ${opts.time}: ${scored.length} items -> ${file}`)

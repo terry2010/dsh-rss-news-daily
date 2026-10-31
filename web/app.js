@@ -249,6 +249,16 @@ async function loadDigest() {
     const r = await api(`/digest/${day}${state.digestKind === 'hourly' ? '?kind=hourly' : ''}`)
     $('#digestView').innerHTML = mdLite(r.markdown)
   } catch {
+    // 该天无日报但有快报 → 自动切快报展示（同一天的内容优先于跨天回退）
+    if (state.digestKind === 'digest') {
+      try {
+        const r = await api(`/digest/${day}?kind=hourly`)
+        state.digestKind = 'hourly'
+        syncRunBtn()
+        $('#digestView').innerHTML = mdLite(r.markdown)
+        return
+      } catch { /* 快报也没有→继续原回退 */ }
+    }
     // 请求的是"今天"且无日报→回退前一天（刚过0点新一天还没生成）
     // 仅限默认进入/跨天复位：用户当天手动选了今天就尊重选择，显示空态而不是跳回昨天
     if (state.digestKind === 'digest' && day === localDay && state.daySetOn !== localDay) {
@@ -268,60 +278,33 @@ async function loadDigest() {
   }
 }
 
-/** 轻量 Markdown 渲染：标题/列表/链接/引用，够日报用 */
+/** 轻量 Markdown 渲染：h1-h4/列表/引用/粗体/斜体/行内码/链接/横线——覆盖日报全部语法 */
 function mdLite(md) {
-  const link = (t) => t.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-  return esc(md).split('\n').map((l) => {
-    const e = link(l)
-    if (e.startsWith('# ')) return `<h1>${e.slice(2)}</h1>`
-    if (e.startsWith('## ')) return `<h2>${e.slice(3)}</h2>`
-    if (e.startsWith('&gt;')) return `<blockquote>${e.slice(4)}</blockquote>`
-    if (/^\d+\.\s/.test(e)) return `<p class="md-num">${e}</p>`
-    if (e.startsWith('- ')) return `<p class="md-li">• ${e.slice(2)}</p>`
-    if (e.startsWith('---')) return '<hr>'
-    return e.trim() ? `<p>${e}</p>` : ''
-  }).join('')
+  const inline = (t) => esc(t)
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+  const out = []
+  let inUl = false, inOl = false
+  const closeLists = () => { if (inUl) { out.push('</ul>'); inUl = false } if (inOl) { out.push('</ol>'); inOl = false } }
+  for (const raw of md.split('\n')) {
+    const l = raw.trimEnd(), e = inline(l)
+    const h = l.match(/^(#{1,4})\s+(.*)$/)
+    if (h) { closeLists(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue }
+    if (l.startsWith('> ')) { closeLists(); out.push(`<blockquote>${inline(l.slice(2))}</blockquote>`); continue }
+    if (/^---+$/.test(l.trim())) { closeLists(); out.push('<hr>'); continue }
+    if (l.startsWith('- ') || l.startsWith('* ')) { if (inOl) { out.push('</ol>'); inOl = false } if (!inUl) { out.push('<ul>'); inUl = true } out.push(`<li>${inline(l.slice(2))}</li>`); continue }
+    const ol = l.match(/^(\d+)\.\s+(.*)$/)
+    if (ol) { if (inUl) { out.push('</ul>'); inUl = false } if (!inOl) { out.push('<ol>'); inOl = true } out.push(`<li>${inline(ol[2])}</li>`); continue }
+    closeLists()
+    if (l.trim()) out.push(`<p>${e}</p>`)
+  }
+  closeLists()
+  return out.join('')
 }
 
 $('#digestDay').addEventListener('change', () => { state.daySetOn = dayStr(new Date()); loadDigest() })
-
-// 自绘日期选择：Electron webview 没有原生 date picker 弹层，点了没反应
-let popMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-const renderDayPop = () => {
-  const y = popMonth.getFullYear(), m = popMonth.getMonth()
-  const startDow = (new Date(y, m, 1).getDay() + 6) % 7 // 周一开头
-  const dim = new Date(y, m + 1, 0).getDate()
-  const today = dayStr(new Date()), cur = $('#digestDay').value
-  let cells = ''
-  for (let i = 0; i < startDow; i++) cells += '<span></span>'
-  for (let d = 1; d <= dim; d++) {
-    const ds = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    cells += `<span class="dp-day${ds === today ? ' today' : ''}${ds === cur ? ' sel' : ''}" data-day="${ds}">${d}</span>`
-  }
-  $('#dayPop').innerHTML = `<div class="dp-head"><button type="button" data-nav="-1">‹</button><span>${y}-${String(m + 1).padStart(2, '0')}</span><button type="button" data-nav="1">›</button></div><div class="dp-grid"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>${cells}</div>`
-}
-const openDayPop = () => {
-  const v = $('#digestDay').value, d = v ? new Date(`${v}T00:00:00`) : new Date()
-  popMonth = new Date(d.getFullYear(), d.getMonth(), 1)
-  renderDayPop()
-  $('#dayPop').hidden = false
-}
-// pointerdown 更可靠：date input 在部分 webview 里会吞 click
-$('#digestDay').addEventListener('pointerdown', (e) => { e.preventDefault(); openDayPop() })
-$('#digestDay').addEventListener('click', openDayPop)
-const pickDay = (e) => {
-  const nav = e.target.closest('button[data-nav]')
-  if (nav) { popMonth = new Date(popMonth.getFullYear(), popMonth.getMonth() + Number(nav.dataset.nav), 1); renderDayPop(); return }
-  const day = e.target.closest('.dp-day')
-  if (!day) return
-  $('#digestDay').value = day.dataset.day
-  $('#dayPop').hidden = true
-  state.daySetOn = dayStr(new Date())
-  loadDigest() // 直接调用，不走 change 事件转发
-}
-$('#dayPop').addEventListener('pointerdown', (e) => { if (e.target.closest('.dp-day')) { e.preventDefault(); pickDay(e) } })
-$('#dayPop').addEventListener('click', pickDay)
-document.addEventListener('click', (e) => { const dp = $('#dayPop'); if (dp && !dp.hidden && !e.target.closest('.daypick-wrap')) dp.hidden = true })
 const syncRunBtn = () => {
   const b = $('#btnDigestRun')
   if (state.digestKind === 'hourly') { b.textContent = '▶ 生成快报'; b.title = '抓取新条目并评分生成本时段快报' }
@@ -909,7 +892,6 @@ const maybeShowOnboardAndUpgrade = (version) => {
     if (entry) showSteps({
       title: `已更新到 v${version}`,
       steps: [
-        { title: ONBOARD_STEPS[0].title, bodyHtml: ONBOARD_STEPS[0].bodyHtml },
         { title: '本次更新', bodyHtml: `<ul>${entry.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` },
       ],
       doneText: '知道了',
@@ -925,7 +907,6 @@ $('#btnShowUpgrade')?.addEventListener('click', () => {
   if (entry) showSteps({
     title: `v${entry.v} 更新内容`,
     steps: [
-      { title: ONBOARD_STEPS[0].title, bodyHtml: ONBOARD_STEPS[0].bodyHtml },
       { title: '本次更新', bodyHtml: `<ul>${entry.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` },
     ],
     doneText: '关闭',

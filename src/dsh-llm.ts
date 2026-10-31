@@ -155,7 +155,9 @@ async function* idleWatch<T>(stream: AsyncIterable<T>, idleMs: number, log: LogS
     }
   } catch (e) {
     log.warn(`LLM stream aborted by idle watchdog: ${e instanceof Error ? e.message : e}`)
-    try { await it.return?.() } catch { /* 尽力收尾，吞掉底层异常 */ }
+    // 底层流在半死时 return() 也可能永不 settle——fire-and-forget，
+    // 否则这个 await 本身就把调用方（评分/翻译循环）永久挂死
+    try { void it.return?.()?.catch(() => {}) } catch { /* 尽力收尾 */ }
     throw e
   }
 }

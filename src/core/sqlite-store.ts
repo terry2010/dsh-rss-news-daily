@@ -258,9 +258,10 @@ export class SqliteStore {
     if (over <= 0) return
     let del: number
     if (this.pruneLowQuality()) {
-      // 质量键=llmScore ?? min(10,score*8)，低质优先（NULL 视为中档 5）
+      // 质量键=llmScore ?? 5：NULL 视为中档 5——未评分新条目不能被清退饿死
+      // （否则它们还没轮到评分就先被删，撞上限后整库冻结）
       del = Number(this.db.prepare(`DELETE FROM items WHERE id IN (
-        SELECT id FROM items ORDER BY COALESCE(llmScore, MIN(10, MAX(0, score*8)), 5) ASC, fetchedAt ASC LIMIT ?)`).run(over).changes)
+        SELECT id FROM items ORDER BY COALESCE(llmScore, 5) ASC, fetchedAt ASC LIMIT ?)`).run(over).changes)
     } else {
       del = Number(this.db.prepare('DELETE FROM items WHERE id IN (SELECT id FROM items ORDER BY fetchedAt ASC LIMIT ?)').run(over).changes)
     }

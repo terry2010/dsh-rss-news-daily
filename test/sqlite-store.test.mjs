@@ -151,3 +151,21 @@ test('sql: markDigested + countUndigested', async () => {
   st.markDigested(['a'], '2026-10-28')
   assert.equal(st.countUndigested('2026-10-28'), 1)
 })
+
+test('sql: 低质清退不饿死未评分新条目（NULL llmScore 视为中档）', async () => {
+  // 复现生产冻结：撞 cap 后新条目 llmScore=NULL，若落入启发式低质分
+  // 会在评分前被清退——整条 fetch→score→brief 链断供
+  const { st } = await mk({ maxItems: 3, retentionDays: () => 0, pruneLowQuality: () => true })
+  st.addItems([
+    mkItem('old1', { fetchedAt: '2026-10-29T01:00:00Z' }),
+    mkItem('old2', { fetchedAt: '2026-10-29T02:00:00Z', score: 0.3 }),
+    mkItem('hi', { fetchedAt: '2026-10-29T03:00:00Z', llmScore: 9 }),
+  ])
+  await st.save()
+  // 新条目（llmScore NULL，启发式 score 很低）入库后应存活，最老的 old1 出局
+  st.addItems([mkItem('fresh', { fetchedAt: '2026-10-30T01:00:00Z', score: 0.2 })])
+  await st.save()
+  assert.equal(st.count(), 3)
+  assert.notEqual(st.items.find((i) => i.id === 'fresh'), undefined, 'unscored fresh item must survive prune')
+  assert.equal(st.items.find((i) => i.id === 'old1'), undefined, 'oldest ungraded item should be evicted first')
+})
