@@ -249,17 +249,13 @@ export interface AddSourceOptions {
 }
 
 /** 添加源：SSRF → 真实抓取校验 → 解析 feed 提标题 → 落 store。校验不过不保存。 */
-export async function addSource(
-  fetch: ReturnType<typeof createFetcher>,
-  store: StoreLike,
-  opts: AddSourceOptions,
-  classify?: (feed: { title: string; items: { title: string }[] }) => Promise<string>,
-): Promise<FeedSource> {
-  const url = opts.url.trim()
-  if (!url) throw new Error('url required')
-  if (store.sources.some((s) => normalizeUrl(s.url) === normalizeUrl(url))) {
-    throw new Error(`已存在该源: ${url}`)
-  }
+const normalizeAddUrl = (raw: string) => {
+  const u = raw.trim()
+  return u && !/^https?:\/\//i.test(u) ? `https://${u}` : u // 裸域名自动补 https://
+}
+
+/** 加源共用的抓取链：直连→代理回退→www 子域回退；返回规范化 url + 解析结果 */
+async function fetchFeedForAdd(fetch: ReturnType<typeof createFetcher>, url: string) {
   let doc = await fetch(url) // SSRF/超时/大小在 fetcher 内兜底
   let viaProxy = false
   if ('error' in doc) { // 直连失败 → 走全局代理重试（GFW 源：reddit/twitter 等）
@@ -267,11 +263,68 @@ export async function addSource(
     if (!('error' in proxied)) { doc = proxied; viaProxy = true }
   }
   if ('error' in doc) throw new Error(`抓取失败: ${doc.error}`)
-  const feed = parseFeedDocument(doc.body) // 解析失败会抛 FeedParseError
+  let feed
+  try {
+    feed = parseFeedDocument(doc.body) // 解析失败会抛 FeedParseError
+  } catch (e) {
+    // 裸域返回 HTML 但 www 子域挂 feed 的站（36kr.com 等）——自动回退 www 重试
+    const host = new URL(url).hostname
+    if (!host.startsWith('www.')) {
+      const retry = await fetch(url.replace(host, `www.${host}`), undefined, { proxy: viaProxy })
+      if (!('error' in retry)) {
+        doc = retry
+        url = url.replace(host, `www.${host}`)
+        feed = parseFeedDocument(doc.body)
+      } else throw e
+    } else throw e
+  }
   if (feed.items.length === 0) throw new Error('feed 无条目（可能不是有效 RSS/Atom）')
+  return { url, feed, viaProxy }
+}
+
+/** 预览：验证+抓取+解析+分类，不落库；确认时由 addSource 重抓写入 */
+export async function previewSource(
+  fetch: ReturnType<typeof createFetcher>,
+  store: StoreLike,
+  opts: AddSourceOptions,
+  classify?: (feed: { title: string; items: { title: string }[] }) => Promise<string>,
+): Promise<{ url: string; title: string; category?: string; viaProxy: boolean; items: { title: string; link: string }[] }> {
+  const url = normalizeAddUrl(opts.url)
+  if (!url) throw new Error('url required')
+  if (store.sources.some((s) => normalizeUrl(s.url) === normalizeUrl(url))) {
+    throw new Error(`已存在该源: ${url}`)
+  }
+  if (store.sources.some((s) => normalizeUrl(s.url) === normalizeUrl(url))) {
+    throw new Error(`已存在该源: ${url}`)
+  }
+  const { url: finalUrl, feed, viaProxy } = await fetchFeedForAdd(fetch, url)
+  if (store.sources.some((s) => normalizeUrl(s.url) === normalizeUrl(finalUrl))) {
+    throw new Error(`已存在该源: ${finalUrl}`) // www 回退后的最终地址也可能已存在
+  }
+  const category = opts.category || (classify ? await classify(feed) : '') || undefined
+  return {
+    url: finalUrl, viaProxy,
+    title: opts.title || feed.title || finalUrl,
+    category,
+    items: feed.items.slice(0, 8).map((i) => ({ title: i.title, link: i.link || '' })),
+  }
+}
+
+export async function addSource(
+  fetch: ReturnType<typeof createFetcher>,
+  store: StoreLike,
+  opts: AddSourceOptions,
+  classify?: (feed: { title: string; items: { title: string }[] }) => Promise<string>,
+): Promise<FeedSource> {
+  const url = normalizeAddUrl(opts.url)
+  if (!url) throw new Error('url required')
+  if (store.sources.some((s) => normalizeUrl(s.url) === normalizeUrl(url))) {
+    throw new Error(`已存在该源: ${url}`)
+  }
+  const { url: finalUrl, feed, viaProxy } = await fetchFeedForAdd(fetch, url)
   const category = opts.category || (classify ? await classify(feed) : '') || undefined
   const src = toFeedSource({
-    url, title: opts.title || feed.title || url, category,
+    url: finalUrl, title: opts.title || feed.title || finalUrl, category,
     builtin: false, proxy: viaProxy ? true : undefined,
   })
   store.addSource(src)

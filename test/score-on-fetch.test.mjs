@@ -108,7 +108,7 @@ test('sof: 领域分块渲染 + 领域速览', async () => {
     llmClient: mkClient((req) => req.system.includes('新闻价值评审') ? scoreHandler(req) : '领域摘要文本'),
     digestItems: 10,
   }))
-  assert.match(doc.markdown, /## 领域速览/)
+  assert.match(doc.markdown, /## 领域目录/)
   assert.match(doc.markdown, /### AI/)
   assert.match(doc.markdown, /### 财经/)
 })
@@ -150,7 +150,7 @@ test('sof: 快报输出总结/领域速览/重要新闻三段，并在 LLM 失�
   const fallbackDir = mkdtempSync(join(tmpdir(), 'rnd-hb-fallback-'))
   await appendHourlyBrief({ ...base, digestsDir: fallbackDir, llmClient: mkClient(() => { throw new Error('offline') }) })
   md = readFileSync(join(fallbackDir, '2026-10-28-hourly.md'), 'utf8')
-  assert.match(md, /> 本时段 2 条入选：AI、科学 领域有更新。/)
+  assert.match(md, /> 本时段 2 条入选（AI、科学），要点：「AI breakthrough」、「Space discovery」。/)
 
   const emptyDir = mkdtempSync(join(tmpdir(), 'rnd-hb-empty-'))
   const n = await appendHourlyBrief({ ...base, items: [], digestsDir: emptyDir })

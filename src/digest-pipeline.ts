@@ -71,9 +71,16 @@ export interface DigestPipelineOptions {
   categoryPrompts?: Record<string, string>
 }
 
+/** 中文展示题：aiTitle（日报重写题）→ 译文首行（抓取期译题）→ 原标题 */
+function zhTitleOf(item: FeedItem): string {
+  const tl = (item.state?.translation || '').trim()
+  const nl = tl.indexOf('\n')
+  return item.aiTitle || (tl ? (nl > 0 ? tl.slice(0, nl) : tl).trim() : '') || item.title
+}
+
 function toSummarizable(item: FeedItem, sourceTitle: string): SummarizableItem {
   return {
-    title: item.title,
+    title: zhTitleOf(item),
     link: item.link,
     summary: item.summary,
     content: item.content,
@@ -155,7 +162,7 @@ async function scoreChunk(
         + buildPrefsHint(opts.prefs)
         + ' 只输出 JSON 数组 [{"i":序号,"s":分数,"r":"10字内理由","t":["标签"]}]，不要解释。',
       prompt: chunk.map((it, idx) => `${idx + 1}. [${it.topic || '综合'}] ${it.title}`).join('\n'),
-      maxTokens: 2400,
+      maxTokens: opts.llmMaxTokens,
       signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
     })
     const m = text.match(/\[[\s\S]*\]/)
@@ -223,6 +230,7 @@ export async function appendHourlyBrief(opts: {
   digestsDir: string
   llmClient?: LlmClient
   llmTimeoutMs?: number
+  llmMaxTokens?: number
   log?: LogSink
 }): Promise<number> {
   const log = opts.log || noopLog
@@ -238,14 +246,18 @@ export async function appendHourlyBrief(opts: {
   if (opts.llmClient) {
     try {
       brief = (await opts.llmClient.generateText({
-        system: '你是新闻快报编辑。用 1-2 句中文概括本时段新闻要点：抓主线、点出最重要事件，不复述列表。',
-        prompt: scored.slice(0, 30).map((it, i) => `${i + 1}. [${it.topic || '综合'}] ${it.title}`).join('\n'),
-        maxTokens: 300,
+        system: '你是新闻快报编辑。用 2-3 句中文概括本时段新闻要点：点出具体事件与主体（谁、做了什么），抓主线不复述列表。',
+        prompt: scored.slice(0, 30).map((it, i) => `${i + 1}. [${it.topic || '综合'}] ${zhTitleOf(it)}`).join('\n'),
+        maxTokens: Math.min(opts.llmMaxTokens ?? 1500, 2000),
         signal: AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000),
       })).trim().replace(/\n+/g, ' ')
     } catch (e) { log.warn(`hourly brief summary failed: ${String((e as Error)?.message || e)}`) }
   }
-  if (!brief) brief = `本时段 ${scored.length} 条入选：${[...groups.keys()].slice(0, 4).join('、')} 领域有更新。`
+  // LLM 不可用/空回复时的抽取式兜底：点名 Top 标题，不再是无内容的"领域有更新"
+  if (!brief) {
+    const tops = [...scored].sort((a, b) => (b.llmScore ?? 0) - (a.llmScore ?? 0)).slice(0, 3).map((it) => `「${zhTitleOf(it)}」`).join('、')
+    brief = `本时段 ${scored.length} 条入选（${[...groups.keys()].slice(0, 4).join('、')}），要点：${tops}。`
+  }
 
   const lines = [`## ${opts.time} 时段快报`, '', `> ${brief}`, '']
   // 领域速览：有新闻才出——每域一行（条数+最高分）
@@ -260,9 +272,11 @@ export async function appendHourlyBrief(opts: {
     for (const it of list) {
       const src = opts.sourcesById.get(it.sourceId)?.title ?? it.sourceId
       const meta = [src, ...(it.tags ?? []).map((t) => `#${t}`)].join(' · ')
-      const safeTitle = it.title.replace(/[\[\]()\n]/g, ' ').trim() // 防 []() 破坏 markdown 链接语法
+      const zhTitle = zhTitleOf(it)
+      const safeTitle = zhTitle.replace(/[\[\]()\n]/g, ' ').trim() // 防 []() 破坏 markdown 链接语法
       const safeLink = (it.link || '').replace(/[()\n]/g, '') || '#'
-      lines.push(`- **[${safeTitle}](${safeLink})**  \n  ${meta}${it.llmReason ? ` — ${it.llmReason}` : ''}`)
+      const tip = zhTitle.trim() !== it.title.trim() ? ` "${it.title.replace(/"/g, "'").replace(/\s+/g, ' ').trim()}"` : ''
+      lines.push(`- **[${safeTitle}](${safeLink}${tip})**  \n  ${meta}${it.llmReason ? ` — ${it.llmReason}` : ''}`)
     }
     lines.push('')
   }
@@ -533,6 +547,34 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
         return summarize(sumReq(merged, opts.digestMaxLength), opts.llmClient, llmOn)
       })()
 
+  // 概述/速览中的标题处理：中译题→带原文悬停的链接；残留的英文原标题→替换为中文题链接
+  const linkify = (hay: string, needle: string, mk: string) => {
+    let i = hay.indexOf(needle)
+    while (i >= 0) {
+      const prev = hay[i - 1] || ''
+      const next = hay[i + needle.length] || ''
+      if (prev !== '[' && prev !== '(' && next !== ']' && next !== '(') {
+        return hay.slice(0, i) + mk + hay.slice(i + needle.length)
+      }
+      i = hay.indexOf(needle, i + 1)
+    }
+    return hay
+  }
+  let overviewMd = sum.text
+  for (const it of picked) {
+    const zh = zhTitleOf(it).trim()
+    const orig = (it.title || '').trim()
+    if (!zh || zh === orig) continue
+    const url = (it.link || '').replace(/[()\s]/g, '')
+    const tip = orig.replace(/"/g, "'").replace(/\s+/g, ' ')
+    const mk = url ? `[${zh.replace(/[\[\]]/g, ' ')}](${url} "${tip}")` : zh
+    overviewMd = linkify(overviewMd, orig, mk)
+    overviewMd = linkify(overviewMd, zh, mk)
+    for (const d of domainSummaries) {
+      d.text = linkify(linkify(d.text, orig, mk), zh, mk)
+    }
+  }
+
   // 源状态行：失败/冷却的源点名
   const failed = sources.filter((s) => s.health.lastError)
   const cooling = sources.filter((s) => s.health.cooldownUntil && new Date(s.health.cooldownUntil).getTime() > now.getTime()).length
@@ -552,7 +594,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
       opts.store.meta.lastDigestAt = now.toISOString()
       await opts.store.save()
       log.warn(`digest ${day}: 0 candidates; kept existing digest file`)
-      return { title: `RSS 简报 · ${day}`, date: day, language: opts.language, markdown, itemCount: 0, itemIds: [], summarySource: sum.source, degraded: true, note: 'no candidates; kept existing digest' }
+      return { title: `每日精选 · ${day}`, date: day, language: opts.language, markdown, itemCount: 0, itemIds: [], summarySource: sum.source, degraded: true, note: 'no candidates; kept existing digest' }
     } catch { /* no existing file — fall through and write empty digest */ }
   }
 
@@ -564,7 +606,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     language: opts.language,
     sourceTitles: new Map(sources.map((s) => [s.id, s.title])),
     items: picked,
-    summaryText: sum.text,
+    summaryText: overviewMd,
     includeItemLinks: true,
     sourcesStatus: statusLines,
     degradedNote: degraded ? note.replace('summary degraded: ', '') : undefined,
@@ -593,7 +635,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   log.info(`digest ${day}: ${picked.length} items, summary=${sum.source}${note ? ` (${note})` : ''} -> ${file}`)
 
   return {
-    title: `RSS 简报 · ${day}`,
+    title: `每日精选 · ${day}`,
     date: day,
     language: opts.language,
     markdown,

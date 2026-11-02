@@ -6,7 +6,7 @@ const applyTheme = (t) => { if (t === 'dark' || t === 'light') document.document
 applyTheme(new URLSearchParams(location.search).get('theme'))
 window.addEventListener('message', (e) => { if (e.data && e.data.type === 'rnd-theme') applyTheme(e.data.theme) })
 
-const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', generating: false, sort: 'published', total: 0, pageSize: 50, daySetOn: '' }
+const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', generating: false, sort: 'published', total: 0, pageSize: 50, daySetOn: '', dayPicked: '' }
 const $ = (sel) => document.querySelector(sel)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 /** 输出链接白名单：只放行 http(s)，javascript:/data: 一律清空 */
@@ -14,7 +14,12 @@ const safeUrl = (u) => (/^https?:\/\//i.test(String(u || '').trim()) ? String(u)
 
 async function api(path, opts) {
   const res = await fetch(`${API}${path}`, opts)
-  if (!res.ok) throw new Error(`${res.status}`)
+  if (!res.ok) {
+    // 带上后端返回的具体错误（如"已存在该源"），不再只显示干巴巴的状态码
+    let msg = `HTTP ${res.status}`
+    try { const j = await res.json(); if (j?.error) msg = String(j.error) } catch { /* 无 JSON 体按状态码报 */ }
+    throw new Error(msg)
+  }
   return res.json()
 }
 const post = (path, body) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
@@ -228,6 +233,16 @@ $('#btnFetch').addEventListener('click', async () => {
 // 周期性探测：打开面板后定时/启动抓取随时开始,5s一查,发现运行即接管（运行期靠 fetchPoll 自身轮询）
 setInterval(() => { if (!fetchPoll) api('/fetch-progress').then((p) => { if (p.running) startFetchPoll() }).catch(() => {}) }, 5000)
 
+// 停留今日精选期间：30s 一查所看日期的 digest 文件,内容变了就重渲（定时生成的新快报/新日报自动上屏）
+setInterval(() => {
+  if ($('#tab-digest')?.hidden || state.generating) return
+  const day = $('#digestDay').value.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return
+  api(`/digest/${day}${state.digestKind === 'hourly' ? '?kind=hourly' : ''}`)
+    .then((r) => { if (r.markdown !== state.digestRendered) { loadDigest(); toast('内容已更新') } })
+    .catch(() => {})
+}, 30_000)
+
 $('#autoTranslate').addEventListener('change', async (e) => {
   $('#autoTlWarn').hidden = !e.target.checked
   try { const r = await post('/prefs', { autoTranslate: e.target.checked }); state.prefs = r.prefs || state.prefs; toast(e.target.checked ? '已开启自动翻译' : '已关闭自动翻译') }
@@ -247,7 +262,10 @@ async function loadDigest() {
   $('#digestDay').value = day
   try {
     const r = await api(`/digest/${day}${state.digestKind === 'hourly' ? '?kind=hourly' : ''}`)
+    state.digestRendered = r.markdown
     $('#digestView').innerHTML = mdLite(r.markdown)
+    injectDayNav(day)
+    injectHourNav()
   } catch {
     // 该天无日报但有快报 → 自动切快报展示（同一天的内容优先于跨天回退）
     if (state.digestKind === 'digest') {
@@ -255,7 +273,10 @@ async function loadDigest() {
         const r = await api(`/digest/${day}?kind=hourly`)
         state.digestKind = 'hourly'
         syncRunBtn()
+        state.digestRendered = r.markdown
         $('#digestView').innerHTML = mdLite(r.markdown)
+        injectDayNav(day)
+        injectHourNav()
         return
       } catch { /* 快报也没有→继续原回退 */ }
     }
@@ -267,10 +288,14 @@ async function loadDigest() {
       try {
         const r = await api(`/digest/${yday}`)
         $('#digestDay').value = yday
+        state.digestRendered = r.markdown
         $('#digestView').innerHTML = mdLite(r.markdown)
+        injectDayNav(yday)
+        injectHourNav()
         return
       } catch { /* 前一天也没有→走空态 */ }
     }
+    state.digestRendered = ''
     const kindLabel = state.digestKind === 'hourly' ? '快报' : '日报'
     $('#digestView').innerHTML = state.generating
       ? `<p class="empty">⏳ ${kindLabel}生成中，请稍候…</p>`
@@ -278,10 +303,48 @@ async function loadDigest() {
   }
 }
 
+/** 日报标题两侧的前后日导航：相邻日有对应文件才显示箭头 */
+async function injectDayNav(day) {
+  const h1 = $('#digestView h1')
+  if (!h1 || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return
+  const probe = async (delta) => {
+    const d = new Date(`${day}T00:00:00`); d.setDate(d.getDate() + delta)
+    const ds = dayStr(d)
+    try { await api(`/digest/${ds}${state.digestKind === 'hourly' ? '?kind=hourly' : ''}`); return ds } catch { return null }
+  }
+  const [prev, next] = await Promise.all([probe(-1), probe(1)])
+  if (!prev && !next) return
+  const mk = (ds, glyph, cls) => {
+    if (!ds) return `<span class="daynav off">${glyph}</span>`
+    return `<button class="daynav ${cls}" data-day="${ds}" title="查看 ${ds}">${glyph}</button>`
+  }
+  h1.innerHTML = `${mk(prev, '◀', 'prev')} ${h1.innerHTML} ${mk(next, '▶', 'next')}`
+  h1.querySelectorAll('.daynav[data-day]').forEach((b) => b.addEventListener('click', () => {
+    $('#digestDay').value = b.dataset.day
+    state.daySetOn = dayStr(new Date())
+    state.dayPicked = b.dataset.day
+    loadDigest()
+  }))
+}
+
+/** 快报各时段标题旁的上下跳转：▲上一时段(更新) ▼下一时段(更早)；日报无时段标题则空操作 */
+function injectHourNav() {
+  const secs = [...document.querySelectorAll('#digestView h2')].filter((h) => /^\d{2}:\d{2}\s*时段快报/.test(h.textContent.trim()))
+  secs.forEach((h, i) => {
+    const up = i > 0 ? `<button class="daynav hour" data-to="${i - 1}" title="上一时段 ${secs[i - 1].textContent.trim().slice(0, 5)}">▲</button>` : '<span class="daynav off">▲</span>'
+    const down = i < secs.length - 1 ? `<button class="daynav hour" data-to="${i + 1}" title="下一时段 ${secs[i + 1].textContent.trim().slice(0, 5)}">▼</button>` : '<span class="daynav off">▼</span>'
+    h.insertAdjacentHTML('beforeend', ` ${up} ${down}`)
+  })
+  document.querySelectorAll('#digestView .daynav.hour').forEach((b) => b.addEventListener('click', () => {
+    secs[+b.dataset.to]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }))
+}
+
 /** 轻量 Markdown 渲染：h1-h4/列表/引用/粗体/斜体/行内码/链接/横线——覆盖日报全部语法 */
 function mdLite(md) {
   const inline = (t) => esc(t)
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+?)(?:\s+&quot;(.*?)&quot;)?\)/g, (m, t, u, ti) => `<a href="${u}"${ti ? ` title="${ti}"` : ''} target="_blank" rel="noopener">${t}</a>`)
+    .replace(/\[([^\]]+)\]\((#[^)\s]+?)(?:\s+&quot;(.*?)&quot;)?\)/g, (m, t, u, ti) => `<a href="${u}"${ti ? ` title="${ti}"` : ''}>${t}</a>`)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -291,7 +354,7 @@ function mdLite(md) {
   for (const raw of md.split('\n')) {
     const l = raw.trimEnd(), e = inline(l)
     const h = l.match(/^(#{1,4})\s+(.*)$/)
-    if (h) { closeLists(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue }
+    if (h) { closeLists(); const id = h[2].replace(/[<>"'`]/g, '').trim(); out.push(`<h${h[1].length} id="${id}">${inline(h[2])}</h${h[1].length}>`); continue }
     if (l.startsWith('> ')) { closeLists(); out.push(`<blockquote>${inline(l.slice(2))}</blockquote>`); continue }
     if (/^---+$/.test(l.trim())) { closeLists(); out.push('<hr>'); continue }
     if (l.startsWith('- ') || l.startsWith('* ')) { if (inOl) { out.push('</ol>'); inOl = false } if (!inUl) { out.push('<ul>'); inUl = true } out.push(`<li>${inline(l.slice(2))}</li>`); continue }
@@ -304,7 +367,7 @@ function mdLite(md) {
   return out.join('')
 }
 
-$('#digestDay').addEventListener('change', () => { state.daySetOn = dayStr(new Date()); loadDigest() })
+$('#digestDay').addEventListener('change', () => { state.daySetOn = dayStr(new Date()); state.dayPicked = $('#digestDay').value.trim(); loadDigest() })
 const syncRunBtn = () => {
   const b = $('#btnDigestRun')
   if (state.digestKind === 'hourly') { b.textContent = '▶ 生成快报'; b.title = '抓取新条目并评分生成本时段快报' }
@@ -416,7 +479,7 @@ function renderSources() {
         <button data-src-act="del" data-id="${esc(s.url)}" title="${s.builtin ? '删除内置源(可在下方已删区恢复)' : '删除该源'}">删除</button>
       </div>
     </div>
-    ${state.editing === s.id ? `
+    ${state.editing === s.url ? `
     <div class="src-edit">
       <label class="wide">URL <input data-f="url" value="${esc(s.url)}"></label>
       <label>名称 <input data-f="title" value="${esc(s.title)}"></label>
@@ -512,15 +575,47 @@ $('#srcList').addEventListener('click', async (e) => {
 })
 // 代理是「使用/不使用」单选框——勾选后走设置页的全局代理（config.fetch.proxyUrl 或此处 prefs.proxyUrl）
 
-$('#btnAddSrc').addEventListener('click', async () => {
+const showAddErr = (msg) => { const el = $('#addSrcErr'); el.textContent = msg; el.hidden = !msg }
+$('#btnAddSrcOpen').addEventListener('click', () => { showAddErr(''); srcPreview = null; $('#srcPreview').hidden = true; $('#btnAddSrcConfirm').hidden = true; $('#addSrcModal').hidden = false; $('#newSrcUrl').focus() })
+$('#addSrcModal').addEventListener('click', (e) => { if (e.target === e.currentTarget || e.target.closest('[data-close]')) $('#addSrcModal').hidden = true })
+let srcPreview = null // {url,title,category,items}
+let srcPreviewTimer = null
+const resetSrcPreview = () => { srcPreview = null; $('#srcPreview').hidden = true; $('#btnAddSrcConfirm').hidden = true; clearInterval(srcPreviewTimer); srcPreviewTimer = null }
+$('#newSrcUrl').addEventListener('input', resetSrcPreview) // 换网址=换对象，旧预览立即作废
+$('#btnAddSrc').addEventListener('click', async () => { // 测试：抓 feed 预览不落库
   const url = $('#newSrcUrl').value.trim()
-  if (!url) return toast('请输入 feed URL')
-  toast('校验并添加中…')
+  if (!url) return showAddErr('请输入 feed URL')
+  showAddErr('校验并抓取预览中…'); $('#srcPreview').hidden = true; $('#btnAddSrcConfirm').hidden = true
   try {
-    await post('/sources', { url, title: $('#newSrcTitle').value.trim() || undefined, category: $('#newSrcCatNew').value.trim() || $('#newSrcCat').value || undefined })
-    $('#newSrcUrl').value = ''; $('#newSrcTitle').value = ''
-    toast(`已添加${r?.category ? ` · 分类: ${r.category}` : ''}`); loadSources()
-  } catch (e) { toast(`添加失败: ${e.message}`) }
+    const pv = await post('/sources/preview', { url, title: $('#newSrcTitle').value.trim() || undefined, category: $('#newSrcCatNew').value.trim() || $('#newSrcCat').value || undefined })
+    srcPreview = pv
+    $('#srcPreview').innerHTML = `<div class="pv-head">✓ ${esc(pv.title)}${pv.category ? ` · ${esc(pv.category)}` : ''}${pv.viaProxy ? ' · 代理' : ''}</div>`
+      + pv.items.map((i) => `<div class="pv-item">· ${i.link ? `<a href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.title)}</a>` : esc(i.title)}</div>`).join('')
+      + `<div class="pv-count">共 ${pv.items.length} 条示例（实际条目更多）</div>`
+    $('#srcPreview').hidden = false
+    // 5 秒倒计时后自动添加；期间可点按钮立即确认，或改网址取消
+    let n = 5
+    const cf = $('#btnAddSrcConfirm')
+    cf.textContent = `自动添加 (${n}s)`; cf.hidden = false
+    clearInterval(srcPreviewTimer)
+    srcPreviewTimer = setInterval(() => {
+      n -= 1
+      if (n <= 0) { clearInterval(srcPreviewTimer); srcPreviewTimer = null; cf.click(); return }
+      cf.textContent = `自动添加 (${n}s)`
+    }, 1000)
+    showAddErr('')
+  } catch (e) { resetSrcPreview(); showAddErr(`预览失败: ${e.message}`) }
+})
+$('#btnAddSrcConfirm').addEventListener('click', async () => { // 确认：真正写入源
+  if (!srcPreview) return
+  clearInterval(srcPreviewTimer); srcPreviewTimer = null
+  showAddErr('添加中…')
+  try {
+    const r = await post('/sources', { url: srcPreview.url, title: $('#newSrcTitle').value.trim() || srcPreview.title, category: srcPreview.category })
+    $('#newSrcUrl').value = ''; $('#newSrcTitle').value = ''; $('#srcPreview').hidden = true; $('#btnAddSrcConfirm').hidden = true; $('#addSrcModal').hidden = true
+    srcPreview = null
+    toast(`已添加${r?.source ? ` · ${r.source.title}` : ''}`); loadSources()
+  } catch (e) { resetSrcPreview(); showAddErr(`添加失败: ${e.message}`) }
 })
 
 $('#btnOpmlExport').addEventListener('click', async () => {
@@ -963,7 +1058,8 @@ document.querySelectorAll('.tab').forEach((btn) => {
     if (btn.dataset.tab === 'digest') {
       const today = dayStr(new Date())
       const sel = $('#digestDay').value
-      if (sel && sel !== today && state.daySetOn !== today) $('#digestDay').value = today // 隔天的旧选择不带进来
+      // 输入框非今天→复位今天；除非框里就是用户今天亲手选的日期（回退写入的昨天不算主动选择）
+      if (sel && sel !== today && !(state.daySetOn === today && sel === state.dayPicked)) $('#digestDay').value = today
       loadDigest()
     }
     if (btn.dataset.tab === 'sources') loadSources()

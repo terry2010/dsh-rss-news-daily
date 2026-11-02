@@ -61,16 +61,30 @@
   <!-- 订阅源管理 -->
   <section id="tab-sources" hidden>
     <div class="toolbar">
-      <input type="url" id="newSrcUrl" placeholder="https://…/feed.xml">
-      <input type="text" id="newSrcTitle" placeholder="名称（可选）">
-      <select id="newSrcCat"><option value="">分类…</option></select>
-      <input type="text" id="newSrcCatNew" placeholder="输入新分类名" hidden>
-      <button id="btnAddSrc">＋ 添加</button>
       <button id="btnRetryAll" title="并发重试全部失败/冷却源">↻ 重试全部失败源</button>
       <button id="btnOpmlExport">⇩ 导出 OPML</button>
       <label class="filebtn">⇧ 导入 OPML<input type="file" id="opmlFile" accept=".opml,.xml" hidden></label>
+      <button id="btnAddSrcOpen">＋ 添加源</button>
     </div>
     <div id="srcList" class="srclist"></div>
+    <div id="addSrcModal" class="obOverlay" hidden>
+      <div class="obCard">
+        <button class="obSkip" data-close>✕</button>
+        <h3>添加订阅源</h3>
+        <div class="obBody addsrc-form">
+          <input type="url" id="newSrcUrl" placeholder="feed 地址（https://…/feed.xml 或裸域名）">
+          <input type="text" id="newSrcTitle" placeholder="名称（可选）">
+          <select id="newSrcCat"><option value="">分类…</option></select>
+          <input type="text" id="newSrcCatNew" placeholder="输入新分类名" hidden>
+          <p id="addSrcErr" class="addsrc-err" hidden></p>
+          <div id="srcPreview" class="src-preview" hidden></div>
+        </div>
+        <div class="obNav">
+          <span></span>
+          <span><button data-close>取消</button><button id="btnAddSrc">添加</button><button id="btnAddSrcConfirm" hidden>确认添加</button></span>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- 设置：先呈现日常选择，低频参数按用途独立折叠 -->

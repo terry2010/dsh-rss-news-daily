@@ -21,7 +21,7 @@ import type { Config as ConfigType } from './config.js'
 import { Store } from './core/store.js'
 import { PrefsStore } from './core/prefs.js'
 import { createFetcher } from './core/fetcher.js'
-import { effectiveSources, runFetchCycle, addSource, removeSource, restoreBuiltinSource, setSourceEnabled, setSourceSummarize, updateSource, importOpml, exportOpml } from './service.js'
+import { effectiveSources, runFetchCycle, addSource, previewSource, removeSource, restoreBuiltinSource, setSourceEnabled, setSourceSummarize, updateSource, importOpml, exportOpml } from './service.js'
 import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
@@ -136,6 +136,7 @@ export function apply(ctx: Context, config: ConfigType) {
       digestsDir: join(dataDir, 'digests'), log,
       llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log) : undefined,
       llmTimeoutMs: config.llm.timeoutMs,
+      llmMaxTokens: config.llm.maxTokens,
     })
   }
   const scoreAndBrief = async (cycleStart: string, signal?: AbortSignal) => {
@@ -153,14 +154,17 @@ export function apply(ctx: Context, config: ConfigType) {
     try {
       if (!signal?.aborted) fetchProg = { ...fetchProg, running: true, done: 0, total: fresh.length, stage: 'score', current: '' }
       const scoreClient = new DshLlmClient(llmRuntime!, pickRoute(), log)
+      let lastWarn = ''
+      const slog = Object.create(log)
+      slog.warn = (m: string) => { lastWarn = m; log.warn(m) }
       const scored = await scoreNewItems(fresh, scoreClient, {
         llmTimeoutMs: config.llm.timeoutMs,
         llmScoreCandidates: dopts?.llmScoreCandidates ?? config.digest.llmScoreCandidates,
         llmMaxTokens: config.llm.maxTokens,
         prefs: prefs.get(),
         signal,
-      }, log)
-      dbgScore('scored', { scored })
+      }, slog)
+      dbgScore('scored', { scored, lastWarn })
       addTokens('score', scoreClient.usage)
       if (scored) await store.save()
       if (briefEnabled(dopts)) await briefNow(fresh)
@@ -229,7 +233,9 @@ export function apply(ctx: Context, config: ConfigType) {
     delete item.state.translationError // 成功后清掉历史失败标记（换模型重试成功后不再误报失败）
   }
   const isForeign = (i: { title: string; summary?: string }) => {
-    const t = i.title + (i.summary || '')
+    // 只看标题判定：中文标题的条目不需要翻译——摘要里混英文（促销文案/型号名）
+    // 不应把中文标题条目误判成外文送进翻译队列
+    const t = i.title
     const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length
     return cjk * 2 <= t.replace(/\s/g, '').length
   }
@@ -267,6 +273,7 @@ export function apply(ctx: Context, config: ConfigType) {
   const svc: NewsService = {
     listSources: () => effectiveSources(config.sources, store),
     addSource: (o) => addSource(fetcher, store, o, o.category ? undefined : classifyFeed),
+    previewSource: (o) => previewSource(fetcher, store, o, o.category ? undefined : classifyFeed),
     setEnabled: (id, en) => setSourceEnabled(store, id, en),
     setSummarize: (id, s) => {
       const cur = effectiveSources(config.sources, store).find((x) => x.id === normalizeUrl(id) || x.url === id)

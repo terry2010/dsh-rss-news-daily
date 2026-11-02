@@ -37,7 +37,7 @@ test('digest: 条数可配 5/20/50，无隐藏硬顶', async () => {
     const doc = await runDailyDigest(opts)
     assert.equal(doc.itemCount, n, `digestItems=${n}`)
     assert.match(doc.markdown, /## 重要新闻/)
-    assert.match(doc.markdown, /## 今日总结/)
+    assert.match(doc.markdown, /## 概述/)
   }
 })
 

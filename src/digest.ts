@@ -33,20 +33,20 @@ export interface DigestRenderOptions {
 
 const LABELS: Record<DigestLanguage, { title: string; sources: string; items: string; generated: string }> = {
   zh: {
-    title: 'RSS 简报',
+    title: '每日精选',
     sources: '订阅源',
     items: '条目',
     generated: '生成于',
   },
   en: {
-    title: 'RSS Daily Digest',
+    title: 'Daily Digest',
     sources: 'sources',
     items: 'items',
     generated: 'generated at',
   },
 }
 
-const SECTION_SUMMARY: Record<DigestLanguage, string> = { zh: '今日总结', en: 'Today' }
+const SECTION_SUMMARY: Record<DigestLanguage, string> = { zh: '概述', en: 'Overview' }
 const SECTION_ITEMS: Record<DigestLanguage, string> = { zh: '重要新闻', en: 'Top Stories' }
 const SECTION_SOURCES: Record<DigestLanguage, string> = { zh: '采集源状态', en: 'Source Status' }
 
@@ -101,27 +101,29 @@ export function renderDigest(options: DigestRenderOptions): string {
     '',
   ].filter((l) => l !== '').join('\n')
 
-  // 领域速览：每领域一行（今日重点之后）
+  // 领域目录：可点击锚点跳到对应领域摘要（id=领域名，mdLite 给标题生成同名锚点）
   const domainSec = options.domainSummaries?.length
-    ? ['## 领域速览', '', ...options.domainSummaries.map((d) => `- **${d.topic}**：${d.text.replace(/\s+/g, ' ').trim().slice(0, 120)}（${d.count}条）`), ''].join('\n')
+    ? ['## 领域目录', '', ...options.domainSummaries.map((d) => `- **[${d.topic}](#${d.topic})** · ${d.count}条`), ''].join('\n')
     : ''
   const itemLine = (item: (typeof options.items)[number], index: number) => {
     const source = options.sourceTitles.get(item.sourceId) ?? item.sourceId
     const day = itemDay(item)
-    const title = escapeLinkText(item.aiTitle || item.title)
+    const tlRaw = (item.state?.translation || '').trim()
+    const tnl0 = tlRaw.indexOf('\n')
+    const zhTitle = item.aiTitle || (tlRaw ? (tnl0 > 0 ? tlRaw.slice(0, tnl0) : tlRaw).trim() : '') || item.title
+    const title = escapeLinkText(zhTitle)
     const link = options.includeItemLinks ? safeLinkUrl(item.link) : ''
+    const tip = zhTitle.trim() !== item.title.trim() ? ` "${item.title.replace(/"/g, "'").replace(/\s+/g, ' ').trim()}"` : ''
     const head = link !== ''
-      ? `${index + 1}. [${title}](${link})`
+      ? `${index + 1}. [${title}](${link}${tip})`
       : `${index + 1}. ${title}`
     const meta = [source, day, item.dupCount ? `同题 ${item.dupCount + 1} 家报道` : '', item.llmScore != null ? `评分 ${item.llmScore}` : '', (item.hotCycles ?? 0) >= 2 ? `🔥${item.hotCycles}时段` : '', ...(item.tags || []).map((t) => `#${t}`)].filter((part) => part !== '').join(' · ')
     // 逐条降级回落：aiBlocks 缺失时用 aiSummary/feed 原摘要（截 90 字），保证每条都有摘要行
     const lead = (item.aiSummary || item.summary || '').trim().slice(0, 90)
     const reasons = item.reasons?.length ? ` · _${item.reasons.join('、')}_` : ''
     // 中英对照：有译文的条目加中文标题行 + 译文行
-    const tl = (item.state?.translation || '').trim()
-    const tnl = tl.indexOf('\n')
-    const tlTitle = tnl > 0 ? tl.slice(0, tnl).trim() : ''
-    const tlBody = tnl > 0 ? tl.slice(tnl).replace(/\s+/g, ' ').trim() : ''
+    const tlTitle = tnl0 > 0 ? tlRaw.slice(0, tnl0).trim() : ''
+    const tlBody = tnl0 > 0 ? tlRaw.slice(tnl0).replace(/\s+/g, ' ').trim() : ''
     // v2 结构化条目块：背景/要点/结论三段；缺块回退一行摘要
     const b = item.aiBlocks
     const bodyMd = b
@@ -136,9 +138,13 @@ export function renderDigest(options: DigestRenderOptions): string {
     const t = item.topic || '综合'
     byTopic.set(t, [...(byTopic.get(t) ?? []), { item, index }])
   })
+  const summaryByTopic = new Map((options.domainSummaries ?? []).map((d) => [d.topic, d]))
   const sectionParts: string[] = [`## ${SECTION_ITEMS[options.language]}`, '']
   for (const [topic, list] of byTopic) {
-    sectionParts.push(`### ${topic}`, '', ...list.map(({ item, index }) => itemLine(item, index)), '')
+    sectionParts.push(`### ${topic}`, '')
+    const dom = summaryByTopic.get(topic)
+    if (dom) sectionParts.push(`> ${dom.text.replace(/\s+/g, ' ').trim().slice(0, 200)}`, '')
+    sectionParts.push(...list.map(({ item, index }) => itemLine(item, index)), '', `[⤴ 返回目录](#领域目录)`, '')
   }
   const section = sectionParts.join('\n')
 

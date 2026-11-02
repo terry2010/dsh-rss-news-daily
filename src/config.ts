@@ -166,7 +166,7 @@ const LlmSectionSchema = Schema.object({
   enabled: Schema.boolean().default(true),
   provider: Schema.string().default('').description('provider 路由；与 model 成对，都空=宿主默认。'),
   model: Schema.string().default('').description('模型 id；与 provider 成对。'),
-  maxTokens: Schema.natural().min(256).default(4096),
+  maxTokens: Schema.natural().min(256).default(8192),
   timeoutMs: Schema.number().min(5000).default(180_000),
 }).description('LLM 路由与预算。')
 

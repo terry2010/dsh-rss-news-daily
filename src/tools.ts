@@ -12,6 +12,7 @@ const err = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 export interface NewsService {
   listSources(): FeedSource[]
   addSource(opts: { url: string; title?: string; category?: string }): Promise<FeedSource>
+  previewSource?(opts: { url: string; title?: string; category?: string }): Promise<{ url: string; title: string; category?: string; viaProxy: boolean; items: { title: string; link: string }[] }>
   setEnabled(urlOrId: string, enabled: boolean): Promise<void>
   setSummarize(urlOrId: string, summarize: boolean): Promise<void>
   removeSource(urlOrId: string): Promise<boolean>

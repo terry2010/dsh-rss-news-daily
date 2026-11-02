@@ -195,6 +195,15 @@ function apiSources(deps: ApiDeps) {
         })),
       })
     }
+    if (method === 'POST' && sub === 'preview') { // 预览：验证+抓取不落库，确认后再走 add
+      const body = await readBody(req) as { url?: string; title?: string; category?: string }
+      try {
+        const pv = await deps.svc.previewSource!({ url: String(body.url || ''), title: body.title, category: body.category })
+        return sendJson(res, 200, { ok: true, ...pv })
+      } catch (e) {
+        return sendJson(res, 400, { ok: false, error: String((e as Error)?.message || e) })
+      }
+    }
     if (method === 'POST' && !sub) {
       const body = await readBody(req) as { url?: string; title?: string; category?: string }
       try {
@@ -311,7 +320,7 @@ function apiLlm(deps: ApiDeps) {
 
 async function serveStatic(res: Res, rel: string): Promise<void> {
   const webDir = join(fileURLToPath(new URL('.', import.meta.url)), 'web')
-  const safe = rel.replace(/^\/+|\.{2,}/g, '') || 'index.html'
+  const safe = rel.split('?')[0].replace(/^\/+|\.{2,}/g, '') || 'index.html'
   const file = join(webDir, safe)
   try {
     const body = await readFile(file)
