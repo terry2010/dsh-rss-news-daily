@@ -336,7 +336,18 @@ function injectHourNav() {
     h.insertAdjacentHTML('beforeend', ` ${up} ${down}`)
   })
   document.querySelectorAll('#digestView .daynav.hour').forEach((b) => b.addEventListener('click', () => {
-    secs[+b.dataset.to]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const t = secs[+b.dataset.to]
+    if (!t) return
+    // 150ms 快平滑：原生 smooth 不可调速（~400ms），瞬时又太跳——easeOutQuad 快速到位
+    const from = window.scrollY
+    const dist = t.getBoundingClientRect().top + from - 64 - from // 64 = scroll-margin-top 对齐 sticky 栏
+    const t0 = performance.now()
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / 150)
+      window.scrollTo(0, from + dist * (1 - (1 - p) * (1 - p)))
+      if (p < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
   }))
 }
 

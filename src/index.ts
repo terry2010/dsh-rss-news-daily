@@ -176,20 +176,27 @@ export function apply(ctx: Context, config: ConfigType) {
   const translateFresh = async (cycleStart: string, signal?: AbortSignal) => {
     if (!prefs.get().autoTranslate || !llmRuntime) return
     const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
-    if (fresh.length && !signal?.aborted) fetchProg = { running: true, done: 0, total: fresh.length, stage: 'translate', current: '' }
+    // 历史失败重试：translationError 且未超次数的旧条目每轮捎带一批；限量防长尾占满抓取周期
+    const backlog = store.items
+      .filter((i) => i.fetchedAt < cycleStart && !i.state.translation && !i.aiSummary && i.state.translationError
+        && (i.state.translationRetries ?? 0) < 3 && isForeign(i))
+      .slice(0, 25)
+    const queue = [...fresh, ...backlog]
+    if (queue.length && !signal?.aborted) fetchProg = { running: true, done: 0, total: queue.length, stage: 'translate', current: '' }
     let translated = 0
-    for (const it of fresh) {
+    for (const it of queue) {
       if (signal?.aborted) break // 抓取/翻译共用信号；取消后不再开始下一条
       try { await translateItemCore(it, signal) }
       catch (e) {
         if (signal?.aborted) break
         it.state.translationError = e instanceof Error ? e.message : String(e)
+        it.state.translationRetries = (it.state.translationRetries ?? 0) + 1
       }
       fetchProg.done += 1
       translated += 1
       if (fetchProg.done % 10 === 0) void store.save()
     }
-    if (fresh.length) {
+    if (queue.length) {
       await store.save()
       log.info(`autoTranslate: ${translated}/${fresh.length} items translated`)
     }
@@ -219,12 +226,12 @@ export function apply(ctx: Context, config: ConfigType) {
   const llmSignal = (signal?: AbortSignal) =>
     AbortSignal.any([AbortSignal.timeout(config.llm.timeoutMs), ...(signal ? [signal] : [])])
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
-  const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string } }, signal?: AbortSignal) => {
+  const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string; translationRetries?: number } }, signal?: AbortSignal) => {
     const client = new DshLlmClient(llmRuntime!, pickTranslateRoute(), log)
     const text = await client.generateText({
       system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
       prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
-      maxTokens: 1200,
+      maxTokens: config.llm.maxTokens, // 推理模型 reasoning 计入输出预算——1200 曾被思考吃光产出空回复
       signal: llmSignal(signal),
     })
     addTokens('translate', client.usage) // 每条独立 client——usage 即本条用量

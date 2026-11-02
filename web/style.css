@@ -173,6 +173,7 @@ button.danger.armed { background: #8a3030; color: #fff; }
 .settings-sched .sched-group { display: block; }
 .settings-sched .sched-label { display: block; margin-bottom: 4px; line-height: 1.5; }
 @media (max-width: 600px) { .settings-sched { grid-template-columns: 1fr; } }
+.digest h1, .digest h2, .digest h3, .digest h4 { scroll-margin-top: 64px; } /* 顶部 sticky 栏 ~54px——锚点/时段跳转留出余量，目标标题不被遮挡 */
 .digest h1 .daynav { font-size: 14px; vertical-align: middle; padding: 1px 8px; margin: 0 2px; }
 .digest h1 .daynav.off { opacity: .25; cursor: default; }
 .digest h2 .daynav { font-size: 11px; vertical-align: middle; padding: 0 6px; margin: 0 2px; }

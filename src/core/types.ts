@@ -53,6 +53,8 @@ export interface ItemState {
   translation?: string
   /** 翻译失败原因（诊断用） */
   translationError?: string
+  /** 翻译失败重试次数（跨抓取周期重试，限次防长尾） */
+  translationRetries?: number
 }
 
 /** 归一化条目 */
