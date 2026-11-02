@@ -1,6 +1,8 @@
 node_modules/
 lib/
 dist/
-docs/
+docs/*
+!docs/stats/
+!docs/downloads-*.md
 *.tgz
 .DS_Store
