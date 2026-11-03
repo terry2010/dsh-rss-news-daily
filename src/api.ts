@@ -135,6 +135,63 @@ function apiItems(deps: ApiDeps) {
   }
 }
 
+/** 年库档案：list 扫同目录 archive-YYYY.db；items 只读按年查询（FTS/LIKE+分页，与热库同字段） */
+function apiArchive(deps: ApiDeps) {
+  const dir = () => dirname(deps.store.path)
+  return async (req: Req, res: Res) => {
+    const u = new URL(req.url || '', 'http://x')
+    const tail = (u.pathname.split('/api/archive/')[1] || '').replace(/\/+$/, '')
+    if (tail === 'list' || tail === '') {
+      const { readdir, stat } = await import('node:fs/promises')
+      const { DatabaseSync } = await import('node:sqlite')
+      const files = (await readdir(dir()).catch(() => [])).filter((f) => /^archive-\d{4}\.db$/.test(f))
+      const out: Array<{ file: string; year: string; items: number; sizeKB: number }> = []
+      for (const f of files) {
+        const p = join(dir(), f)
+        let n = -1
+        try { const d = new DatabaseSync(p, { readOnly: true }); n = (d.prepare('SELECT COUNT(*) c FROM items').get() as { c: number }).c; d.close() } catch { /* 打不开给 -1 */ }
+        const st = await stat(p).catch(() => null)
+        out.push({ file: f, year: f.slice(8, 12), items: n, sizeKB: st ? Math.round(st.size / 1024) : 0 })
+      }
+      sendJson(res, 200, { ok: true, archives: out.sort((a, b) => b.year.localeCompare(a.year)) })
+      return
+    }
+    if (tail === 'items') {
+      const sp = u.searchParams
+      const year = sp.get('year') || ''
+      if (!/^\d{4}$/.test(year)) { sendJson(res, 400, { ok: false, error: 'year 必须是 4 位数字' }); return }
+      const { DatabaseSync } = await import('node:sqlite')
+      let db: InstanceType<typeof DatabaseSync>
+      try { db = new DatabaseSync(join(dir(), `archive-${year}.db`), { readOnly: true }) }
+      catch { sendJson(res, 404, { ok: false, error: `无 ${year} 年档案` }); return }
+      try {
+        const where: string[] = ["json_extract(state,'$.hidden') IS NOT 1"]
+        const args: Array<string | number> = []
+        const cat = sp.get('category'), src = sp.get('source'), q = (sp.get('q') || '').trim()
+        if (cat) { where.push('topic = ?'); args.push(cat) }
+        if (src) { where.push('sourceId LIKE ?'); args.push(`%${src}%`) }
+        let from = 'FROM items'
+        if (q) {
+          let fts = false
+          if (q.length >= 3) { try { db.prepare('SELECT rowid FROM items_fts LIMIT 1').get(); fts = true } catch { /* 无 FTS 表 */ } }
+          if (fts) { from = 'FROM items_fts JOIN items ON items.rowid = items_fts.rowid'; where.push('items_fts MATCH ?'); args.push(`"${q.replace(/"/g, '""')}"`) }
+          else { where.push('(title LIKE ? OR summary LIKE ?)'); args.push(`%${q}%`, `%${q}%`) }
+        }
+        const w = where.join(' AND ')
+        const page = Math.max(1, Number(sp.get('page') || 1) | 0)
+        const size = deps.readerPageSize
+        const total = (db.prepare(`SELECT COUNT(*) c ${from} WHERE ${w}`).get(...args) as { c: number }).c
+        const sortKey = sp.get('sort') === 'fetched' ? 'fetchedAt' : "COALESCE(NULLIF(publishedAt,''),fetchedAt)"
+        const rows = db.prepare(`SELECT items.* ${from} WHERE ${w} ORDER BY ${sortKey} DESC LIMIT ? OFFSET ?`).all(...args, size, (page - 1) * size) as Array<Record<string, unknown>>
+        const items = rows.map((r) => ({ ...r, tags: r.tags ? JSON.parse(r.tags as string) : undefined, reasons: r.reasons ? JSON.parse(r.reasons as string) : [], state: r.state ? JSON.parse(r.state as string) : {} }))
+        sendJson(res, 200, { ok: true, total, page, pageSize: size, items })
+      } finally { db.close() }
+      return
+    }
+    sendJson(res, 404, { ok: false, error: 'unknown archive endpoint' })
+  }
+}
+
 function apiDigest(deps: ApiDeps) {
   return async (req: Req, res: Res, day: string) => {
     const { readFile: rf } = await import('node:fs/promises')
@@ -349,6 +406,7 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
 
   // JSON API
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/items`, handler: guard(apiItems(deps)) }))
+  disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/api/archive`, handler: guard(apiArchive(deps)) }))
   disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/api/digest`, handler: guard((q, r) => apiDigest(deps)(q, r, ((q.url || '').split('/').pop() || '').split('?')[0] || zonedDayKey(new Date(), deps.timezone))) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest`, handler: guard((q, r) => apiDigest(deps)(q, r, zonedDayKey(new Date(), deps.timezone))) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-stop`, handler: guard(async (q, r) => { if (q.method !== 'POST') { r.statusCode = 405; r.end(); return } sendJson(r, 200, { ok: true, result: await deps.svc.stopDigest?.() }) }) }))

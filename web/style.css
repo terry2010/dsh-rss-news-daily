@@ -26,6 +26,8 @@ input[type="search"], input[type="text"], input[type="url"] { flex: 1; min-width
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; align-items: center; }
 .filterbar { position: sticky; top: 54px; z-index: 8; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); padding: 6px 0; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
 .filterbar #srcFilter { width: 90px; flex-shrink: 0; }
+.filterbar .active { border-color: var(--acc); }
+.itemlist.archive .item-actions, .itemlist.archive .find-btn { display: none !important; } /* 档案只读 */
 .filterbar #category { max-width: 140px; }
 
 /* ---- 条目卡片 ---- */

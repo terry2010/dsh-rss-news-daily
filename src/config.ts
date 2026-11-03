@@ -153,7 +153,7 @@ const FetchSectionSchema = Schema.object({
   retries: Schema.natural().min(0).default(2),
   maxItemsPerSource: Schema.natural().min(1).default(50),
   storeContentChars: Schema.natural().min(100).default(4000),
-  maxStoredItems: Schema.natural().min(10).default(2000),
+  maxStoredItems: Schema.natural().min(10).default(30000),
   proxyUrl: Schema.string().default(''),
 }).description('抓取策略。')
 

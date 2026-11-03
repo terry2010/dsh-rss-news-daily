@@ -76,7 +76,7 @@ export function apply(ctx: Context, config: ConfigType) {
   if (!probe.ok) throw new Error('node:sqlite unavailable in this host (requires Node >=22.5)')
   if (!probe.fts) log.warn('SQLite FTS5/trigram unavailable in this host; search falls back to LIKE')
   const store = new SqliteStore({
-    path: join(dataDir, 'store.db'), maxItems: config.fetch.maxStoredItems, log,
+    path: join(dataDir, 'store.db'), maxItems: () => prefs.get().digestOpts?.storeMaxItems ?? config.fetch.maxStoredItems, log,
     retentionDays: () => prefs.get().digestOpts?.retentionDays ?? 90,
     pruneLowQuality: () => prefs.get().digestOpts?.pruneLowQuality ?? true,
     fts: probe.fts,

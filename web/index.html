@@ -38,6 +38,8 @@
         <option value="fetched">按抓取时间</option>
       </select>
       <select id="srcFilter"><option value="">全部源</option></select>
+      <select id="archYear" hidden></select>
+      <button id="btnArchive" title="历史年库档案">📦 档案</button>
       <button id="btnFetch" title="立即抓取全部源">⟳ 抓取</button>
       <button id="btnTopPage" hidden title="回到第1页">⇤ 回到第1页</button>
     </div>
@@ -192,6 +194,10 @@
           <label class="setting-control">新闻保留天数
             <input type="number" id="dRetDays" min="0" placeholder="默认 90">
             <small>设为 0 时不按天数清理，仍受数量上限影响。</small>
+          </label>
+          <label class="setting-control">新闻库存上限
+            <input type="number" id="dMaxItems" min="10" placeholder="默认 30000">
+            <small>超过后按质量/时间清退旧条目；约 1000 条/天的源建议 ≥20000。</small>
           </label>
         </div>
         <label class="setting-check"><input type="checkbox" id="dHourly"> 生成时段快报</label>

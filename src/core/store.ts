@@ -152,8 +152,8 @@ function stringOf(value: unknown): string {
 export interface StoreOptions {
   /** File path of the JSON store. */
   path: string
-  /** Maximum number of items kept (oldest fetched are pruned on save). */
-  maxItems?: number
+  /** Maximum number of items kept (oldest fetched are pruned on save). 数字或实时读取函数（偏好覆盖走后者） */
+  maxItems?: number | (() => number)
   /** 条目保留天数（0=不按时间过期，仅数量上限）；每次 prune 实时读取 */
   retentionDays?: () => number
   /** 数量超限清退时低质优先（llmScore/启发式分最低的先走）；false=最老的先走 */
@@ -189,7 +189,8 @@ export interface StoreLike {
 
 export class Store {
   readonly path: string
-  readonly maxItems: number
+  private readonly maxItemsFn: () => number
+  get maxItems(): number { return this.maxItemsFn() }
   private readonly log: LogSink
   private readonly retentionDays: () => number
   private readonly pruneLowQuality: () => boolean
@@ -199,7 +200,8 @@ export class Store {
 
   constructor(options: StoreOptions) {
     this.path = options.path
-    this.maxItems = options.maxItems ?? 1000
+    const mi = options.maxItems
+    this.maxItemsFn = typeof mi === 'function' ? mi : () => mi ?? 1000
     this.retentionDays = options.retentionDays ?? (() => 0)
     this.pruneLowQuality = options.pruneLowQuality ?? (() => false)
     this.log = options.log ?? noopLog

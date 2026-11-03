@@ -51,10 +51,28 @@ async function loadItems() {
   p.set('page', state.page)
   if (!state.items.length) $('#itemList').innerHTML = '<div class="skel"><div></div><div></div></div>'.repeat(3) // 骨架屏:仅空列表时,刷新不闪
   try {
-    const r = await api(`/items?${p}`)
+    const r = state.archive
+      ? await api(`/archive/items?year=${state.archYear || ''}&${p}`)
+      : await api(`/items?${p}`)
     state.items = r.items; state.total = r.total; state.pageSize = r.pageSize
     renderItems()
   } catch (e) { $('#itemList').innerHTML = `<p class="err">加载失败: ${esc(e.message)}</p>` }
+}
+// 档案模式：切换年库只读视图（隐藏操作按钮、日期的unread 过滤无关但保留透传无妨）
+async function toggleArchive(on) {
+  state.archive = on
+  $('#btnArchive').classList.toggle('active', on)
+  $('#archYear').hidden = !on
+  $('#btnFetch').hidden = on
+  $('#itemList').classList.toggle('archive', on)
+  if (on && !$('#archYear').options.length) {
+    try {
+      const r = await api('/archive/list')
+      $('#archYear').innerHTML = r.archives.map((a) => `<option value="${a.year}">${a.year} 年（${a.items} 条）</option>`).join('') || '<option value="">无档案</option>'
+      if (r.archives[0]) state.archYear = r.archives[0].year
+    } catch { $('#archYear').innerHTML = '<option value="">无档案</option>' }
+  }
+  state.page = 1; loadItems()
 }
 
 function renderItems() {
@@ -172,6 +190,8 @@ for (const sel of ['#q', '#day', '#category', '#unread']) {
   $(sel).addEventListener('change', () => { state.page = 1; loadItems() })
 }
 // 源筛选联动：选了具体源后，分类只保留该源的分类（避免选出无交集组合）
+$('#btnArchive').addEventListener('click', () => toggleArchive(!state.archive))
+$('#archYear').addEventListener('change', () => { state.archYear = $('#archYear').value; state.page = 1; loadItems() })
 $('#srcFilter').addEventListener('change', () => {
   const sel = $('#srcFilter').value
   const cats = sel ? [...new Set(state.sources.filter((s) => s.id === sel).map((s) => s.category).filter(Boolean))]
@@ -671,7 +691,7 @@ async function loadPrefs() {
     renderPrefs()
     $('#proxyUrl').value = r.prefs.proxyUrl || ''
     const d = r.prefs.digestOpts || {}
-    for (const [id, k] of [['dItems','digestItems'],['dPerTopic','perTopicLimit'],['dMinScore','minLlmScore'],['dScoreN','llmScoreCandidates'],['dCandH','candidateHours'],['dSumN','summaryMaxItems'],['dConc','summaryConcurrency'],['dSumLen','digestMaxLength'],['dRetDays','retentionDays']]) $(`#${id}`).value = d[k] ?? ''
+    for (const [id, k] of [['dItems','digestItems'],['dPerTopic','perTopicLimit'],['dMinScore','minLlmScore'],['dScoreN','llmScoreCandidates'],['dCandH','candidateHours'],['dSumN','summaryMaxItems'],['dConc','summaryConcurrency'],['dSumLen','digestMaxLength'],['dRetDays','retentionDays'],['dMaxItems','storeMaxItems']]) $(`#${id}`).value = d[k] ?? ''
     $('#dScoreFetch').checked = d.scoreOnFetch !== false
     $('#dRescore').checked = d.rescoreMissing !== false
     $('#dHourly').checked = d.hourlyBrief !== false
@@ -690,12 +710,12 @@ $('#btnProxySave')?.remove()
 const saveDigestOpts = async () => {
   const num = (id) => { const v = $(`#${id}`).value.trim(); return v === '' ? undefined : Number(v) }
   try {
-    const r = await post('/prefs', { digestOpts: { digestItems: num('dItems'), perTopicLimit: num('dPerTopic'), minLlmScore: num('dMinScore'), llmScoreCandidates: num('dScoreN'), candidateHours: num('dCandH'), summaryMaxItems: num('dSumN'), summaryConcurrency: num('dConc'), digestMaxLength: num('dSumLen'), scoreOnFetch: $('#dScoreFetch').checked, rescoreMissing: $('#dRescore').checked, hourlyBrief: $('#dHourly').checked, retentionDays: num('dRetDays'), pruneLowQuality: $('#dPruneQ').checked } })
+    const r = await post('/prefs', { digestOpts: { digestItems: num('dItems'), perTopicLimit: num('dPerTopic'), minLlmScore: num('dMinScore'), llmScoreCandidates: num('dScoreN'), candidateHours: num('dCandH'), summaryMaxItems: num('dSumN'), summaryConcurrency: num('dConc'), digestMaxLength: num('dSumLen'), scoreOnFetch: $('#dScoreFetch').checked, rescoreMissing: $('#dRescore').checked, hourlyBrief: $('#dHourly').checked, retentionDays: num('dRetDays'), pruneLowQuality: $('#dPruneQ').checked, storeMaxItems: num('dMaxItems') } })
     state.prefs = r.prefs
     toast('日报参数已保存')
   } catch (e) { toast(`保存失败: ${e.message}`) }
 }
-for (const id of ['dItems', 'dPerTopic', 'dMinScore', 'dScoreN', 'dCandH', 'dSumN', 'dConc', 'dSumLen', 'dRetDays']) $(`#${id}`)?.addEventListener('input', debounce(saveDigestOpts))
+for (const id of ['dItems', 'dPerTopic', 'dMinScore', 'dScoreN', 'dCandH', 'dSumN', 'dConc', 'dSumLen', 'dRetDays', 'dMaxItems']) $(`#${id}`)?.addEventListener('input', debounce(saveDigestOpts))
 for (const id of ['dScoreFetch', 'dRescore', 'dHourly', 'dPruneQ']) $(`#${id}`)?.addEventListener('change', saveDigestOpts)
 $('#btnDigestOptsSave')?.remove()
 function renderSubTopics(p) {

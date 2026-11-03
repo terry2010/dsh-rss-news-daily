@@ -61,6 +61,8 @@ const rowToItem = (r: Row): FeedItem => ({
   reasons: r.reasons ? JSON.parse(r.reasons as string) : [],
   state: r.state ? JSON.parse(r.state as string) : { read: false, hidden: false, liked: 0 },
 })
+const ITEM_COLS = ['id','hash','sourceId','topic','title','link','summary','content','publishedAt','fetchedAt','digestedDay','score','llmScore','llmReason','aiTitle','aiSummary','dupOf','dupCount','hotCycles','tags','reasons','state'] as const
+
 const itemToRow = (i: FeedItem): (string | number | null)[] => [
   i.id, i.hash, i.sourceId, i.topic ?? '', i.title, i.link ?? '', i.summary ?? '', i.content ?? '',
   i.publishedAt ?? '', i.fetchedAt, i.digestedDay ?? '', i.score ?? 0, i.llmScore ?? null, i.llmReason ?? null,
@@ -71,7 +73,8 @@ const itemToRow = (i: FeedItem): (string | number | null)[] => [
 
 export interface SqliteStoreOptions {
   path: string            // .db 路径
-  maxItems?: number
+  /** 数量上限：数字或实时读取函数（偏好覆盖走后者，改设置即生效） */
+  maxItems?: number | (() => number)
   retentionDays?: () => number
   pruneLowQuality?: () => boolean
   fts?: boolean           // FTS5 可用（P1 探测结果）
@@ -96,7 +99,8 @@ export function probeSqlite(): { ok: boolean; fts: boolean } {
 
 export class SqliteStore {
   readonly path: string
-  readonly maxItems: number
+  private readonly maxItemsFn: () => number
+  get maxItems(): number { return this.maxItemsFn() }
   private readonly log: LogSink
   private readonly retentionDays: () => number
   private readonly pruneLowQuality: () => boolean
@@ -108,7 +112,8 @@ export class SqliteStore {
 
   constructor(options: SqliteStoreOptions) {
     this.path = options.path
-    this.maxItems = options.maxItems ?? 1000
+    const mi = options.maxItems
+    this.maxItemsFn = typeof mi === 'function' ? mi : () => mi ?? 1000
     this.retentionDays = options.retentionDays ?? (() => 0)
     this.pruneLowQuality = options.pruneLowQuality ?? (() => false)
     this.ftsEnabled = options.fts ?? true
@@ -246,13 +251,48 @@ export class SqliteStore {
     return n
   }
 
-  /** 清退：先过期后配额（低质优先 or 最老优先），SQL DELETE */
+  /** 年库归档：清退前把将删行按 fetchedAt 年份写进同目录 archive-YYYY.db（同构 schema+FTS 触发器自动建索引）。
+      导出失败跳过删除——宁涨不丢数据。返回是否已导出（true=可删）。 */
+  private exportToArchive(where: string, args: unknown[]): boolean {
+    const rows = this.db.prepare(`SELECT * FROM items WHERE ${where}`).all(...args as never[]) as Row[]
+    if (!rows.length) return true
+    const byYear = new Map<string, Row[]>()
+    for (const r of rows) {
+      const y = String(r.fetchedAt ?? '').slice(0, 4) || 'undated'
+      byYear.set(y, [...(byYear.get(y) ?? []), r])
+    }
+    try {
+      for (const [year, list] of byYear) {
+        const file = join(dirname(this.path), `archive-${year}.db`)
+        const adb = new DatabaseSync(file)
+        try {
+          adb.exec(SCHEMA)
+          if (this.ftsEnabled) { try { adb.exec(FTS) } catch { /* 无 FTS 也照常归档 */ } }
+          const ins = adb.prepare(`INSERT OR IGNORE INTO items
+            (id,hash,sourceId,topic,title,link,summary,content,publishedAt,fetchedAt,digestedDay,score,llmScore,llmReason,aiTitle,aiSummary,dupOf,dupCount,hotCycles,tags,reasons,state)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          adb.exec('BEGIN')
+          try { for (const r of list) ins.run(...ITEM_COLS.map((c) => r[c]) as never[]) ; adb.exec('COMMIT') }
+          catch (e) { adb.exec('ROLLBACK'); throw e }
+        } finally { adb.close() }
+        this.log.info(`archived ${list.length} items -> archive-${year}.db`)
+      }
+      return true
+    } catch (e) {
+      this.log.error(`archive export failed, keeping rows: ${e instanceof Error ? e.message : e}`)
+      return false
+    }
+  }
+
+  /** 清退：先过期后配额（低质优先 or 最老优先），SQL DELETE；删除前统一走年库归档 */
   private prune(): void {
     const days = this.retentionDays()
     if (days > 0) {
       const cutoff = new Date(Date.now() - days * 86400e3).toISOString()
-      const r = this.db.prepare('DELETE FROM items WHERE fetchedAt < ?').run(cutoff)
-      if (Number(r.changes) > 0) this.log.info(`pruned ${r.changes} expired items (>${days}d)`)
+      if (this.exportToArchive('fetchedAt < ?', [cutoff])) {
+        const r = this.db.prepare('DELETE FROM items WHERE fetchedAt < ?').run(cutoff)
+        if (Number(r.changes) > 0) this.log.info(`pruned ${r.changes} expired items (>${days}d)`)
+      }
     }
     const over = this.count() - this.maxItems
     if (over <= 0) return
@@ -260,10 +300,15 @@ export class SqliteStore {
     if (this.pruneLowQuality()) {
       // 质量键=llmScore ?? 5：NULL 视为中档 5——未评分新条目不能被清退饿死
       // （否则它们还没轮到评分就先被删，撞上限后整库冻结）
-      del = Number(this.db.prepare(`DELETE FROM items WHERE id IN (
-        SELECT id FROM items ORDER BY COALESCE(llmScore, 5) ASC, fetchedAt ASC LIMIT ?)`).run(over).changes)
+      const cond = 'id IN (SELECT id FROM items ORDER BY COALESCE(llmScore, 5) ASC, fetchedAt ASC LIMIT ?)'
+      del = this.exportToArchive(cond, [over])
+        ? Number(this.db.prepare(`DELETE FROM items WHERE ${cond}`).run(over).changes)
+        : 0
     } else {
-      del = Number(this.db.prepare('DELETE FROM items WHERE id IN (SELECT id FROM items ORDER BY fetchedAt ASC LIMIT ?)').run(over).changes)
+      const cond = 'id IN (SELECT id FROM items ORDER BY fetchedAt ASC LIMIT ?)'
+      del = this.exportToArchive(cond, [over])
+        ? Number(this.db.prepare(`DELETE FROM items WHERE ${cond}`).run(over).changes)
+        : 0
     }
     this.log.info(`pruned ${del} items (cap ${this.maxItems}${this.pruneLowQuality() ? ', low-quality first' : ''})`)
     if (del > 0) this.refreshWindow()
