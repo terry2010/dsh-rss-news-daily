@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 
 const mkItem = (id, over = {}) => ({
   id: `i${id}`, title: `news ${id}`, link: `https://x/${id}`, summary: `s${id}`,
-  topic: '科技', sourceId: 'src1', publishedAt: '2026-01-01', fetchedAt: new Date().toISOString(),
+  topic: '科技', sourceId: 'src1', publishedAt: new Date(Date.now() - 3600e3).toISOString(), fetchedAt: new Date().toISOString(),
   hash: `h${id}`, digestedDay: '', score: 0, reasons: [], state: { read: false, hidden: false, liked: 0 }, ...over,
 })
 const mkStore = async (items) => {
@@ -155,7 +155,24 @@ test('sof: 快报输出总结/领域速览/重要新闻三段，并在 LLM 失�
   const emptyDir = mkdtempSync(join(tmpdir(), 'rnd-hb-empty-'))
   const n = await appendHourlyBrief({ ...base, items: [], digestsDir: emptyDir })
   assert.equal(n, 0)
-  assert.equal(existsSync(join(emptyDir, '2026-10-28-hourly.md')), false)
+  // 空时段：写唯一一行说明（而不是不写文件）
+  md = readFileSync(join(emptyDir, '2026-10-28-hourly.md'), 'utf8')
+  assert.match(md, /> ⏳ 11:00 时段无 ≥6 分新条目，跳过。/)
+  // 连续空时段：说明文案更新为计数，全文仍只有一条
+  await appendHourlyBrief({ ...base, items: [], digestsDir: emptyDir, time: '12:00' })
+  md = readFileSync(join(emptyDir, '2026-10-28-hourly.md'), 'utf8')
+  assert.match(md, /> ⏳ 截至 12:00，已连续 2 个时段无 ≥6 分新条目。/)
+  assert.equal((md.match(/> ⏳/g) || []).length, 1)
+  // 恢复有内容：说明保留、沉到新时段之下，成为最近空档的标记
+  await appendHourlyBrief({ ...base, digestsDir: emptyDir, time: '13:00' })
+  md = readFileSync(join(emptyDir, '2026-10-28-hourly.md'), 'utf8')
+  assert.equal((md.match(/> ⏳/g) || []).length, 1)
+  assert.match(md, /## 13:00 时段快报[\s\S]*> ⏳ 截至 12:00/)
+  // 新一轮空档：旧记录被清，全文仍只有一条（且回到最上）
+  await appendHourlyBrief({ ...base, items: [], digestsDir: emptyDir, time: '14:00' })
+  md = readFileSync(join(emptyDir, '2026-10-28-hourly.md'), 'utf8')
+  assert.equal((md.match(/> ⏳/g) || []).length, 1)
+  assert.match(md, /# 时段快报[^\n]*\n\n> ⏳ 14:00 时段无 ≥6 分新条目，跳过。\n\n## 13:00/)
 })
 
 test('sof: 评分块失败不阻塞后续块', async () => {

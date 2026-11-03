@@ -9,7 +9,7 @@ import { mkdir, writeFile, readFile, access } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { DigestDocument, DigestLanguage, FeedItem, LogSink } from './core/types.js'
-import { noopLog } from './core/types.js'
+import { noopLog, isStaleItem } from './core/types.js'
 import type { StoreLike } from './core/store.js'
 import type { LlmClient } from './summarizer.js'
 import { summarize } from './summarizer.js'
@@ -171,9 +171,11 @@ async function scoreChunk(
     for (const e of arr) {
       const it = chunk[Number(e.i) - 1]
       if (it && typeof e.s === 'number' && e.s >= 1 && e.s <= 10) {
-        it.llmScore = e.s
+        const stale = isStaleItem(it)
+        it.llmScore = stale ? Math.min(e.s, 4) : e.s // 旧闻降权：压到快报/日报入选线下
         if (e.r) it.llmReason = String(e.r)
-        if (Array.isArray(e.t) && e.t.length) it.tags = e.t.map(String).slice(0, 4)
+        const lt = Array.isArray(e.t) ? e.t.map(String) : []
+        if (lt.length || stale) it.tags = [...(stale ? ['旧闻'] : []), ...lt].slice(0, 4)
         n += 1
       }
     }
@@ -235,7 +237,25 @@ export async function appendHourlyBrief(opts: {
 }): Promise<number> {
   const log = opts.log || noopLog
   const scored = opts.items.filter((i) => !i.dupOf && !i.state.hidden && (i.llmScore ?? 0) >= opts.minScore)
-  if (!scored.length) return 0
+  const file = join(opts.digestsDir, `${opts.day}-hourly.md`)
+  const head = `# 时段快报 · ${opts.day}\n\n`
+  await mkdir(opts.digestsDir, { recursive: true })
+  let body = ''
+  try { body = await readFile(file, 'utf8') } catch { /* 新文件 */ }
+  if (body.startsWith(head)) body = body.slice(head.length)
+  if (!scored.length) {
+    // 空时段说明（`> ⏳` 单行）：全文至多一条。连续空档就地更新文案（累计数）；
+    // 实段进来时说明被压到其下、留作最近空档的标记；再起新空档时清掉旧记录保证唯一。
+    const prevTop = body.match(/^> ⏳[^\n]*/)
+    const streak = prevTop ? (Number(prevTop[0].match(/已连续 (\d+) 个时段/)?.[1]) || 1) + 1 : 1
+    const note = streak > 1
+      ? `> ⏳ 截至 ${opts.time}，已连续 ${streak} 个时段无 ≥${opts.minScore} 分新条目。`
+      : `> ⏳ ${opts.time} 时段无 ≥${opts.minScore} 分新条目，跳过。`
+    body = body.replace(/^> ⏳[^\n]*\n?/gm, '').replace(/^\n+/, '')
+    await writeFile(file, head + note + '\n\n' + body, 'utf8')
+    log.info(`hourly brief ${opts.time}: 0 入选，空时段说明（连续 ${streak} 个）`)
+    return 0
+  }
   const groups = new Map<string, FeedItem[]>()
   for (const it of [...scored].sort((a, b) => (b.llmScore ?? 0) - (a.llmScore ?? 0))) {
     const t = it.topic || '综合'
@@ -281,12 +301,6 @@ export async function appendHourlyBrief(opts: {
     lines.push('')
   }
   const section = lines.join('\n').trimEnd() + '\n'
-  const file = join(opts.digestsDir, `${opts.day}-hourly.md`)
-  const head = `# 时段快报 · ${opts.day}\n\n`
-  let body = ''
-  await mkdir(opts.digestsDir, { recursive: true })
-  try { body = await readFile(file, 'utf8') } catch { /* 新文件 */ }
-  if (body.startsWith(head)) body = body.slice(head.length)
   const marker = `## ${opts.time} 时段快报`
   // 幂等：同刻已存在则替换该节（到下一个 ## 或文件尾），否则插到最前（新快报在上）
   const idx = body.indexOf(marker)

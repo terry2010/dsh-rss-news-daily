@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { FeedItem, FeedSource, FetchCycleResult, LogSink, SourceFetchResult } from './core/types.js'
-import { noopLog } from './core/types.js'
+import { noopLog, isStaleItem } from './core/types.js'
 import { parseFeedDocument, stripHtml, truncateCodePoints } from './core/parser.js'
 import { findDuplicate, itemHash } from './core/dedupe.js'
 import type { StoreLike } from './core/store.js'
@@ -193,6 +193,7 @@ function toItem(source: FeedSource, p: ReturnType<typeof parseFeedDocument>['ite
     hash: itemHash(p.title, p.summary || p.content, false),
     digestedDay: '',
     topic: source.category,
+    tags: isStaleItem({ publishedAt: p.publishedAt, fetchedAt: now.toISOString() }) ? ['旧闻'] : undefined,
     score: 0,
     reasons: [],
     state: { read: false, hidden: false, liked: 0 },

@@ -12,7 +12,7 @@ const mkStore = async () => {
 }
 const mkItem = (id, over = {}) => ({
   id, sourceId: 's1', title: `T-${id}`, link: `https://x/${id}`, summary: `sum ${id}`, content: '',
-  publishedAt: '2026-01-01', fetchedAt: new Date().toISOString(), hash: `h${id}`, digestedDay: '',
+  publishedAt: new Date(Date.now() - 3600e3).toISOString(), fetchedAt: new Date().toISOString(), hash: `h${id}`, digestedDay: '',
   topic: 'AI', score: 0, reasons: [], state: { read: false, hidden: false, liked: 0 }, ...over,
 })
 

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 
 const mkItem = (id, over = {}) => ({
   id: `i${id}`, title: `news ${id}`, link: `https://x/${id}`, summary: `s${id}`,
-  topic: '科技', sourceId: 'src1', publishedAt: '2026-01-01', fetchedAt: new Date().toISOString(),
+  topic: '科技', sourceId: 'src1', publishedAt: new Date(Date.now() - 3600e3).toISOString(), fetchedAt: new Date().toISOString(),
   hash: `h${id}`, digestedDay: '', score: 0, reasons: [], state: { read: false, hidden: false, liked: 0 }, ...over,
 })
 
