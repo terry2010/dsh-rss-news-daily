@@ -263,6 +263,10 @@ setInterval(() => {
     .catch(() => {})
 }, 30_000)
 
+$('#navEntry').addEventListener('change', async (e) => {
+  try { const r = await post('/prefs', { showNavEntry: e.target.checked }); state.prefs = r.prefs || state.prefs; toast(e.target.checked ? '已开启导航入口（重启生效）' : '已隐藏导航入口（重启生效）') }
+  catch (err) { toast(`保存失败: ${err.message}`) }
+})
 $('#autoTranslate').addEventListener('change', async (e) => {
   $('#autoTlWarn').hidden = !e.target.checked
   try { const r = await post('/prefs', { autoTranslate: e.target.checked }); state.prefs = r.prefs || state.prefs; toast(e.target.checked ? '已开启自动翻译' : '已关闭自动翻译') }
@@ -833,6 +837,7 @@ async function loadLlm() {
       `<option value="${esc(p.id)}" ${p.id === (t?.provider || r.current.provider) ? 'selected' : ''}>${esc(p.id)}</option>`).join('')
     await loadTlModels(t?.provider || r.current.provider || r.providers[0]?.id || '', t?.model || '')
     $('#tlInfo').textContent = t?.provider && t?.model ? `翻译模型: ${t.provider}/${t.model}` : '翻译模型: 跟随日报模型'
+    $('#navEntry').checked = state.prefs?.showNavEntry !== false
     $('#autoTranslate').checked = !!state.prefs?.autoTranslate
     $('#autoTlWarn').hidden = !$('#autoTranslate').checked
   } catch (e) { $('#llmInfo').textContent = `模型信息不可用: ${esc(e.message)}` }

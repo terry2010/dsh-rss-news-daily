@@ -329,6 +329,7 @@ function apiPrefs(deps: ApiDeps) {
         topics: body.topics, keywords: body.keywords,
         bannedKeywords: body.bannedKeywords, sourceWeight: body.sourceWeight,
         proxyUrl: body.proxyUrl, autoTranslate: body.autoTranslate,
+        showNavEntry: body.showNavEntry,
         digestOpts: body.digestOpts, subscribedTopics: body.subscribedTopics,
       }).filter(([, v]) => v !== undefined))
       deps.prefs.save(patch)
