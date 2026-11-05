@@ -38,6 +38,10 @@
     "digest"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/terry2010/dsh-rss-news-daily.git"
+  },
   "engines": {
     "node": ">=22.18"
   },
@@ -59,7 +63,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "test": "npm run build && git diff --exit-code lib && node --test test/*.test.mjs",
     "sources:check": "node scripts/sources-check.mjs",
     "prepublishOnly": "npm run build"
   }
