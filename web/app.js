@@ -6,7 +6,7 @@ const applyTheme = (t) => { if (t === 'dark' || t === 'light') document.document
 applyTheme(new URLSearchParams(location.search).get('theme'))
 window.addEventListener('message', (e) => { if (e.data && e.data.type === 'rnd-theme') applyTheme(e.data.theme) })
 
-const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', generating: false, sort: 'published', total: 0, pageSize: 50, daySetOn: '', dayPicked: '' }
+const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', generating: false, sort: 'published', total: 0, pageSize: 50, daySetOn: '', dayPicked: '', archiveYears: [], forceArchive: sessionStorage.getItem('rnd-force-archive') === '1' }
 const $ = (sel) => document.querySelector(sel)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 /** 输出链接白名单：只放行 http(s)，javascript:/data: 一律清空 */
@@ -51,13 +51,24 @@ async function loadItems() {
   p.set('page', state.page)
   if (!state.items.length) $('#itemList').innerHTML = '<div class="skel"><div></div><div></div></div>'.repeat(3) // 骨架屏:仅空列表时,刷新不闪
   try {
+    if (state.archive && !state.archYear) { // 无归档库——不发 year= 空请求，直接空态
+      state.items = []; state.total = 0
+      $('#itemList').innerHTML = '<p class="empty">暂无档案——清退的新闻会按年份归档到这里</p>'
+      return
+    }
     const r = state.archive
-      ? await api(`/archive/items?year=${state.archYear || ''}&${p}`)
+      ? await api(`/archive/items?year=${state.archYear}&${p}`)
       : await api(`/items?${p}`)
     state.items = r.items; state.total = r.total; state.pageSize = r.pageSize
     renderItems()
   } catch (e) { $('#itemList').innerHTML = `<p class="err">加载失败: ${esc(e.message)}</p>` }
 }
+// 档案按钮可见性：无年库默认隐藏；彩蛋区开关经 sessionStorage 强显（本会话有效，重启即失效）
+function updateArchiveBtn() {
+  $('#btnArchive').hidden = !(state.forceArchive || (state.archiveYears || []).length)
+}
+api('/archive/list').then((r) => { state.archiveYears = r.archives || []; updateArchiveBtn() })
+  .catch(() => { state.archiveYears = []; updateArchiveBtn() })
 // 档案模式：切换年库只读视图（隐藏操作按钮、日期的unread 过滤无关但保留透传无妨）
 async function toggleArchive(on) {
   state.archive = on
@@ -267,6 +278,29 @@ $('#navEntry').addEventListener('change', async (e) => {
   try { const r = await post('/prefs', { showNavEntry: e.target.checked }); state.prefs = r.prefs || state.prefs; toast(e.target.checked ? '已开启导航入口（重启生效）' : '已隐藏导航入口（重启生效）') }
   catch (err) { toast(`保存失败: ${err.message}`) }
 })
+async function loadLoopGuard() {
+  try {
+    const g = await api('/loopguard')
+    const cb = $('#loopGuard')
+    cb.checked = g.pref !== null && g.pref !== undefined ? !!g.pref : !!g.installed
+    $('#loopGuardInfo').textContent = !g.installed
+      ? '未检测到 dsh-loop-recover——可到市场安装后开启本项'
+      : !g.enabled ? 'dsh-loop-recover 已安装但未启用——请在 dsh 插件管理中启用后本项才会生效' : ''
+  } catch { /* 老后端无此接口则静默 */ }
+}
+$('#loopGuard').addEventListener('change', async (e) => {
+  try {
+    const r = await post('/prefs', { loopGuard: e.target.checked })
+    state.prefs = r.prefs || state.prefs
+    if (e.target.checked) {
+      const g = await api('/loopguard').catch(() => null)
+      if (g && !g.installed) toast('未检测到 dsh-loop-recover——本项暂不生效，可到市场安装')
+      else if (g && !g.enabled) toast('dsh-loop-recover 已安装但未启用——请在插件管理中启用')
+      else toast('已开启模型输出死循环过滤')
+    } else toast('已关闭模型输出死循环过滤')
+    loadLoopGuard()
+  } catch (err) { toast(`保存失败: ${err.message}`) }
+})
 $('#autoTranslate').addEventListener('change', async (e) => {
   $('#autoTlWarn').hidden = !e.target.checked
   try { const r = await post('/prefs', { autoTranslate: e.target.checked }); state.prefs = r.prefs || state.prefs; toast(e.target.checked ? '已开启自动翻译' : '已关闭自动翻译') }
@@ -290,6 +324,7 @@ async function loadDigest() {
     $('#digestView').innerHTML = mdLite(r.markdown)
     injectDayNav(day)
     injectHourNav()
+    injectDomainNav()
   } catch {
     // 该天无日报但有快报 → 自动切快报展示（同一天的内容优先于跨天回退）
     if (state.digestKind === 'digest') {
@@ -301,6 +336,7 @@ async function loadDigest() {
         $('#digestView').innerHTML = mdLite(r.markdown)
         injectDayNav(day)
         injectHourNav()
+        injectDomainNav()
         return
       } catch { /* 快报也没有→继续原回退 */ }
     }
@@ -316,6 +352,7 @@ async function loadDigest() {
         $('#digestView').innerHTML = mdLite(r.markdown)
         injectDayNav(yday)
         injectHourNav()
+        injectDomainNav()
         return
       } catch { /* 前一天也没有→走空态 */ }
     }
@@ -332,9 +369,12 @@ async function injectDayNav(day) {
   const h1 = $('#digestView h1')
   if (!h1 || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return
   const probe = async (delta) => {
-    const d = new Date(`${day}T00:00:00`); d.setDate(d.getDate() + delta)
-    const ds = dayStr(d)
-    try { await api(`/digest/${ds}${state.digestKind === 'hourly' ? '?kind=hourly' : ''}`); return ds } catch { return null }
+    for (let i = 1; i <= 14; i++) { // 跳过没产出日报的日子（宕机/无数据），最多找 14 天
+      const d = new Date(`${day}T00:00:00`); d.setDate(d.getDate() + delta * i)
+      const ds = dayStr(d)
+      try { await api(`/digest/${ds}${state.digestKind === 'hourly' ? '?kind=hourly' : ''}`); return ds } catch { /* 这天没有→继续找 */ }
+    }
+    return null
   }
   const [prev, next] = await Promise.all([probe(-1), probe(1)])
   if (!prev && !next) return
@@ -352,6 +392,45 @@ async function injectDayNav(day) {
 }
 
 /** 快报各时段标题旁的上下跳转：▲上一时段(更新) ▼下一时段(更早)；日报无时段标题则空操作 */
+// 150ms 快平滑：原生 smooth 不可调速（~400ms），瞬时又太跳——easeOutQuad 快速到位。
+// 时段 ▲▼ 导航与领域目录 #锚点链接共用。
+function fastScrollTo(t) {
+  const from = window.scrollY
+  const dist = t.getBoundingClientRect().top - 64 // 64 = scroll-margin-top 对齐 sticky 栏
+  const t0 = performance.now()
+  const step = (now) => {
+    const p = Math.min(1, (now - t0) / 150)
+    window.scrollTo(0, from + dist * (1 - (1 - p) * (1 - p)))
+    if (p < 1) requestAnimationFrame(step)
+  }
+  requestAnimationFrame(step)
+}
+
+/** 日报领域导航：### 领域 标题右侧加 ▲上一域 ▼下一域 ⤴返回目录（DOM 注入，不动 markdown 锚点） */
+function injectDomainNav() {
+  const kids = [...$('#digestView').children]
+  const startIdx = kids.findIndex((el) => el.tagName === 'H2' && /重要新闻|Top Stories/.test(el.textContent))
+  if (startIdx < 0) return
+  const tocH2 = kids.find((el) => el.tagName === 'H2' && /领域目录/.test(el.textContent))
+  const doms = []
+  for (let i = startIdx + 1; i < kids.length; i++) {
+    if (kids[i].tagName === 'H2') break
+    if (kids[i].tagName === 'H3') doms.push(kids[i])
+  }
+  const names = doms.map((h) => h.textContent.trim())
+  doms.forEach((h, i) => {
+    const up = i > 0 ? `<button class="daynav hour" data-dto="${i - 1}" title="上一领域 ${names[i - 1]}">▲</button>` : '<span class="daynav off">▲</span>'
+    const down = i < doms.length - 1 ? `<button class="daynav hour" data-dto="${i + 1}" title="下一领域 ${names[i + 1]}">▼</button>` : '<span class="daynav off">▼</span>'
+    const back = tocH2 ? '<button class="daynav hour" data-dtoc="1" title="返回领域目录">⤴</button>' : ''
+    h.insertAdjacentHTML('beforeend', ` ${up} ${down} ${back}`)
+  })
+  doms.forEach((h) => h.querySelectorAll('.daynav.hour').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.dtoc) { if (tocH2) fastScrollTo(tocH2); return }
+    const t = doms[+b.dataset.dto]
+    if (t) fastScrollTo(t)
+  })))
+}
+
 function injectHourNav() {
   const secs = [...document.querySelectorAll('#digestView h2')].filter((h) => /^\d{2}:\d{2}\s*时段快报/.test(h.textContent.trim()))
   secs.forEach((h, i) => {
@@ -361,19 +440,24 @@ function injectHourNav() {
   })
   document.querySelectorAll('#digestView .daynav.hour').forEach((b) => b.addEventListener('click', () => {
     const t = secs[+b.dataset.to]
-    if (!t) return
-    // 150ms 快平滑：原生 smooth 不可调速（~400ms），瞬时又太跳——easeOutQuad 快速到位
-    const from = window.scrollY
-    const dist = t.getBoundingClientRect().top + from - 64 - from // 64 = scroll-margin-top 对齐 sticky 栏
-    const t0 = performance.now()
-    const step = (now) => {
-      const p = Math.min(1, (now - t0) / 150)
-      window.scrollTo(0, from + dist * (1 - (1 - p) * (1 - p)))
-      if (p < 1) requestAnimationFrame(step)
-    }
-    requestAnimationFrame(step)
+    if (t) fastScrollTo(t)
   }))
 }
+
+// 领域目录/返回目录等 #锚点链接：委托到 #digestView 一次绑定，走同一个 150ms 快速滚动。
+// 快报同名 #### 领域 跨时段重复：优先在链接所在的 ## 节内命中，避免旧时段跳到最新节的同名块
+$('#digestView').addEventListener('click', (e) => {
+  const a = e.target.closest('a[href^="#"]')
+  if (!a) return
+  const id = a.getAttribute('href').slice(1)
+  const hs = [...$('#digestView').querySelectorAll('h2,h3,h4')]
+  const start = hs.filter((h) => h.tagName === 'H2' && h.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING).pop()
+  const cands = hs.filter((h) => h.id === id)
+  const t = (start && cands.find((h) => h.compareDocumentPosition(start) & Node.DOCUMENT_POSITION_PRECEDING)) || cands[0]
+  if (!t) return
+  e.preventDefault()
+  fastScrollTo(t)
+})
 
 /** 轻量 Markdown 渲染：h1-h4/列表/引用/粗体/斜体/行内码/链接/横线——覆盖日报全部语法 */
 function mdLite(md) {
@@ -384,13 +468,13 @@ function mdLite(md) {
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
   const out = []
-  let inUl = false, inOl = false
-  const closeLists = () => { if (inUl) { out.push('</ul>'); inUl = false } if (inOl) { out.push('</ol>'); inOl = false } }
+  let inUl = false, inOl = false, inBq = false
+  const closeLists = () => { if (inUl) { out.push('</ul>'); inUl = false } if (inOl) { out.push('</ol>'); inOl = false } if (inBq) { out.push('</blockquote>'); inBq = false } }
   for (const raw of md.split('\n')) {
     const l = raw.trimEnd(), e = inline(l)
     const h = l.match(/^(#{1,4})\s+(.*)$/)
     if (h) { closeLists(); const id = h[2].replace(/[<>"'`]/g, '').trim(); out.push(`<h${h[1].length} id="${id}">${inline(h[2])}</h${h[1].length}>`); continue }
-    if (l.startsWith('> ')) { closeLists(); out.push(`<blockquote>${inline(l.slice(2))}</blockquote>`); continue }
+    if (l.startsWith('>')) { const c = l.replace(/^>\s?/, ''); if (!inBq) { closeLists(); out.push('<blockquote>'); inBq = true } else out.push('<br>'); out.push(inline(c)); continue }
     if (/^---+$/.test(l.trim())) { closeLists(); out.push('<hr>'); continue }
     if (l.startsWith('- ') || l.startsWith('* ')) { if (inOl) { out.push('</ol>'); inOl = false } if (!inUl) { out.push('<ul>'); inUl = true } out.push(`<li>${inline(l.slice(2))}</li>`); continue }
     const ol = l.match(/^(\d+)\.\s+(.*)$/)
@@ -411,13 +495,8 @@ const syncRunBtn = () => {
 for (const [id, kind] of [['btnKindDigest', 'digest'], ['btnKindHourly', 'hourly']]) {
   $(`#${id}`).addEventListener('click', () => { state.digestKind = kind; syncRunBtn(); loadDigest() })
 }
-$('#btnDigestRun').addEventListener('click', async () => {
-  const btn = $('#btnDigestRun')
-  btn.disabled = true; btn.hidden = true // 生成中隐藏入口，防重入
-  $('#btnDigestStop').hidden = false
-  $('#digestBusy').hidden = false
-  const reset = () => { state.generating = false; btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
-  state.generating = true
+// 日报生成进度轮询：手动点击与 iframe 重挂后的状态恢复共用
+function startDigestWatch(reset) {
   const dp = setInterval(async () => {
     try {
       const p = await api('/digest-progress')
@@ -425,6 +504,48 @@ $('#btnDigestRun').addEventListener('click', async () => {
       clearInterval(dp); reset(); toast('日报生成完成'); loadDigest()
     } catch { /* 进度不可达不影响生成 */ }
   }, 900)
+  return dp
+}
+// iframe 重挂后恢复：state.generating 归零但后端还在跑——探测一次，在跑就恢复生成中 UI 续轮询
+async function resumeDigestIfRunning() {
+  try {
+    // 快报/定时抓取管线：busy 条只报状态不冒充停止键（停止是 /fetch-cancel，不同于 /digest-stop）
+    const f = await api('/fetch-progress').catch(() => null)
+    if (f?.running) {
+      $('#digestBusy').hidden = false
+      const tick = (p) => `⏳ 正在抓取/评分…${p.total ? ` (${p.done}/${p.total})` : ''}`
+      $('#digestBusy').textContent = tick(f)
+      const poll = setInterval(async () => {
+        try {
+          const q = await api('/fetch-progress')
+          if (q.running) { $('#digestBusy').textContent = tick(q); return }
+          clearInterval(poll); $('#digestBusy').hidden = true; loadDigest()
+        } catch { /* 进度不可达不阻塞 */ }
+      }, 1500)
+      setTimeout(() => { clearInterval(poll); $('#digestBusy').hidden = true }, 120_000)
+    }
+    const p = await api('/digest-progress')
+    if (!p.running) return
+    const btn = $('#btnDigestRun')
+    btn.disabled = true; btn.hidden = true
+    $('#btnDigestStop').hidden = false
+    $('#digestBusy').hidden = false
+    const reset = () => { state.generating = false; btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
+    state.generating = true
+    const dp = startDigestWatch(reset)
+    $('#digestBusy').textContent = '⏳ 日报生成中…'
+  } catch { /* 探测失败按未运行 */ }
+}
+resumeDigestIfRunning()
+
+$('#btnDigestRun').addEventListener('click', async () => {
+  const btn = $('#btnDigestRun')
+  btn.disabled = true; btn.hidden = true // 生成中隐藏入口，防重入
+  $('#btnDigestStop').hidden = false
+  $('#digestBusy').hidden = false
+  const reset = () => { state.generating = false; btn.disabled = false; btn.hidden = false; $('#btnDigestStop').hidden = true; $('#digestBusy').hidden = true }
+  state.generating = true
+  const dp = startDigestWatch(reset)
   if (state.digestKind === 'hourly') { // 快报=抓取+评分产出：跑一轮 fetch 自然生成
     clearInterval(dp)
     // 生成始终针对今天：跨零点时日期框可能还停在昨天（日报回退改的），先拨回本地当天
@@ -838,6 +959,7 @@ async function loadLlm() {
     await loadTlModels(t?.provider || r.current.provider || r.providers[0]?.id || '', t?.model || '')
     $('#tlInfo').textContent = t?.provider && t?.model ? `翻译模型: ${t.provider}/${t.model}` : '翻译模型: 跟随日报模型'
     $('#navEntry').checked = state.prefs?.showNavEntry !== false
+    loadLoopGuard()
     $('#autoTranslate').checked = !!state.prefs?.autoTranslate
     $('#autoTlWarn').hidden = !$('#autoTranslate').checked
   } catch (e) { $('#llmInfo').textContent = `模型信息不可用: ${esc(e.message)}` }
@@ -1082,6 +1204,15 @@ $('#versionTag')?.addEventListener('click', () => {
   }
 })
 api('/status').then((s) => { if (s.version) $('#versionTag').textContent = `v${s.version}`; if (s.tokenStats) statsData = s.tokenStats }).catch(() => {})
+
+// 彩蛋区：强行显示档案按钮——sessionStorage 会话级，重启即失效
+if ($('#forceArchive')) $('#forceArchive').checked = state.forceArchive
+$('#forceArchive')?.addEventListener('change', (e) => {
+  state.forceArchive = e.target.checked
+  sessionStorage.setItem('rnd-force-archive', e.target.checked ? '1' : '0')
+  updateArchiveBtn()
+  toast(e.target.checked ? '已强行显示档案按钮（重启后恢复默认）' : '已恢复默认显隐')
+})
 
 // ---- 初始化 ----
 

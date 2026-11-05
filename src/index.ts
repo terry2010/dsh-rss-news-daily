@@ -10,8 +10,8 @@
  * 会话零注入：apply 只注册工具/定时器/路由，不写 systemPrompt、不发 followup。
  */
 
-import { readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { TimerSeam } from './scheduler.js'
@@ -26,7 +26,7 @@ import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
 import { runDailyDigest, scoreNewItems, appendHourlyBrief } from './digest-pipeline.js'
-import { DshLlmClient } from './dsh-llm.js'
+import { DshLlmClient, setLlmDiagFile, setLoopGuardEnabled } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
 import type { FeedItem } from './core/types.js'
 import { mountApi } from './api.js'
@@ -72,6 +72,8 @@ export function apply(ctx: Context, config: ConfigType) {
     return
   }
   const dataDir = resolveDataDir(config.dataDir)
+  setLlmDiagFile(join(dataDir, 'llm.log')) // LLM 每次调用落一行：死循环/空回复排查证据
+  setLoopGuardEnabled(() => prefs.get().loopGuard !== false) // 用户显式关才停；装了 loop-recover 默认开
   const probe = probeSqlite()
   if (!probe.ok) throw new Error('node:sqlite unavailable in this host (requires Node >=22.5)')
   if (!probe.fts) log.warn('SQLite FTS5/trigram unavailable in this host; search falls back to LIKE')
@@ -124,7 +126,7 @@ export function apply(ctx: Context, config: ConfigType) {
     } catch { /* 调试写盘失败不影响主流程 */ }
   }
   const briefEnabled = (dopts?: { hourlyBrief?: boolean }) => dopts?.hourlyBrief ?? config.fetch.hourlyBrief
-  const briefNow = async (fresh: FeedItem[]) => {
+  const briefNow = async (fresh: FeedItem[], signal?: AbortSignal) => {
     const now = new Date()
     const day = zonedDayKey(now, config.timezone || undefined)
     const hm = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: config.timezone || undefined }).format(now)
@@ -135,6 +137,9 @@ export function apply(ctx: Context, config: ConfigType) {
       minScore: config.fetch.hourlyMinScore,
       digestsDir: join(dataDir, 'digests'), log,
       llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log) : undefined,
+      translateClient: llmRuntime ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log) : undefined,
+      summaryConcurrency: prefs.get().digestOpts?.summaryConcurrency ?? config.summary.concurrency,
+      signal,
       llmTimeoutMs: config.llm.timeoutMs,
       llmMaxTokens: config.llm.maxTokens,
     })
@@ -146,7 +151,7 @@ export function apply(ctx: Context, config: ConfigType) {
     dbgScore('enter', { doScore, fresh: fresh.length, llmEnabled: config.llm.enabled, hasRuntime: !!llmRuntime })
     // 评分在跑不挡快报：用已评出的分照样追加一段（长评分窗口期快报不停更）
     if (scoringInFlight) {
-      if (briefEnabled(dopts)) await briefNow(fresh)
+      if (briefEnabled(dopts)) await briefNow(fresh, signal)
       return
     }
     if (!doScore) return
@@ -167,7 +172,7 @@ export function apply(ctx: Context, config: ConfigType) {
       dbgScore('scored', { scored, lastWarn })
       addTokens('score', scoreClient.usage)
       if (scored) await store.save()
-      if (briefEnabled(dopts)) await briefNow(fresh)
+      if (briefEnabled(dopts)) await briefNow(fresh, signal)
       dbgScore('done', { scored })
     } catch (e) { dbgScore('error', { error: e instanceof Error ? e.message : String(e) }); log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }
     finally { scoringInFlight = false }
@@ -177,10 +182,11 @@ export function apply(ctx: Context, config: ConfigType) {
     if (!prefs.get().autoTranslate || !llmRuntime) return
     const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
     // 历史失败重试：translationError 且未超次数的旧条目每轮捎带一批；限量防长尾占满抓取周期
+    // 外文未翻全部进重试（早退轮次不打 error 标记的条目也会搁浅——不能只挑有 error 的）
     const backlog = store.items
-      .filter((i) => i.fetchedAt < cycleStart && !i.state.translation && !i.aiSummary && i.state.translationError
+      .filter((i) => i.fetchedAt < cycleStart && !i.state.translation && !i.aiSummary
         && (i.state.translationRetries ?? 0) < 3 && isForeign(i))
-      .slice(0, 25)
+      .slice(0, 50)
     const queue = [...fresh, ...backlog]
     if (queue.length && !signal?.aborted) fetchProg = { running: true, done: 0, total: queue.length, stage: 'translate', current: '' }
     let translated = 0
@@ -479,6 +485,14 @@ export function apply(ctx: Context, config: ConfigType) {
     .then(() => {
       if (disposed) return
       prefs.load()
+      // loopGuard 首装一次性定型：此刻装了 loop-recover→勾，没装→不勾并落盘；
+      // 此后不跟随安装状态变——之后装了也要用户手动开
+      if (prefs.get().loopGuard === undefined) {
+        const nm = dirname(fileURLToPath(new URL('../', import.meta.url)))
+        const installed = existsSync(join(nm, 'dsh-loop-recover', 'package.json'))
+        prefs.save({ loopGuard: installed })
+        log.info(`loopGuard initialized: ${installed ? 'on (dsh-loop-recover installed)' : 'off (not installed)'}`)
+      }
       disposers.push(registerTools(ctx, svc))
       disposers.push(startScheduler(ctx as unknown as TimerSeam, {
         fetch: {

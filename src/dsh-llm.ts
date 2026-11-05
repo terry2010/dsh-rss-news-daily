@@ -7,6 +7,7 @@
  * summarizer degrades to its extractive fallback.
  */
 
+import { appendFile } from 'node:fs/promises'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { LlmRuntime, StreamChunk } from '@deepseek-ai/dsh-llm'
 
@@ -52,9 +53,52 @@ export async function resolveDshRoute(
   return { provider, model }
 }
 
-/** Accumulate a stream into plain text, surfacing terminal failures. usage 传入对象则原地累计 token 用量（流中 usage 为累计值，取最新）。 */
-export async function collectText(stream: AsyncIterable<StreamChunk>, usage?: { inputTokens: number; outputTokens: number; _seen?: number; _seenOut?: number }): Promise<string> {
+/** 诊断信息：reasoning 长度累计 + 截尾样本（死循环时尾巴就是复读内容）。 */
+export interface CollectDiag { reasoningChars: number; tail: string }
+
+/** LLM 诊断日志文件（ctx.logger 不落盘——模型死循环排查需要可查的文本证据）。 */
+let diagFile: string | undefined
+export function setLlmDiagFile(path: string): void { diagFile = path }
+function diagLog(line: string): void {
+  if (!diagFile) return
+  void appendFile(diagFile, `${new Date().toISOString()} ${line}\n`).catch(() => {})
+}
+
+/** dsh-loop-recover 的检测器（装了就用，没装就跳过——它只拦 agent 循环，不护我们的旁路调用）。
+ *  变量形式的 specifier 让 tsc 不做静态解析——该包是宿主 profile 的可选共存插件，非本包依赖。 */
+type LoopHit = { kind?: string; cutStart?: number }
+type LoopDetect = (text: string) => LoopHit | null
+let loopDetLoad: Promise<LoopDetect | null> | undefined
+let loopDetState: 'untested' | 'active' | 'absent' = 'untested'
+let loopGuardOn: () => boolean = () => true // 默认开；装了 loop-recover 才真生效
+export function setLoopGuardEnabled(fn: () => boolean): void { loopGuardOn = fn }
+/** 检测器实际状态：供 /api/loopguard 告诉用户"装了但没启用/根本没装" */
+export function loopDetectStatus(): 'untested' | 'active' | 'absent' { return loopDetState }
+function loadLoopDetect(log: LogSink): Promise<LoopDetect | null> {
+  loopDetLoad ??= (async () => {
+    try {
+      const spec = 'dsh-loop-recover/detector'
+      const m = await import(spec) as { detectRepetition?: LoopDetect }
+      if (typeof m.detectRepetition !== 'function') { loopDetState = 'absent'; return null }
+      loopDetState = 'active'
+      log.info('loop-recover detector loaded: stream loop filter enabled')
+      return m.detectRepetition
+    } catch { loopDetState = 'absent'; return null }
+  })()
+  return loopDetLoad
+}
+
+/** Accumulate a stream into plain text, surfacing terminal failures. usage 传入对象则原地累计 token 用量（流中 usage 为累计值，取最新）。loopDetect 命中即截流。 */
+export async function collectText(
+  stream: AsyncIterable<StreamChunk>,
+  usage?: { inputTokens: number; outputTokens: number; _seen?: number; _seenOut?: number },
+  diag?: CollectDiag & { loop?: string },
+  loopDetect?: LoopDetect,
+): Promise<string> {
   let text = ''
+  let reasoningBuf = '' // 检测窗口：reasoning 死循环也只能靠它现形（截尾 8K 防全量重扫）
+  let lastTextCheck = 0
+  let lastReasoningCheck = 0
   for await (const chunk of stream) {
     const u = (chunk as { usage?: { inputTokens?: number; outputTokens?: number } }).usage
     if (usage && u) {
@@ -66,9 +110,29 @@ export async function collectText(stream: AsyncIterable<StreamChunk>, usage?: { 
     switch (chunk.type) {
       case 'text-delta':
         text += chunk.text
+        if (loopDetect && text.length - lastTextCheck >= 2048) {
+          lastTextCheck = text.length
+          const hit = loopDetect(text)
+          if (hit) {
+            if (diag) diag.loop = `${hit.kind ?? 'repetition'}@${hit.cutStart ?? text.length}`
+            return text.slice(0, hit.cutStart ?? text.length) // for-await 退出即关闭底层流
+          }
+        }
         break
       case 'reasoning-delta':
-        // Reasoning deltas are not part of the visible answer.
+        // Reasoning deltas are not part of the visible answer — 但留证供死循环诊断
+        if (diag) {
+          diag.reasoningChars += chunk.text.length
+          diag.tail = (diag.tail + chunk.text).slice(-600)
+        }
+        if (loopDetect) {
+          reasoningBuf = (reasoningBuf + chunk.text).slice(-8192)
+          const totalR = diag?.reasoningChars ?? reasoningBuf.length // 增量按总量计：buffer 有上限，到顶后 length 不再涨
+          if (reasoningBuf.length >= 2048 && totalR - lastReasoningCheck >= 2048) {
+            lastReasoningCheck = totalR
+            if (loopDetect(reasoningBuf)) throw new RssServiceError(`LLM reasoning loop detected (reasoning ${totalR} chars)`)
+          }
+        }
         break
       case 'finish':
         if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
@@ -81,7 +145,10 @@ export async function collectText(stream: AsyncIterable<StreamChunk>, usage?: { 
         break
     }
   }
-  if (text.trim() === '') throw new RssServiceError('LLM returned an empty completion')
+  if (text.trim() === '') {
+    const d = diag ? ` (reasoning ${diag.reasoningChars} chars${diag.tail ? `, tail: "${diag.tail.slice(-160).replace(/\s+/g, ' ')}"` : ''})` : ''
+    throw new RssServiceError(`LLM returned an empty completion${d}`)
+  }
   return text
 }
 
@@ -133,7 +200,22 @@ export class DshLlmClient implements LlmClient {
       temperature: request.temperature,
       ...(request.signal !== undefined ? { signal: request.signal } : {}),
     })
-    return collectText(idleWatch(stream, this.idleTimeoutMs, this.log), this.usage)
+    const diag: CollectDiag & { loop?: string } = { reasoningChars: 0, tail: '' }
+    const loopDetect = loopGuardOn() ? await loadLoopDetect(this.log) : null
+    const t0 = Date.now()
+    try {
+      const text = await collectText(idleWatch(stream, this.idleTimeoutMs, this.log), this.usage, diag, loopDetect ?? undefined)
+      const ms = Date.now() - t0
+      const rs = diag.reasoningChars ? ` reasoning=${diag.reasoningChars}c` : ''
+      if (diag.loop) this.log.warn(`LLM output loop cut: ${diag.loop}`)
+      this.log.info(`LLM done: ${text.length} chars${rs ? `,${rs}` : ''}, ${Math.round(ms / 1000)}s`)
+      diagLog(`ok ${route.provider}/${route.model} text=${text.length}c${rs} in=${this.usage.inputTokens} out=${this.usage.outputTokens} ms=${ms}`)
+      return text
+    } catch (e) {
+      const tail = diag.tail ? ` tail="${diag.tail.slice(-200).replace(/\s+/g, ' ')}"` : ''
+      diagLog(`FAIL ${route.provider}/${route.model} reasoning=${diag.reasoningChars}c ms=${Date.now() - t0} err="${e instanceof Error ? e.message : String(e)}"${tail}`)
+      throw e
+    }
   }
 }
 /** 流每块输出间隔上限：只掐"连上但不出字"的死连接；推理模型持续吐 reasoning 不受影响。 */

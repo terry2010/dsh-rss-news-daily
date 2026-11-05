@@ -93,17 +93,20 @@ export function renderDigest(options: DigestRenderOptions): string {
     '',
   ].join('\n')
 
+  // LLM 总结里夹带的裸标题：与本节同名的（概述/Overview）直接丢弃，其余降为加粗行
+  const summaryText = options.summaryText.replace(/^#{1,6}\s+(.+)$/gm,
+    (_m, t: string) => t.trim() === SECTION_SUMMARY[options.language] ? '' : `**${t.trim()}**`)
   const summary = [
     `## ${SECTION_SUMMARY[options.language]}`,
     '',
     options.degradedNote ? `> ⚠ 总结段降级：${options.degradedNote}` : '',
-    options.summaryText.trim() === '' ? '—' : options.summaryText,
+    summaryText.trim() === '' ? '—' : summaryText.split('\n').map((l) => `> ${l}`).join('\n'), // 概述整段进白色引用卡（mdLite 连续 > 行已合并）
     '',
   ].filter((l) => l !== '').join('\n')
 
   // 领域目录：可点击锚点跳到对应领域摘要（id=领域名，mdLite 给标题生成同名锚点）
   const domainSec = options.domainSummaries?.length
-    ? ['## 领域目录', '', ...options.domainSummaries.map((d) => `- **[${d.topic}](#${d.topic})** · ${d.count}条`), ''].join('\n')
+    ? ['## 领域目录', '', ...options.domainSummaries.map((d) => `- **[${d.topic}](#${d.topic})** · ${d.count}条 — ${d.text.replace(/^#+\s*/, '').replace(/\s+/g, ' ').trim().slice(0, 80)}`), ''].join('\n')
     : ''
   const itemLine = (item: (typeof options.items)[number], index: number) => {
     const source = options.sourceTitles.get(item.sourceId) ?? item.sourceId
@@ -144,7 +147,7 @@ export function renderDigest(options: DigestRenderOptions): string {
     sectionParts.push(`### ${topic}`, '')
     const dom = summaryByTopic.get(topic)
     if (dom) sectionParts.push(`> ${dom.text.replace(/\s+/g, ' ').trim().slice(0, 200)}`, '')
-    sectionParts.push(...list.map(({ item, index }) => itemLine(item, index)), '', `[⤴ 返回目录](#领域目录)`, '')
+    sectionParts.push(...list.map(({ item, index }) => itemLine(item, index)), '')
   }
   const section = sectionParts.join('\n')
 

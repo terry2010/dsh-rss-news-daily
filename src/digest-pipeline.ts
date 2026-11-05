@@ -92,7 +92,7 @@ function toSummarizable(item: FeedItem, sourceTitle: string): SummarizableItem {
 }
 
 /** 逐条翻译：CJK 占比 ≤50% 的条目调翻译模型写 state.translation（'标题\n\n正文'），日报渲染中英对照。 */
-async function translateItems(items: FeedItem[], client: LlmClient, opts: DigestPipelineOptions): Promise<void> {
+async function translateItems(items: FeedItem[], client: LlmClient, opts: Partial<Pick<DigestPipelineOptions, 'summaryConcurrency' | 'llmTimeoutMs' | 'signal' | 'onItemDone'>>): Promise<void> {
   const targets = items.filter((i) => {
     const t = i.title + (i.summary || '')
     const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length
@@ -100,7 +100,7 @@ async function translateItems(items: FeedItem[], client: LlmClient, opts: Digest
   })
   const queue = [...targets]
   let done = 0
-  const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency) }, async () => {
+  const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency ?? 2) }, async () => {
     for (;;) {
       if (opts.signal?.aborted) return
       const item = queue.shift()
@@ -110,7 +110,7 @@ async function translateItems(items: FeedItem[], client: LlmClient, opts: Digest
           system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
           prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
           maxTokens: 1200,
-          signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
+          signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]),
         })
         const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
         item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
@@ -231,6 +231,10 @@ export async function appendHourlyBrief(opts: {
   minScore: number
   digestsDir: string
   llmClient?: LlmClient
+  translateClient?: LlmClient
+  summaryConcurrency?: number
+  signal?: AbortSignal
+  onItemDone?: (done: number, total: number, stage?: string) => void
   llmTimeoutMs?: number
   llmMaxTokens?: number
   log?: LogSink
@@ -256,6 +260,8 @@ export async function appendHourlyBrief(opts: {
     log.info(`hourly brief ${opts.time}: 0 入选，空时段说明（连续 ${streak} 个）`)
     return 0
   }
+  // 快报生成时补翻入选外文条目：isForeign 由 translateItems 内判（CJK≤50%），无译文才调
+  if (opts.llmClient || opts.translateClient) await translateItems(scored.filter((i) => !i.state.translation), opts.translateClient ?? opts.llmClient!, opts)
   const groups = new Map<string, FeedItem[]>()
   for (const it of [...scored].sort((a, b) => (b.llmScore ?? 0) - (a.llmScore ?? 0))) {
     const t = it.topic || '综合'
@@ -266,11 +272,11 @@ export async function appendHourlyBrief(opts: {
   if (opts.llmClient) {
     try {
       brief = (await opts.llmClient.generateText({
-        system: '你是新闻快报编辑。用 2-3 句中文概括本时段新闻要点：点出具体事件与主体（谁、做了什么），抓主线不复述列表。',
+        system: '你是新闻快报编辑。概括本时段新闻要点：先一句总起（主线/主题是什么），再分点列出具体事件（谁、做了什么），每点一行以 - 开头，至多 4 点，挑最重要的。不要解释。',
         prompt: scored.slice(0, 30).map((it, i) => `${i + 1}. [${it.topic || '综合'}] ${zhTitleOf(it)}`).join('\n'),
         maxTokens: Math.min(opts.llmMaxTokens ?? 1500, 2000),
         signal: AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000),
-      })).trim().replace(/\n+/g, ' ')
+      })).trim() // 不压平：模型若分行输出则保留（多行逐行加 > 前缀）
     } catch (e) { log.warn(`hourly brief summary failed: ${String((e as Error)?.message || e)}`) }
   }
   // LLM 不可用/空回复时的抽取式兜底：点名 Top 标题，不再是无内容的"领域有更新"
@@ -279,12 +285,14 @@ export async function appendHourlyBrief(opts: {
     brief = `本时段 ${scored.length} 条入选（${[...groups.keys()].slice(0, 4).join('、')}），要点：${tops}。`
   }
 
-  const lines = [`## ${opts.time} 时段快报`, '', `> ${brief}`, '']
+  // 逐行 > 前缀：mdLite 把连续引用行合并成一个白色卡片（保卡片底色；碎片化 bug 已修）
+  const lines = [`## ${opts.time} 时段快报`, '', brief.split('\n').map((l) => `> ${l}`).join('\n'), '']
   // 领域速览：有新闻才出——每域一行（条数+最高分）
   lines.push('### 领域速览', '')
   for (const [topic, list] of groups) {
     const top = Math.max(...list.map((i) => i.llmScore ?? 0))
-    lines.push(`- **${topic}** ${list.length} 条 · 最高 ${top} 分`)
+    // 与日报目录同款锚点：#### topic 标题 id 即领域名，点击走 fastScrollTo 快速跳
+    lines.push(`- **[${topic}](#${topic})** ${list.length} 条 · 最高 ${top} 分`)
   }
   lines.push('', '### 重要新闻', '')
   for (const [topic, list] of groups) {
@@ -423,7 +431,7 @@ async function itemSummaries(
   const targets = items.filter((i) => sourcesById.get(i.sourceId)?.summarize !== false).slice(0, opts.summaryMaxItems)
   const queue = [...targets]
   let done = 0
-  const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency) }, async () => {
+  const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency ?? 2) }, async () => {
     for (;;) {
       const item = queue.shift()
       if (!item) return
@@ -434,7 +442,7 @@ async function itemSummaries(
           system: `你是资深新闻编辑。针对这条新闻重写短标题并写三块，严格只输出 JSON {"title":"重写标题（≤15词/等价短句，去标题党，保留产品名与关键变化）","summary":"核心事实：变了什么、对谁（区分厂商宣称与已交付能力，1-2句）","background":"读懂这条需要的前提概念或前情（1句）","impact":"${catPrompt}（具体后果，一句话）"}，不要解释、不要代码块围栏。`,
           prompt: `标题：${item.title}\n来源：${sourcesById.get(item.sourceId)?.title ?? item.sourceId}\n分类：${item.topic || '综合'}\n摘要：${truncateCodePoints(item.summary || item.content || '', 500)}`,
           maxTokens: opts.llmMaxTokens,
-          signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
+          signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]),
         })
         const m = text.match(/\{[\s\S]*\}/)
         const j = m ? (JSON.parse(m[0]) as { title?: string; summary?: string; background?: string; impact?: string }) : null

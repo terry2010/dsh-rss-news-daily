@@ -3,6 +3,7 @@
  * 全部 handler 是原生 req/res；sendJson 统一响应。同源检查拦 cross-site。
  */
 
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +14,7 @@ import type { StoreLike } from './core/store.js'
 import type { PrefsStore } from './core/prefs.js'
 import type { NewsService } from './tools.js'
 import { effectiveSources } from './service.js'
+import { loopDetectStatus } from './dsh-llm.js'
 import { zonedDayKey } from './core/time.js'
 import { parseTune, learnFromFeedback } from './core/tune.js'
 
@@ -329,7 +331,7 @@ function apiPrefs(deps: ApiDeps) {
         topics: body.topics, keywords: body.keywords,
         bannedKeywords: body.bannedKeywords, sourceWeight: body.sourceWeight,
         proxyUrl: body.proxyUrl, autoTranslate: body.autoTranslate,
-        showNavEntry: body.showNavEntry,
+        showNavEntry: body.showNavEntry, loopGuard: body.loopGuard,
         digestOpts: body.digestOpts, subscribedTopics: body.subscribedTopics,
       }).filter(([, v]) => v !== undefined))
       deps.prefs.save(patch)
@@ -426,6 +428,23 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     sendJson(r, 200, { ok: true, path: file })
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/prefs`, handler: guard(apiPrefs(deps)) }))
+  // loop-recover 状态探测：装了没/启用没/检测器真接上没——设置页开关的依据
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/loopguard`, handler: guard(async (_q, r) => {
+    const nm = dirname(fileURLToPath(new URL('../', import.meta.url))) // 包根的上级 = node_modules/
+    const installed = existsSync(join(nm, 'dsh-loop-recover', 'package.json'))
+    let enabled = false
+    if (installed) {
+      try {
+        const profPkg = JSON.parse(await readFile(join(nm, '..', 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+        enabled = (profPkg.dsh?.profile?.bundles ?? []).includes('dsh-loop-recover')
+        const patch = await readFile(join(nm, '..', 'cordis.patch.yml'), 'utf8').catch(() => '')
+        // 按条目块判断：disabled 必须落在 loop-recover 自己的块里（下一条目的 disabled 会误伤）
+        const block = patch.split(/^- id:/m).find((b) => /^\s*loop-recover\b/.test(b))
+        if (block && /disabled:\s*true/.test(block)) enabled = false
+      } catch { /* 读不到 profile 则按未启用 */ }
+    }
+    sendJson(r, 200, { ok: true, installed, enabled, pref: deps.prefs.get().loopGuard ?? null, active: loopDetectStatus() === 'active' })
+  }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/llm`, handler: guard(apiLlm(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/schedule`, handler: guard(async (q, r) => {
     const method = String(q.method || 'GET').toUpperCase()

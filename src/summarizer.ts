@@ -161,22 +161,24 @@ export async function summarize(
     return fallback()
   }
   const { system, prompt } = buildPrompt(request)
-  let text: string
-  try {
-    text = await client.generateText({
-      system,
-      prompt,
-      maxTokens: request.maxTokens ?? Math.min(2048, 256 + Math.ceil(request.maxLength / 2)),
-      temperature: 0.3,
-      signal: request.signal,
-    })
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    return fallback(reason)
+  // 推理模型偶发空回复（reasoning 吃光预算/本地服务抖动）：重试一次且预算翻倍，仍败才降级
+  const budget = request.maxTokens ?? Math.min(2048, 256 + Math.ceil(request.maxLength / 2))
+  let text = ''
+  let lastErr: string | undefined
+  for (let attempt = 0; attempt < 2 && text === ''; attempt++) {
+    try {
+      text = (await client.generateText({
+        system,
+        prompt,
+        maxTokens: attempt === 0 ? budget : Math.min(budget * 2, 32768),
+        temperature: 0.3,
+        signal: request.signal,
+      })).trim()
+      if (text === '') lastErr = 'empty model output'
+    } catch (error) {
+      lastErr = error instanceof Error ? error.message : String(error)
+    }
   }
-  const trimmed = truncateText(text.trim(), request.maxLength)
-  if (trimmed === '') {
-    return fallback('empty model output')
-  }
-  return { text: trimmed, source: 'llm' }
+  if (text === '') return fallback(lastErr)
+  return { text: truncateText(text, request.maxLength), source: 'llm' }
 }

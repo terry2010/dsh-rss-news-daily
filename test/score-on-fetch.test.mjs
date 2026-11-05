@@ -141,16 +141,21 @@ test('sof: 快报输出总结/领域速览/重要新闻三段，并在 LLM 失�
   const base = { items, sourcesById: new Map([['src1', { title: 'Src1' }]]), day: '2026-10-28', time: '11:00', minScore: 6, digestsDir: dir, log: noopLog }
   await appendHourlyBrief({ ...base, llmClient: mkClient(() => 'AI 领域发布重要进展，科学领域也有新发现。') })
   let md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
-  assert.match(md, /> AI 领域发布重要进展，科学领域也有新发现。/)
+  assert.match(md, /AI 领域发布重要进展，科学领域也有新发现。/)
   assert.match(md, /### 领域速览/)
   assert.match(md, /### 重要新闻/)
   assert.match(md, /#### AI/)
   assert.match(md, /#### 科学/)
 
   const fallbackDir = mkdtempSync(join(tmpdir(), 'rnd-hb-fallback-'))
-  await appendHourlyBrief({ ...base, digestsDir: fallbackDir, llmClient: mkClient(() => { throw new Error('offline') }) })
+  // 全新 items：第一次调用会把假译文写进共享条目，不复用才能验证英文标题回退
+  const items2 = [
+    mkItem(3, { topic: 'AI', llmScore: 9, title: 'AI breakthrough', llmReason: '影响广泛' }),
+    mkItem(4, { topic: '科学', llmScore: 7, title: 'Space discovery' }),
+  ]
+  await appendHourlyBrief({ ...base, items: items2, digestsDir: fallbackDir, llmClient: mkClient(() => { throw new Error('offline') }) })
   md = readFileSync(join(fallbackDir, '2026-10-28-hourly.md'), 'utf8')
-  assert.match(md, /> 本时段 2 条入选（AI、科学），要点：「AI breakthrough」、「Space discovery」。/)
+  assert.match(md, /本时段 2 条入选（AI、科学），要点：「AI breakthrough」、「Space discovery」。/)
 
   const emptyDir = mkdtempSync(join(tmpdir(), 'rnd-hb-empty-'))
   const n = await appendHourlyBrief({ ...base, items: [], digestsDir: emptyDir })

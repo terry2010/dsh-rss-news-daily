@@ -136,6 +136,12 @@
         <div id="autoTlWarn" class="settings-warning" hidden>开启后会调用模型翻译外文新闻，条目较多时会增加模型用量。</div>
         <div id="tlInfo" class="hist"></div>
       </div>
+      <div class="settings-subsection">
+        <h4>模型输出守护</h4>
+        <p class="settings-help">配合 <b>dsh-loop-recover</b> 使用：实时监测模型输出，发现死循环/复读时自动截断，避免长时间空转烧 token——尤其擅长解决本地小模型的循环思考和循环回复问题。未安装时可在市场搜索 loop-recover 获取。</p>
+        <label class="setting-check"><input type="checkbox" id="loopGuard"> 使用 dsh-loop-recover 阻止输出中的死循环并防止模型跑题</label>
+        <div id="loopGuardInfo" class="hist"></div>
+      </div>
       </div>
     </details>
 
@@ -281,6 +287,7 @@
           </select>
         </div>
         <div id="statsBody" class="hist"></div>
+        <label class="setting-check"><input type="checkbox" id="forceArchive"> 强行显示「📦 档案」按钮<small>（本次会话有效，重启 dsh 后恢复默认）</small></label>
         <div class="field" style="margin-top:10px">
           <button id="btnShowUpgrade">查看更新内容</button>
           <button id="btnShowOnboard">重新看引导</button>
