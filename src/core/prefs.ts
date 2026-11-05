@@ -26,6 +26,8 @@ export interface PrefsFile extends Prefs {
   showNavEntry?: boolean
   /** 用 dsh-loop-recover 过滤模型输出（缺省=装了自动开） */
   loopGuard?: boolean
+  /** 定时备份：周期 + 目录 + 保留份数 */
+  backup?: { enabled?: boolean; period?: 'day' | 'week' | 'month'; dir?: string; keep?: number }
   /** UI 翻译模型覆盖（独立于日报模型 llm） */
   translateLlm?: { provider: string; model: string }
   /** 订阅分类列表（缺省/未设=全部订阅） */
@@ -74,6 +76,7 @@ export function normalizePrefs(value: unknown): PrefsFile {
     autoTranslate: r.autoTranslate === true ? true : undefined,
     showNavEntry: r.showNavEntry === false ? false : undefined,
     loopGuard: typeof r.loopGuard === 'boolean' ? (r.loopGuard as boolean) : undefined,
+    backup: (() => { const b = (typeof r.backup === 'object' && r.backup !== null ? r.backup : {}) as Record<string, unknown>; const period = b.period === 'week' || b.period === 'month' ? b.period : 'day'; const o = { enabled: b.enabled === true, period: period as 'day' | 'week' | 'month', dir: typeof b.dir === 'string' && b.dir ? b.dir : undefined, keep: typeof b.keep === 'number' && Number.isFinite(b.keep) && b.keep >= 1 ? Math.floor(b.keep) : 7 }; return (o.enabled || o.dir) ? o : undefined })(),
     translateLlm: (() => { const t = (typeof r.translateLlm === 'object' && r.translateLlm !== null ? r.translateLlm : {}) as Record<string, unknown>; return typeof t.provider === 'string' && typeof t.model === 'string' && t.provider && t.model ? { provider: t.provider, model: t.model } : undefined })(),
     subscribedTopics: Array.isArray(r.subscribedTopics) ? (r.subscribedTopics as unknown[]).filter((t): t is string => typeof t === 'string' && !!t) : undefined,
     digestOpts: (() => { const d = (typeof r.digestOpts === 'object' && r.digestOpts !== null ? r.digestOpts : {}) as Record<string, unknown>; const b = (k: string) => typeof d[k] === 'boolean' ? (d[k] as boolean) : undefined; const num = (k: string) => typeof d[k] === 'number' && Number.isFinite(d[k]) ? (d[k] as number) : undefined; const o = { digestItems: num('digestItems'), perTopicLimit: num('perTopicLimit'), minLlmScore: num('minLlmScore'), candidateHours: num('candidateHours'), llmScoreCandidates: num('llmScoreCandidates'), summaryMaxItems: num('summaryMaxItems'), summaryConcurrency: num('summaryConcurrency'), digestMaxLength: num('digestMaxLength'), scoreOnFetch: b('scoreOnFetch'), rescoreMissing: b('rescoreMissing'), hourlyBrief: b('hourlyBrief'), retentionDays: num('retentionDays'), pruneLowQuality: b('pruneLowQuality'), storeMaxItems: num('storeMaxItems') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),

@@ -11,7 +11,9 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFile, cp, mkdir, readdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { TimerSeam } from './scheduler.js'
@@ -207,6 +209,33 @@ export function apply(ctx: Context, config: ConfigType) {
       log.info(`autoTranslate: ${translated}/${fresh.length} items translated`)
     }
   }
+  // 定时备份：目录 rss-backup-<stamp>/ 含 store.db 快照 + digests/ + prefs.json；超额删最旧
+  const backupDirOf = (d: string) => join(d.replace(/^~(?=$|\/)/, homedir()))
+  const runBackup = async (): Promise<string> => {
+    const b = prefs.get().backup
+    if (!b?.dir) return ''
+    const dir = backupDirOf(b.dir)
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16)
+    const dest = join(dir, `rss-backup-${stamp}`)
+    await mkdir(dest, { recursive: true })
+    store.snapshot?.(join(dest, 'store.db'))
+    await cp(join(dataDir, 'digests'), join(dest, 'digests'), { recursive: true }).catch(() => { })
+    await copyFile(join(dataDir, 'prefs.json'), join(dest, 'prefs.json')).catch(() => { })
+    const keep = Math.max(1, b.keep ?? 7)
+    const entries = (await readdir(dir)).filter((n) => n.startsWith('rss-backup-')).sort()
+    for (const old of entries.slice(0, Math.max(0, entries.length - keep)))
+      await rm(join(dir, old), { recursive: true, force: true }).catch(() => { })
+    ;(store.meta as { lastBackupAt?: string }).lastBackupAt = new Date().toISOString()
+    log.info(`backup done: ${dest}`)
+    return dest
+  }
+  const maybeBackup = async () => {
+    const b = prefs.get().backup
+    if (!b?.enabled || !b.dir) return
+    const last = Date.parse((store.meta as { lastBackupAt?: string }).lastBackupAt ?? '') || 0
+    const days = b.period === 'week' ? 7 : b.period === 'month' ? 30 : 1
+    if (Date.now() - last >= days * 86_400_000) await runBackup().catch((e) => log.warn(`backup failed: ${e}`))
+  }
   const runFetchPool = (pool: ReturnType<typeof effectiveSources>, force = false) => {
     const cycleStart = new Date().toISOString()
     store.meta.lastFetchStartedAt = cycleStart // 本轮起点:「本次」实时计数以此为界
@@ -217,6 +246,7 @@ export function apply(ctx: Context, config: ConfigType) {
       .then(async (result) => {
         await translateFresh(cycleStart, controller.signal)
         await scoreAndBrief(cycleStart, controller.signal) // 纳入生命周期：快报写完前 running 不置闲
+        void maybeBackup()
         return result
       })
       .finally(() => {

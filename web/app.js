@@ -301,6 +301,36 @@ $('#loopGuard').addEventListener('change', async (e) => {
     loadLoopGuard()
   } catch (err) { toast(`保存失败: ${err.message}`) }
 })
+// 数据备份：四项偏好合一保存；立即备份走 /backup
+function saveBackup() {
+  return post('/prefs', { backup: {
+    enabled: $('#backupEnabled').checked,
+    period: $('#backupPeriod').value,
+    dir: $('#backupDir').value.trim(),
+    keep: +$('#backupKeep').value || 7,
+  } }).then((r) => { state.prefs = r.prefs || state.prefs })
+}
+for (const id of ['backupEnabled', 'backupPeriod', 'backupDir', 'backupKeep']) {
+  $(`#${id}`).addEventListener('change', () => {
+    saveBackup().then(() => toast('备份设置已保存')).catch((e) => toast(`保存失败: ${e.message}`))
+  })
+}
+function loadBackup() {
+  const b = state.prefs?.backup || {}
+  $('#backupEnabled').checked = !!b.enabled
+  $('#backupPeriod').value = b.period || 'day'
+  $('#backupDir').value = b.dir || ''
+  $('#backupKeep').value = b.keep ?? 7
+}
+$('#btnBackupNow').addEventListener('click', async () => {
+  $('#backupInfo').textContent = '备份中…'
+  try {
+    await saveBackup() // 先落当前配置再跑
+    const r = await post('/backup', {})
+    $('#backupInfo').textContent = `已备份: ${r.file}`
+    toast('备份完成')
+  } catch (e) { $('#backupInfo').textContent = ''; toast(`备份失败: ${e.message}`) }
+})
 $('#autoTranslate').addEventListener('change', async (e) => {
   $('#autoTlWarn').hidden = !e.target.checked
   try { const r = await post('/prefs', { autoTranslate: e.target.checked }); state.prefs = r.prefs || state.prefs; toast(e.target.checked ? '已开启自动翻译' : '已关闭自动翻译') }
@@ -960,6 +990,7 @@ async function loadLlm() {
     $('#tlInfo').textContent = t?.provider && t?.model ? `翻译模型: ${t.provider}/${t.model}` : '翻译模型: 跟随日报模型'
     $('#navEntry').checked = state.prefs?.showNavEntry !== false
     loadLoopGuard()
+    loadBackup()
     $('#autoTranslate').checked = !!state.prefs?.autoTranslate
     $('#autoTlWarn').hidden = !$('#autoTranslate').checked
   } catch (e) { $('#llmInfo').textContent = `模型信息不可用: ${esc(e.message)}` }

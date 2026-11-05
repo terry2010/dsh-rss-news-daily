@@ -4,8 +4,9 @@
  */
 
 import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readFile, readdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { zonedDayBounds } from './core/time.js'
@@ -331,7 +332,7 @@ function apiPrefs(deps: ApiDeps) {
         topics: body.topics, keywords: body.keywords,
         bannedKeywords: body.bannedKeywords, sourceWeight: body.sourceWeight,
         proxyUrl: body.proxyUrl, autoTranslate: body.autoTranslate,
-        showNavEntry: body.showNavEntry, loopGuard: body.loopGuard,
+        showNavEntry: body.showNavEntry, loopGuard: body.loopGuard, backup: body.backup,
         digestOpts: body.digestOpts, subscribedTopics: body.subscribedTopics,
       }).filter(([, v]) => v !== undefined))
       deps.prefs.save(patch)
@@ -428,7 +429,26 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     sendJson(r, 200, { ok: true, path: file })
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/prefs`, handler: guard(apiPrefs(deps)) }))
-  // loop-recover 状态探测：装了没/启用没/检测器真接上没——设置页开关的依据
+  // 手动备份：rss-backup-<stamp>/ = store.db 快照 + digests/ + prefs.json，超额删最旧
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/backup`, handler: guard(async (_q, r) => {
+    const b = deps.prefs.get().backup
+    if (!b?.dir) { sendJson(r, 400, { ok: false, error: '先在设置里填备份文件夹' }); return }
+    try {
+      const bdir = join(b.dir.replace(/^~(?=$|\/)/, homedir()))
+      const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16)
+      const dest = join(bdir, `rss-backup-${stamp}`)
+      await mkdir(dest, { recursive: true })
+      ;(deps.store as { snapshot?: (f: string) => void }).snapshot?.(join(dest, 'store.db'))
+      const dd = dirname(deps.store.path)
+      await cp(join(dd, 'digests'), join(dest, 'digests'), { recursive: true }).catch(() => {})
+      await copyFile(join(dd, 'prefs.json'), join(dest, 'prefs.json')).catch(() => {})
+      const keep = Math.max(1, b.keep ?? 7)
+      const entries = (await readdir(bdir)).filter((n) => n.startsWith('rss-backup-')).sort()
+      for (const old of entries.slice(0, Math.max(0, entries.length - keep)))
+        await rm(join(bdir, old), { recursive: true, force: true }).catch(() => {})
+      sendJson(r, 200, { ok: true, file: dest })
+    } catch (e) { sendJson(r, 500, { ok: false, error: String((e as Error)?.message || e) }) }
+  }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/loopguard`, handler: guard(async (_q, r) => {
     const nm = dirname(fileURLToPath(new URL('../', import.meta.url))) // 包根的上级 = node_modules/
     const installed = existsSync(join(nm, 'dsh-loop-recover', 'package.json'))

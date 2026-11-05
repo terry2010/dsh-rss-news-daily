@@ -146,6 +146,34 @@
     </details>
 
     <details class="settings-fold" open>
+      <summary><span>数据备份</span><small>定期把新闻库、快报、设置快照到文件夹</small></summary>
+      <div class="settings-fold-body">
+        <label class="setting-check"><input type="checkbox" id="backupEnabled"> 启用定时备份</label>
+        <div class="field">
+          <label>备份周期</label>
+          <select id="backupPeriod">
+            <option value="day">每天</option>
+            <option value="week">每周</option>
+            <option value="month">每月</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>备份文件夹</label>
+          <input type="text" id="backupDir" placeholder="例如 ~/.dsh/backups 或 ~/Desktop/backups">
+        </div>
+        <div class="field">
+          <label>最多保留份数</label>
+          <input type="number" id="backupKeep" min="1" placeholder="默认 7">
+          <small>超过后，最新备份完成时自动删除最旧的备份。</small>
+        </div>
+        <div class="field">
+          <button id="btnBackupNow">立即备份</button>
+          <span id="backupInfo" class="hist"></span>
+        </div>
+      </div>
+    </details>
+
+    <details class="settings-fold" open>
       <summary><span>界面入口</span><small>插件在 dsh 界面里的显示位置</small></summary>
       <div class="settings-fold-body">
         <label class="setting-check"><input type="checkbox" id="navEntry"> 在左侧工作区导航显示「新闻精选」入口</label>
