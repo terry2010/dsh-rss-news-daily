@@ -48,6 +48,19 @@ test('sof: scoreNewItems 分块评分写 llmScore/tags，dupOf 不送评分', as
   assert.equal(items[1].llmScore, undefined) // 未送评分
 })
 
+test('sof: scoreNewItems onScoreProgress 按块回报进度', async () => {
+  const { scoreNewItems } = await import('../lib/digest-pipeline.js')
+  const items = [mkItem(1), mkItem(2), mkItem(3)]
+  const client = mkClient(scoreHandler)
+  const prog = []
+  const n = await scoreNewItems(items, client, {
+    llmTimeoutMs: 60_000, llmScoreCandidates: 2, llmMaxTokens: 4096,
+    onScoreProgress: (d, t) => prog.push([d, t]),
+  }, noopLog)
+  assert.equal(n, 3)
+  assert.deepEqual(prog, [[2, 3], [3, 3]]) // chunkSize=2 → 2 块：覆盖 2/3 条
+})
+
 test('sof: 已评分条目幂等跳过', async () => {
   const { scoreNewItems } = await import('../lib/digest-pipeline.js')
   const items = [mkItem(1, { llmScore: 7 }), mkItem(2)]

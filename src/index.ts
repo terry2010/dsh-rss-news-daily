@@ -97,6 +97,8 @@ export function apply(ctx: Context, config: ConfigType) {
   let fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }
   let digestProg = { running: false, done: 0, total: 0, stage: '' }
   let fetchAbort: AbortController | undefined
+  let fetchCancelled = false // 「停止」请求标记：进度接口透出，前端区分"已取消"与"已完成"
+  let digestCancelled = false
   log.info(
     `loaded: ${sources.length} sources (${enabledCount} enabled) digestItems=${config.digest.digestItems} `
     + `dailyTime=${config.dailyTime} tz=${config.timezone || 'host-local'} dataDir=${dataDir}`,
@@ -170,11 +172,12 @@ export function apply(ctx: Context, config: ConfigType) {
         llmMaxTokens: config.llm.maxTokens,
         prefs: prefs.get(),
         signal,
+        onScoreProgress: (done, total) => { fetchProg.done = done; fetchProg.total = total },
       }, slog)
       dbgScore('scored', { scored, lastWarn })
       addTokens('score', scoreClient.usage)
       if (scored) await store.save()
-      if (briefEnabled(dopts)) await briefNow(fresh, signal)
+      if (!signal?.aborted && briefEnabled(dopts)) await briefNow(fresh, signal) // 取消后不再补写快报
       dbgScore('done', { scored })
     } catch (e) { dbgScore('error', { error: e instanceof Error ? e.message : String(e) }); log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }
     finally { scoringInFlight = false }
@@ -241,6 +244,7 @@ export function apply(ctx: Context, config: ConfigType) {
     store.meta.lastFetchStartedAt = cycleStart // 本轮起点:「本次」实时计数以此为界
     const controller = new AbortController()
     fetchAbort = controller
+    fetchCancelled = false // 新一轮清除上轮取消标记
     fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length, stage: 'fetch', current: '' }
     return runFetchCycle({ ...makeFetchOpts(pool), force, signal: controller.signal })
       .then(async (result) => {
@@ -331,7 +335,7 @@ export function apply(ctx: Context, config: ConfigType) {
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),
     runFetch: runFetchForce,
-    fetchProgress: async () => ({ ...fetchProg }),
+    fetchProgress: async () => ({ ...fetchProg, cancelled: fetchCancelled }),
     translateItem: async (id) => {
       const item = store.items.find((i) => i.id === id)
       if (!item) return { ok: false, error: 'item not found' }
@@ -340,12 +344,12 @@ export function apply(ctx: Context, config: ConfigType) {
       await store.save()
       return { ok: true, translation: item.state.translation }
     },
-    digestProgress: async () => ({ ...digestProg }),
+    digestProgress: async () => ({ ...digestProg, cancelled: digestCancelled }),
     testFetch: async (url, proxy) => {
       const d = await fetcher(url, undefined, { proxy })
       return 'error' in d ? { error: d.error } : { status: d.status, body: d.body.slice(0, 600) }
     },
-    cancelFetch: async () => { fetchAbort?.abort(); return true },
+    cancelFetch: async () => { if (fetchAbort) { fetchAbort.abort(); fetchCancelled = true } return true },
     tune: async (text) => {
       const r = parseTune(text, prefs.get())
       if (!r.ok) return { ok: false, actions: [], error: r.error }
@@ -410,7 +414,7 @@ export function apply(ctx: Context, config: ConfigType) {
       void runFetchFor([src]).catch((e) => log.warn(`retry fetch failed for ${src.id}: ${String(e)}`))
       return true
     },
-    stopDigest: async () => { digestAbort?.abort(); return true },
+    stopDigest: async () => { if (digestAbort) { digestAbort.abort(); digestCancelled = true } return true },
     status: () => {
       const list = effectiveSources(config.sources, store)
       const failures = list.filter((s) => s.health.lastError).map((s) => ({ name: s.title, error: s.health.lastError! }))
@@ -459,6 +463,7 @@ export function apply(ctx: Context, config: ConfigType) {
     if (digestBusy) return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'extractive' as const, degraded: true, note: 'digest already running' })
     digestBusy = true
     digestAbort = new AbortController()
+    digestCancelled = false // 新一轮清除上轮取消标记
     digestProg = { running: true, done: 0, total: 0, stage: '' }
     return digestRun(force, day).then((doc) => { addTokens('digest', doc.tokens); return doc })
       .finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0, stage: '' } })

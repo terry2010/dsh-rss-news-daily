@@ -61,6 +61,8 @@ export interface DigestPipelineOptions {
   penaltyWindowDays?: number
   /** force 重跑：纳入当日已推条目重算（news_regen /api/digest-run force 语义） */
   force?: boolean
+  /** P1 抓取后评分进度回调（done,total=已处理块覆盖/待评条数）——fetch-progress 的 score 段用 */
+  onScoreProgress?: (done: number, total: number) => void
   /** v2：LLM 评分候选池上限（启发式粗排后取前 N）；0=关闭用纯启发式 */
   llmScoreCandidates?: number
   /** v2：LLM 评分入选阈值（1-10），评过分的低于此值不入选 */
@@ -204,7 +206,7 @@ async function llmScoreItems(
 export async function scoreNewItems(
   items: FeedItem[],
   client: LlmClient,
-  opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs'>,
+  opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs' | 'onScoreProgress'>,
   log: LogSink,
 ): Promise<number> {
   const fresh = items.filter((i) => i.llmScore == null && !i.state.hidden)
@@ -217,6 +219,7 @@ export async function scoreNewItems(
   for (let i = 0; i < scorable.length && i / chunkSize < maxChunks; i += chunkSize) {
     if (opts.signal?.aborted) break
     scored += await scoreChunk(scorable.slice(i, i + chunkSize), client, opts, log)
+    opts.onScoreProgress?.(Math.min(i + chunkSize, scorable.length), scorable.length)
   }
   if (scorable.length > maxChunks * chunkSize) log.warn(`scoreNewItems truncated: ${scorable.length} items > ${maxChunks} chunks`)
   return scored
@@ -275,7 +278,7 @@ export async function appendHourlyBrief(opts: {
         system: '你是新闻快报编辑。概括本时段新闻要点：先一句总起（主线/主题是什么），再分点列出具体事件（谁、做了什么），每点一行以 - 开头，至多 4 点，挑最重要的。不要解释。',
         prompt: scored.slice(0, 30).map((it, i) => `${i + 1}. [${it.topic || '综合'}] ${zhTitleOf(it)}`).join('\n'),
         maxTokens: Math.min(opts.llmMaxTokens ?? 1500, 2000),
-        signal: AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000),
+        signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]),
       })).trim() // 不压平：模型若分行输出则保留（多行逐行加 > 前缀）
     } catch (e) { log.warn(`hourly brief summary failed: ${String((e as Error)?.message || e)}`) }
   }

@@ -42,11 +42,12 @@ export interface NewsService {
         source?: string;
         category?: string;
     }): Promise<FetchCycleResult>;
-    /** 抓取进度（{running,done,total}），供 UI 轮询 */
+    /** 抓取进度（{running,done,total,cancelled}），供 UI 轮询 */
     fetchProgress?(): Promise<{
         running: boolean;
         done: number;
         total: number;
+        cancelled?: boolean;
     }>;
     /** 中止进行中的抓取 */
     cancelFetch?(): Promise<unknown>;
@@ -56,11 +57,12 @@ export interface NewsService {
         translation?: string;
         error?: string;
     }>;
-    /** 日报生成进度（{running,done,total}），供 UI 轮询 */
+    /** 日报生成进度（{running,done,total,cancelled}），供 UI 轮询 */
     digestProgress?(): Promise<{
         running: boolean;
         done: number;
         total: number;
+        cancelled?: boolean;
     }>;
     /** 连通性测试：真实 fetcher 路径抓 url，返回 status/body 片段（验证出口/代理） */
     testFetch?(url: string, proxy?: string | boolean): Promise<{

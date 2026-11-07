@@ -20,14 +20,14 @@ export interface NewsService {
   importOpml(opmlText: string): Promise<{ added: number; duplicated: number; skipped: number; details?: Array<{ url: string; action: string; reason?: string }> }>
   exportOpml(): Promise<string>
   runFetch(force?: boolean, onlyFailed?: boolean, filter?: { source?: string; category?: string }): Promise<FetchCycleResult>
-  /** 抓取进度（{running,done,total}），供 UI 轮询 */
-  fetchProgress?(): Promise<{ running: boolean; done: number; total: number }>
+  /** 抓取进度（{running,done,total,cancelled}），供 UI 轮询 */
+  fetchProgress?(): Promise<{ running: boolean; done: number; total: number; cancelled?: boolean }>
   /** 中止进行中的抓取 */
   cancelFetch?(): Promise<unknown>
   /** 翻译条目（标题+摘要→中文），结果写 item.state.translation */
   translateItem?(id: string): Promise<{ ok: boolean; translation?: string; error?: string }>
-  /** 日报生成进度（{running,done,total}），供 UI 轮询 */
-  digestProgress?(): Promise<{ running: boolean; done: number; total: number }>
+  /** 日报生成进度（{running,done,total,cancelled}），供 UI 轮询 */
+  digestProgress?(): Promise<{ running: boolean; done: number; total: number; cancelled?: boolean }>
   /** 连通性测试：真实 fetcher 路径抓 url，返回 status/body 片段（验证出口/代理） */
   testFetch?(url: string, proxy?: string | boolean): Promise<{ status?: number; body?: string; error?: string }>
   status(): { sources: number; enabled: number; items: number; lastFetchAt: string; lastDigestDay: string; failures: Array<{ name: string; error: string }> }

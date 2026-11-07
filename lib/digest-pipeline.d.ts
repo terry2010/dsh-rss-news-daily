@@ -53,6 +53,8 @@ export interface DigestPipelineOptions {
     penaltyWindowDays?: number;
     /** force 重跑：纳入当日已推条目重算（news_regen /api/digest-run force 语义） */
     force?: boolean;
+    /** P1 抓取后评分进度回调（done,total=已处理块覆盖/待评条数）——fetch-progress 的 score 段用 */
+    onScoreProgress?: (done: number, total: number) => void;
     /** v2：LLM 评分候选池上限（启发式粗排后取前 N）；0=关闭用纯启发式 */
     llmScoreCandidates?: number;
     /** v2：LLM 评分入选阈值（1-10），评过分的低于此值不入选 */
@@ -63,7 +65,7 @@ export interface DigestPipelineOptions {
     categoryPrompts?: Record<string, string>;
 }
 /** P1 抓取后评分：本轮新条目本批去重 → 分块批量评分（无分跳过幂等）；返回评出条数。 */
-export declare function scoreNewItems(items: FeedItem[], client: LlmClient, opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs'>, log: LogSink): Promise<number>;
+export declare function scoreNewItems(items: FeedItem[], client: LlmClient, opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs' | 'onScoreProgress'>, log: LogSink): Promise<number>;
 /** P8 时段快报：高分条目按领域分组追加/覆盖 `## HH:mm 时段快报` 节（{day}-hourly.md）。 */
 export declare function appendHourlyBrief(opts: {
     items: FeedItem[];
