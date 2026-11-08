@@ -64,6 +64,10 @@ export interface DigestPipelineOptions {
     /** v2：分类→输出指令映射（覆盖内置默认） */
     categoryPrompts?: Record<string, string>;
 }
+/** 外文判定：非汉字字母（拉丁/谚文/假名/西里尔等）≥10 个且超过汉字数 2 倍才算外文。
+ *  旧规则按字符占比 ≤50% 判定，中文标题夹带型号/产品名（Windows 8GB、GPT-6）
+ *  会被误判送翻译、模型原样回显；改按"文字脚本占比"判定，URL 不计入。 */
+export declare function textLooksForeign(text: string): boolean;
 /** P1 抓取后评分：本轮新条目本批去重 → 分块批量评分（无分跳过幂等）；返回评出条数。 */
 export declare function scoreNewItems(items: FeedItem[], client: LlmClient, opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs' | 'onScoreProgress'>, log: LogSink): Promise<number>;
 /** P8 时段快报：高分条目按领域分组追加/覆盖 `## HH:mm 时段快报` 节（{day}-hourly.md）。 */

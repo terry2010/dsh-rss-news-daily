@@ -27,7 +27,7 @@ import { effectiveSources, runFetchCycle, addSource, previewSource, removeSource
 import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
-import { runDailyDigest, scoreNewItems, appendHourlyBrief } from './digest-pipeline.js'
+import { runDailyDigest, scoreNewItems, appendHourlyBrief, textLooksForeign } from './digest-pipeline.js'
 import { DshLlmClient, setDevLogDir, setDevLogEnabled, setLlmDiagFile, setLoopGuardEnabled } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
 import type { FeedItem } from './core/types.js'
@@ -282,13 +282,9 @@ export function apply(ctx: Context, config: ConfigType) {
     item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
     delete item.state.translationError // 成功后清掉历史失败标记（换模型重试成功后不再误报失败）
   }
-  const isForeign = (i: { title: string; summary?: string }) => {
-    // 只看标题判定：中文标题的条目不需要翻译——摘要里混英文（促销文案/型号名）
-    // 不应把中文标题条目误判成外文送进翻译队列
-    const t = i.title
-    const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length
-    return cjk * 2 <= t.replace(/\s/g, '').length
-  }
+  // 只看标题判定：中文标题的条目不需要翻译——摘要里混英文（促销文案/型号名）
+  // 不应把中文标题条目误判成外文送进翻译队列
+  const isForeign = (i: { title: string; summary?: string }) => textLooksForeign(i.title)
 
   // LLM 自动分类：新加源时把频道标题+条目样本丢给翻译模型归到现有分类，不中返回空
   const CLASSIFY_CATS = ['AI', '科技', '国际', '开发', '科学', '财经', '产品', '社会·人文', '综合']

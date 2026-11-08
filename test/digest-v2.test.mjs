@@ -210,3 +210,20 @@ test('v2: LLM 语义聚类——措辞不同的同事件合并', async () => {
   const doc = await runDailyDigest(mkOpts(store, { llmClient: cluster }))
   assert.match(doc.markdown, /同题 2 家报道/)
 })
+
+test('textLooksForeign: 中文标题夹带英文型号不再误判外文', async () => {
+  const { textLooksForeign } = await import('../lib/digest-pipeline.js')
+  // 真实误判案例：中文标题 + Windows/8GB/16GB 型号名 → 不应送翻译
+  assert.equal(textLooksForeign('微软：现在Windows 8GB内存能当16GB用！ - 驱动之家'), false)
+  assert.equal(textLooksForeign('微软：正持续优化 Win11 内存占用，26H2 版本下 8GB RAM 机型特定场景表现可“对标”2021 年 16GB RAM 机器'), false)
+  // 纯中文/中英产品名混排短标题 → 中文
+  assert.equal(textLooksForeign('OpenAI发布GPT-6新模型'), false)
+  assert.equal(textLooksForeign('苹果发布新MacBook Pro'), false)
+  // 纯外文标题 → 外文
+  assert.equal(textLooksForeign('The 16GB Raspberry Pi 5 got another RAM price hike - The Verge'), true)
+  assert.equal(textLooksForeign('Running Ollama on AMD Ryzen AI Max+ 395 with ROCm and Docker'), true)
+  // 非拉丁外文（谚文）也算外文
+  assert.equal(textLooksForeign('삼성전자가 차세대 갤럭시 스마트폰 공개'), true)
+  // URL 不计入判定
+  assert.equal(textLooksForeign('微软发布安全更新 https://example.com/some/very/long/path/that/hijacks'), false)
+})
