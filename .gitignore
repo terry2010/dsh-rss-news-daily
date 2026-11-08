@@ -5,3 +5,5 @@ docs/*
 !docs/downloads-*.md
 *.tgz
 .DS_Store
+
+.taste-skill/

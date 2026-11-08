@@ -3,23 +3,34 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RSS 新闻 · dsh-rss-news-daily</title>
+<meta name="page-type" content="software">
+<meta name="site-kind" content="software">
+<meta name="theme-color" content="#151517">
+<meta name="description" content="每日 RSS 新闻精选阅读器：自动抓取订阅源，AI 评分整理出一份精选日报。">
+<meta property="og:title" content="RSS 每日精选">
+<meta property="og:description" content="自动抓取订阅源，AI 评分整理出一份精选日报。">
+<meta property="og:type" content="website">
+<title>RSS 每日精选 · dsh-rss-news-daily</title>
 <link rel="stylesheet" href="web/style.css">
 </head>
 <body>
 <header>
-  <div class="tabs">
-    <button class="tab active" data-tab="items">📰 全部新闻</button>
-    <button class="tab" data-tab="digest">📋 今日精选</button>
-    <button class="tab" data-tab="sources">🔌 订阅源</button>
-    <button class="tab" data-tab="prefs">⚙ 设置</button>
+  <a class="skip-link" href="#main">跳到内容</a>
+  <h1 class="brand">📰 新闻精选</h1>
+  <div class="tabs" role="tablist">
+    <i class="tab-ind" aria-hidden="true"></i>
+    <button class="tab active" data-tab="items" role="tab" aria-selected="true">全部新闻</button>
+    <button class="tab" data-tab="digest" role="tab" aria-selected="false">今日精选</button>
+    <button class="tab" data-tab="sources" role="tab" aria-selected="false">订阅源</button>
+    <button class="tab" data-tab="prefs" role="tab" aria-selected="false">设置</button>
   </div>
 </header>
 
-<main>
-  <div class="statusbar" id="statusbar">加载中…</div><div class="statusbar" id="toastbar"></div>
+<main id="main">
+  <div class="statusbar" id="statusbar">加载中…</div>
+<div id="toastbar" role="status"></div>
 <div id="findbar" class="findbar" hidden>
-  <input id="findInput" type="text" placeholder="页内查找…" style="width:160px">
+  <input id="findInput" type="text" placeholder="页内查找…" aria-label="页内查找">
   <button id="findPrev" title="上一个(Shift+Enter)">↑</button>
   <button id="findNext" title="下一个(Enter)">↓</button>
   <button id="findClose" title="关闭(Esc)">✕</button>
@@ -27,21 +38,23 @@
   <!-- 全部条目流 -->
   <section id="tab-items">
     <div class="toolbar">
-      <input type="search" id="q" placeholder="搜索标题/摘要…" style="max-width:200px">
-      <input type="date" id="day" style="max-width:135px">
-      <label><input type="checkbox" id="unread"> 未读</label>
+      <label class="f f-grow" for="q"><span class="f-lab">搜索</span><input type="search" id="q" placeholder="标题 / 摘要关键词"></label>
+      <label class="f" for="day"><span class="f-lab">日期</span><input type="date" id="day"></label>
+      <label class="f-check" for="unread"><input type="checkbox" id="unread"><span>仅看未读</span></label>
     </div>
     <div class="toolbar filterbar">
-      <select id="category"><option value="">全部分类</option></select>
-      <select id="sortSel" title="排序">
+      <label class="f" for="category"><span class="f-lab">分类</span><select id="category"><option value="">全部分类</option></select></label>
+      <label class="f" for="sortSel"><span class="f-lab">排序</span><select id="sortSel">
         <option value="published">按发布时间</option>
         <option value="fetched">按抓取时间</option>
-      </select>
-      <select id="srcFilter"><option value="">全部源</option></select>
-      <select id="archYear" hidden></select>
+      </select></label>
+      <label class="f" for="srcFilter"><span class="f-lab">来源</span><select id="srcFilter"><option value="">全部源</option></select></label>
+      <label class="f" for="archYear" hidden><span class="f-lab">年份</span><select id="archYear"></select></label>
+      <span class="f-end">
       <button id="btnArchive" title="历史年库档案">📦 档案</button>
-      <button id="btnFetch" title="立即抓取全部源">⟳ 抓取</button>
+      <button id="btnFetch" class="primary" title="立即抓取全部源">⟳ 抓取</button>
       <button id="btnTopPage" hidden title="回到第1页">⇤ 回到第1页</button>
+      </span>
     </div>
     <div id="itemList" class="itemlist"></div>
     <div class="pager"><button id="prevPage">‹ 上一页</button><span id="pageInfo"></span><button id="nextPage">下一页 ›</button></div>
@@ -50,10 +63,12 @@
   <!-- 今日精选日报 -->
   <section id="tab-digest" hidden>
     <div class="toolbar">
-      <input type="date" id="digestDay" title="查看历史日报（生成始终针对今天）">
-      <button id="btnKindDigest" title="当日精选日报">日报</button>
-      <button id="btnKindHourly" title="逐时段快报">快报</button>
-      <button id="btnDigestRun" title="立即生成今日日报">▶ 生成日报</button>
+      <label class="f" for="digestDay"><span class="f-lab">日期</span><input type="date" id="digestDay" title="查看历史日报（生成始终针对今天）"></label>
+      <div class="seg" role="group" aria-label="精选类型">
+        <button id="btnKindDigest" class="active" title="当日精选日报">日报</button>
+        <button id="btnKindHourly" title="逐时段快报">快报</button>
+      </div>
+      <button id="btnDigestRun" class="primary" title="立即生成今日日报">▶ 生成日报</button>
       <button id="btnDigestStop" hidden title="中止当前生成">⏹ 停止</button>
       <span id="digestBusy" class="busybar" hidden>⏳ 日报生成中…</span>
     </div>
@@ -66,24 +81,24 @@
       <button id="btnRetryAll" title="并发重试全部失败/冷却源">↻ 重试全部失败源</button>
       <button id="btnOpmlExport">⇩ 导出 OPML</button>
       <label class="filebtn">⇧ 导入 OPML<input type="file" id="opmlFile" accept=".opml,.xml" hidden></label>
-      <button id="btnAddSrcOpen">＋ 添加源</button>
+      <button id="btnAddSrcOpen" class="primary">＋ 添加源</button>
     </div>
     <div id="srcList" class="srclist"></div>
     <div id="addSrcModal" class="obOverlay" hidden>
       <div class="obCard">
-        <button class="obSkip" data-close>✕</button>
+        <button class="obSkip" data-close title="关闭">✕</button>
         <h3>添加订阅源</h3>
         <div class="obBody addsrc-form">
-          <input type="url" id="newSrcUrl" placeholder="feed 地址（https://…/feed.xml 或裸域名）">
-          <input type="text" id="newSrcTitle" placeholder="名称（可选）">
-          <select id="newSrcCat"><option value="">分类…</option></select>
+          <label class="f" for="newSrcUrl"><span class="f-lab">Feed 地址</span><input type="url" id="newSrcUrl" placeholder="https://…/feed.xml 或裸域名"></label>
+          <label class="f" for="newSrcTitle"><span class="f-lab">名称（可选）</span><input type="text" id="newSrcTitle" placeholder="留空时自动获取"></label>
+          <label class="f" for="newSrcCat"><span class="f-lab">分类</span><select id="newSrcCat"><option value="">未分类</option></select></label>
           <input type="text" id="newSrcCatNew" placeholder="输入新分类名" hidden>
           <p id="addSrcErr" class="addsrc-err" hidden></p>
           <div id="srcPreview" class="src-preview" hidden></div>
         </div>
         <div class="obNav">
           <span></span>
-          <span><button data-close>取消</button><button id="btnAddSrc">添加</button><button id="btnAddSrcConfirm" hidden>确认添加</button></span>
+          <span><button data-close>取消</button><button id="btnAddSrc" class="primary">添加</button><button id="btnAddSrcConfirm" class="primary" hidden>确认添加</button></span>
         </div>
       </div>
     </div>
@@ -101,26 +116,26 @@
       <div class="settings-fold-body">
       <p class="settings-help">告诉插件你喜欢什么，或哪些内容不想看。例如：多推 AI Agent、少推币圈、屏蔽裁员。</p>
       <div class="toolbar settings-tune">
-        <input type="text" id="tuneText" placeholder="写下你想多看、少看或屏蔽的内容">
-        <button id="btnTune">应用</button>
-        <button id="btnResetPrefs">重置推荐偏好</button>
+        <label class="f f-grow" for="tuneText"><span class="f-lab">调教偏好</span><input type="text" id="tuneText" placeholder="写下你想多看、少看或屏蔽的内容"></label>
+        <span class="f-end"><button id="btnTune" class="primary">应用</button>
+        <button id="btnResetPrefs">重置推荐偏好</button></span>
       </div>
       <div id="tuneResult"></div>
       <div class="settings-subsection">
         <h4>每日精选关注分类</h4>
         <p class="settings-help">未选择的分类仍会采集并显示在「全部新闻」，只是不进入每日精选。</p>
         <div id="subTopics" class="settings-topics"></div>
-        <div class="toolbar"><button id="btnSubSave">保存订阅</button></div>
+        <div class="toolbar"><button id="btnSubSave" class="primary">保存订阅</button></div>
       </div>
 
       <div class="settings-subsection">
         <h4>每日精选模型</h4>
         <p class="settings-help">留空时使用 dsh 的默认模型。</p>
         <div class="toolbar">
-          <select id="llmProvider"><option value="">跟随 dsh 默认</option></select>
-          <select id="llmModel"><option value="">选择模型</option></select>
-          <button id="btnLlmSave">保存</button>
-          <button id="btnLlmClear">恢复默认</button>
+          <label class="f" for="llmProvider"><span class="f-lab">服务商</span><select id="llmProvider"><option value="">跟随 dsh 默认</option></select></label>
+          <label class="f" for="llmModel"><span class="f-lab">模型</span><select id="llmModel"><option value="">选择模型</option></select></label>
+          <span class="f-end"><button id="btnLlmSave">保存</button>
+          <button id="btnLlmClear">恢复默认</button></span>
         </div>
         <div id="llmInfo" class="hist"></div>
       </div>
@@ -128,9 +143,9 @@
         <h4>外文新闻翻译</h4>
         <p class="settings-help">可指定翻译模型；留空时跟随 dsh 默认模型。</p>
         <div class="toolbar">
-          <select id="tlProvider"><option value="">跟随 dsh 默认</option></select>
-          <select id="tlModel"><option value="">选择模型</option></select>
-          <button id="btnTlSave">保存</button>
+          <label class="f" for="tlProvider"><span class="f-lab">服务商</span><select id="tlProvider"><option value="">跟随 dsh 默认</option></select></label>
+          <label class="f" for="tlModel"><span class="f-lab">模型</span><select id="tlModel"><option value="">选择模型</option></select></label>
+          <span class="f-end"><button id="btnTlSave">保存</button></span>
         </div>
         <label class="setting-check"><input type="checkbox" id="autoTranslate"> 自动翻译抓取到的外文新闻</label>
         <div id="autoTlWarn" class="settings-warning" hidden>开启后会调用模型翻译外文新闻，条目较多时会增加模型用量。</div>
@@ -150,21 +165,20 @@
       <div class="settings-fold-body">
         <label class="setting-check"><input type="checkbox" id="backupEnabled"> 启用定时备份</label>
         <div class="field">
-          <label>备份周期</label>
+          <label for="backupPeriod">备份周期</label>
           <select id="backupPeriod">
             <option value="day">每天</option>
             <option value="week">每周</option>
             <option value="month">每月</option>
           </select>
         </div>
-        <div class="field">
-          <label>备份文件夹</label>
-          <input type="text" id="backupDir" placeholder="例如 ~/.dsh/backups 或 ~/Desktop/backups">
-          <button type="button" id="btnPickBackupDir" title="打开系统目录选择器">选择…</button>
+        <div class="toolbar">
+          <label class="f f-grow" for="backupDir"><span class="f-lab">备份文件夹</span><input type="text" id="backupDir" placeholder="例如 ~/.dsh/backups 或 ~/Desktop/backups"></label>
+          <span class="f-end"><button type="button" id="btnPickBackupDir" title="打开系统目录选择器">选择…</button></span>
         </div>
         <small>点「选择…」弹出系统目录选择器；也可以直接输入路径。</small>
         <div class="field">
-          <label>最多保留份数</label>
+          <label for="backupKeep">最多保留份数</label>
           <input type="number" id="backupKeep" min="1" placeholder="默认 7">
           <small>超过后，最新备份完成时自动删除最旧的备份。</small>
         </div>
@@ -199,7 +213,7 @@
         <label class="setting-check"><input type="checkbox" id="schedStartup"> 启动 dsh 时立即更新一次</label>
       </div>
       <div class="toolbar settings-actions">
-        <button id="btnSchedSave">保存</button>
+        <button id="btnSchedSave" class="primary">保存</button>
         <button id="btnSchedClear">恢复默认时间</button>
       </div>
       <div id="schedInfo" class="hist"></div>
@@ -279,16 +293,16 @@
           <h4>网络代理</h4>
           <p class="settings-help">仅当部分新闻网站无法连接时再设置；留空时使用 dsh 的默认代理设置。</p>
           <div class="toolbar">
-            <input type="text" id="proxyUrl" placeholder="例如：http://127.0.0.1:7890">
-            <button id="btnProxySave">保存</button>
+            <label class="f f-grow" for="proxyUrl"><span class="f-lab">代理地址</span><input type="text" id="proxyUrl" placeholder="例如：http://127.0.0.1:7890"></label>
+            <span class="f-end"><button id="btnProxySave">保存</button></span>
           </div>
         </div>
         <div class="settings-subsection">
           <h4>测试网站连接</h4>
           <div class="toolbar">
-            <input type="text" id="testUrl" placeholder="输入要测试的网址" value="http://ip.zhuikan.com/ip.php">
-            <label class="setting-check"><input type="checkbox" id="testProxy"> 通过代理测试</label>
-            <button id="btnFetchTest">测试连接</button>
+            <label class="f f-grow" for="testUrl"><span class="f-lab">测试网址</span><input type="text" id="testUrl" placeholder="输入要测试的网址" value="http://ip.zhuikan.com/ip.php"></label>
+            <label class="f-check" for="testProxy"><input type="checkbox" id="testProxy"><span>通过代理</span></label>
+            <span class="f-end"><button id="btnFetchTest">测试连接</button></span>
           </div>
           <pre id="fetchTestOut" class="hist" hidden></pre>
         </div>
@@ -305,16 +319,16 @@
       <div id="statsSection" class="settings-fold-body" hidden>
         <h3>Token 用量</h3>
         <div class="toolbar">
-          <select id="statsView">
+          <label class="f" for="statsView"><span class="f-lab">视图</span><select id="statsView">
             <option value="day">按日</option>
             <option value="feature">按功能</option>
             <option value="total">总计</option>
-          </select>
-          <select id="statsRange">
+          </select></label>
+          <label class="f" for="statsRange"><span class="f-lab">范围</span><select id="statsRange">
             <option value="7">近 7 天</option>
             <option value="30">近 30 天</option>
             <option value="0">全部</option>
-          </select>
+          </select></label>
         </div>
         <div id="statsBody" class="hist"></div>
         <h3 style="margin-top:16px">开发日志</h3>
