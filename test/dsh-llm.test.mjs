@@ -84,3 +84,51 @@ test('DshLlmClient: 非模板类错误不触发 system 折叠重试', async () =
   await assert.rejects(client.generateText({ system: 's', prompt: 'p' }), /HTTP 500/)
   assert.equal(calls, 1) // 不重试
 })
+
+test('devLog: 开启后写完整对话 JSONL（prompt/response/token/速度），关闭不写', async () => {
+  const { mkdtempSync, readdirSync, readFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'devlog-test-'))
+  const mod = await import('../lib/dsh-llm.js')
+  const { DshLlmClient } = mod
+  mod.setDevLogDir(dir)
+  mod.setDevLogEnabled(() => false)
+  const llm = {
+    listProviders: () => [{ id: 'p' }],
+    listModels: async () => [{ id: 'm' }],
+    stream: async function* () {
+      yield { type: 'text-delta', text: 'partial answer', usage: { inputTokens: 10, outputTokens: 2 } }
+      yield { type: 'finish', reason: { kind: 'error', failure: { message: 'boom', code: 'X' } } }
+    },
+  }
+  const client = new DshLlmClient(llm, { provider: 'p', model: 'm' }, silentLog, 'score')
+  // 关闭状态：调用失败也不落盘
+  await assert.rejects(client.generateText({ system: 'sys', prompt: 'pr', purpose: 'score' }), /boom/)
+  await new Promise((r) => setTimeout(r, 150))
+  assert.equal(readdirSync(dir).filter((n) => n.endsWith('.jsonl')).length, 0)
+  // 开启后：失败调用记录 ok:false + partial response + token/速度字段
+  mod.setDevLogEnabled(() => true)
+  await assert.rejects(client.generateText({ system: 'sys', prompt: 'pr', purpose: 'score' }), /boom/)
+  let file
+  for (let i = 0; i < 20 && !file; i++) {
+    await new Promise((r) => setTimeout(r, 50))
+    file = readdirSync(dir).find((n) => /^dev-\d{4}-\d{2}-\d{2}\.jsonl$/.test(n))
+  }
+  assert.ok(file, 'dev-*.jsonl not written')
+  const rec = JSON.parse(readFileSync(join(dir, file), 'utf8').trim().split('\n').pop())
+  assert.equal(rec.ok, false)
+  assert.equal(rec.tag, 'score')
+  assert.equal(rec.purpose, 'score')
+  assert.equal(rec.provider, 'p')
+  assert.equal(rec.model, 'm')
+  assert.equal(rec.system, 'sys')
+  assert.equal(rec.prompt, 'pr')
+  assert.equal(rec.response, 'partial answer') // 失败也保留已收到的部分输出
+  assert.match(rec.error, /boom/)
+  assert.match(rec.ts, /[+-]\d{2}:\d{2}$/) // 本地时区 ISO（含偏移，非 UTC Z）
+  assert.equal(typeof rec.ms, 'number')
+  assert.equal(typeof rec.in, 'number')
+  assert.equal(typeof rec.out, 'number')
+  mod.setDevLogEnabled(() => false)
+})

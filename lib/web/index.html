@@ -160,7 +160,9 @@
         <div class="field">
           <label>备份文件夹</label>
           <input type="text" id="backupDir" placeholder="例如 ~/.dsh/backups 或 ~/Desktop/backups">
+          <button type="button" id="btnPickBackupDir" title="打开系统目录选择器">选择…</button>
         </div>
+        <small>点「选择…」弹出系统目录选择器；也可以直接输入路径。</small>
         <div class="field">
           <label>最多保留份数</label>
           <input type="number" id="backupKeep" min="1" placeholder="默认 7">
@@ -315,6 +317,13 @@
           </select>
         </div>
         <div id="statsBody" class="hist"></div>
+        <h3 style="margin-top:16px">开发日志</h3>
+        <p class="settings-help">开启后把每次模型调用的完整 prompt/回复、token 用量与生成速度按天写入 devlog/*.jsonl（含新闻正文，仅保存在本机）。默认关闭。</p>
+        <label class="setting-check"><input type="checkbox" id="devLogEnabled"> 记录开发日志</label>
+        <div class="field" style="margin-top:6px">
+          <button id="btnOpenDevlog">打开日志文件夹</button>
+          <span id="devlogInfo" class="hint"></span>
+        </div>
         <label class="setting-check"><input type="checkbox" id="forceArchive"> 强行显示「📦 档案」按钮<small>（本次会话有效，重启 dsh 后恢复默认）</small></label>
         <div class="field" style="margin-top:10px">
           <button id="btnShowUpgrade">查看更新内容</button>

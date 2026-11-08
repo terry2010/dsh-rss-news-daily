@@ -27,6 +27,12 @@ export declare class SqliteStore {
     private metaObj;
     private srcList;
     private window;
+    private dirtyItems;
+    private proxyCache;
+    /** 条目脏检测：窗口对象套 Proxy，任意层级写入（含 state.* 嵌套）都把根条目记入 dirtyItems——
+        save() 只回写脏行。全窗口重写在万级条目库上是秒级事件循环阻塞（API 全卡）。 */
+    private track;
+    private wrapItem;
     constructor(options: SqliteStoreOptions);
     load(): Promise<void>;
     private refreshWindow;
@@ -45,7 +51,8 @@ export declare class SqliteStore {
     addItems(items: FeedItem[]): number;
     markDigested(ids: string[], day: string): void;
     countUndigested(day: string): number;
-    /** save：把窗口内条目回写 + meta/health 落 kv（写穿透已在各处做，save 兜底） */
+    /** save：脏条目回写 + meta/health 落 kv（写穿透已在各处做，save 兜底）。
+        只 UPDATE 自上次 save 以来被改过的行——万级窗口全量重写会把事件循环堵秒级。 */
     save(): Promise<void>;
     /** 清空全部条目（含 FTS 联动+内存窗口）；返回删除数 */
     clearItems(): number;

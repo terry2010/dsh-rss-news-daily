@@ -112,6 +112,7 @@ async function translateItems(items: FeedItem[], client: LlmClient, opts: Partia
           system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
           prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
           maxTokens: 1200,
+          purpose: 'translate',
           signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]),
         })
         const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
@@ -165,6 +166,7 @@ async function scoreChunk(
         + ' 只输出 JSON 数组 [{"i":序号,"s":分数,"r":"10字内理由","t":["标签"]}]，不要解释。',
       prompt: chunk.map((it, idx) => `${idx + 1}. [${it.topic || '综合'}] ${it.title}`).join('\n'),
       maxTokens: opts.llmMaxTokens,
+      purpose: 'score',
       signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
     })
     const m = text.match(/\[[\s\S]*\]/)
@@ -278,6 +280,7 @@ export async function appendHourlyBrief(opts: {
         system: '你是新闻快报编辑。概括本时段新闻要点：先一句总起（主线/主题是什么），再分点列出具体事件（谁、做了什么），每点一行以 - 开头，至多 4 点，挑最重要的。不要解释。',
         prompt: scored.slice(0, 30).map((it, i) => `${i + 1}. [${it.topic || '综合'}] ${zhTitleOf(it)}`).join('\n'),
         maxTokens: Math.min(opts.llmMaxTokens ?? 1500, 2000),
+        purpose: 'brief',
         signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]),
       })).trim() // 不压平：模型若分行输出则保留（多行逐行加 > 前缀）
     } catch (e) { log.warn(`hourly brief summary failed: ${String((e as Error)?.message || e)}`) }
@@ -375,6 +378,7 @@ async function llmClusterItems(
       system: '把报道同一事件/同一主体的条目分组（措辞不同但同一件事）。只输出 JSON 数组的数组 [[序号,序号],[序号]]，无同题输出 []，不要解释。',
       prompt: top.map((it, idx) => `${idx + 1}. ${it.title}`).join('\n'),
       maxTokens: 800,
+      purpose: 'cluster',
       signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
     })
     const arr = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] || 'null')
@@ -445,6 +449,7 @@ async function itemSummaries(
           system: `你是资深新闻编辑。针对这条新闻重写短标题并写三块，严格只输出 JSON {"title":"重写标题（≤15词/等价短句，去标题党，保留产品名与关键变化）","summary":"核心事实：变了什么、对谁（区分厂商宣称与已交付能力，1-2句）","background":"读懂这条需要的前提概念或前情（1句）","impact":"${catPrompt}（具体后果，一句话）"}，不要解释、不要代码块围栏。`,
           prompt: `标题：${item.title}\n来源：${sourcesById.get(item.sourceId)?.title ?? item.sourceId}\n分类：${item.topic || '综合'}\n摘要：${truncateCodePoints(item.summary || item.content || '', 500)}`,
           maxTokens: opts.llmMaxTokens,
+          purpose: 'item-summary',
           signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]),
         })
         const m = text.match(/\{[\s\S]*\}/)

@@ -28,7 +28,7 @@ import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
 import { runDailyDigest, scoreNewItems, appendHourlyBrief } from './digest-pipeline.js'
-import { DshLlmClient, setLlmDiagFile, setLoopGuardEnabled } from './dsh-llm.js'
+import { DshLlmClient, setDevLogDir, setDevLogEnabled, setLlmDiagFile, setLoopGuardEnabled } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
 import type { FeedItem } from './core/types.js'
 import { mountApi } from './api.js'
@@ -76,6 +76,9 @@ export function apply(ctx: Context, config: ConfigType) {
   const dataDir = resolveDataDir(config.dataDir)
   setLlmDiagFile(join(dataDir, 'llm.log')) // LLM 每次调用落一行：死循环/空回复排查证据
   setLoopGuardEnabled(() => prefs.get().loopGuard !== false) // 用户显式关才停；装了 loop-recover 默认开
+  const devlogDir = join(dataDir, 'devlog')
+  setDevLogDir(devlogDir) // 完整 prompt/response 只在 prefs.devLog 开启时写
+  setDevLogEnabled(() => prefs.get().devLog === true)
   const probe = probeSqlite()
   if (!probe.ok) throw new Error('node:sqlite unavailable in this host (requires Node >=22.5)')
   if (!probe.fts) log.warn('SQLite FTS5/trigram unavailable in this host; search falls back to LIKE')
@@ -140,8 +143,8 @@ export function apply(ctx: Context, config: ConfigType) {
       day, time: hm,
       minScore: config.fetch.hourlyMinScore,
       digestsDir: join(dataDir, 'digests'), log,
-      llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log) : undefined,
-      translateClient: llmRuntime ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log) : undefined,
+      llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log, 'brief') : undefined,
+      translateClient: llmRuntime ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'brief-translate') : undefined,
       summaryConcurrency: prefs.get().digestOpts?.summaryConcurrency ?? config.summary.concurrency,
       signal,
       llmTimeoutMs: config.llm.timeoutMs,
@@ -162,7 +165,7 @@ export function apply(ctx: Context, config: ConfigType) {
     scoringInFlight = true
     try {
       if (!signal?.aborted) fetchProg = { ...fetchProg, running: true, done: 0, total: fresh.length, stage: 'score', current: '' }
-      const scoreClient = new DshLlmClient(llmRuntime!, pickRoute(), log)
+      const scoreClient = new DshLlmClient(llmRuntime!, pickRoute(), log, 'score')
       let lastWarn = ''
       const slog = Object.create(log)
       slog.warn = (m: string) => { lastWarn = m; log.warn(m) }
@@ -267,7 +270,7 @@ export function apply(ctx: Context, config: ConfigType) {
     AbortSignal.any([AbortSignal.timeout(config.llm.timeoutMs), ...(signal ? [signal] : [])])
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
   const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string; translationRetries?: number } }, signal?: AbortSignal) => {
-    const client = new DshLlmClient(llmRuntime!, pickTranslateRoute(), log)
+    const client = new DshLlmClient(llmRuntime!, pickTranslateRoute(), log, 'translate')
     const text = await client.generateText({
       system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
       prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
@@ -291,7 +294,7 @@ export function apply(ctx: Context, config: ConfigType) {
   const CLASSIFY_CATS = ['AI', '科技', '国际', '开发', '科学', '财经', '产品', '社会·人文', '综合']
   const classifyFeed = async (feed: { title: string; items: { title: string }[] }): Promise<string> => {
     if (!llmRuntime) return '' // 惰性求值：函数体调用时才读 llmRuntime（声明在下方）
-    const client = new DshLlmClient(llmRuntime, pickTranslateRoute(), log)
+    const client = new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'classify')
     try {
       const text = await client.generateText({
         system: `把 RSS 源归类到这些分类之一：${CLASSIFY_CATS.join('、')}。只输出分类名，不要解释。`,
@@ -447,6 +450,8 @@ export function apply(ctx: Context, config: ConfigType) {
   }
 
   let llmRuntime: ConstructorParameters<typeof DshLlmClient>[0] | undefined
+  // 宿主目录选择服务（可选能力）：桌面端 = native 系统对话框；browse/无服务时 /api/pick-dir 降级
+  let directoryPickerSvc: { capability?: () => { kind?: string; pick?: (s: AbortSignal) => Promise<string | null> } } | undefined
   const pickRoute = (): { provider: string; model: string } => {
     const ui = prefs.get().llm
     if (ui?.provider && ui?.model) return ui // UI 覆盖 > config 对 > 自动
@@ -473,8 +478,8 @@ export function apply(ctx: Context, config: ConfigType) {
     day,
     configSources: config.sources,
     // 每次 digest 现组 client：UI 换模型后下次立即生效（resolution 缓存在 client 实例上）
-    llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log) : undefined,
-    translateClient: llmRuntime ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log) : undefined,
+    llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log, 'digest') : undefined,
+    translateClient: llmRuntime ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'digest-translate') : undefined,
     llmEnabled: config.llm.enabled,
     summaryEnabled: config.summary.enabled,
     summaryMaxItems: prefs.get().digestOpts?.summaryMaxItems ?? config.summary.maxItems,
@@ -560,6 +565,10 @@ export function apply(ctx: Context, config: ConfigType) {
       log.info('llm service available: LLM summaries enabled')
     }
   })
+  ctx.inject(['directoryPicker'], (c) => {
+    directoryPickerSvc = (c as unknown as { directoryPicker?: typeof directoryPickerSvc }).directoryPicker
+    if (directoryPickerSvc) log.info(`directoryPicker service available: ${directoryPickerSvc.capability?.().kind ?? 'unknown'}`)
+  })
   ctx.inject(['webServer'], (c) => {
     const ws = (c as unknown as { webServer?: unknown }).webServer
     if (ws) {
@@ -573,11 +582,13 @@ export function apply(ctx: Context, config: ConfigType) {
         digestsDir: join(dataDir, 'digests'),
         runDigest: digestNow,
         getLlm: () => llmRuntime,
+        getDirectoryPicker: () => directoryPickerSvc,
         configLlm: { provider: config.llm.provider, model: config.llm.model },
         configSchedule: {
           digestTimes: config.schedule.digestTimes.length ? config.schedule.digestTimes : [config.dailyTime],
           fetchTimes: config.schedule.fetchTimes,
         },
+        devlogDir,
       }))
       log.info('reader mounted at /dsh-rss-news-daily/')
     }

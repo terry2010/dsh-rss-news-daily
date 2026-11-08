@@ -58,6 +58,8 @@ export interface LlmTextRequest {
   maxTokens?: number
   temperature?: number
   signal?: AbortSignal
+  /** 调用场景标记（开发日志用）：digest 内部多种调用共享 client，靠它区分 */
+  purpose?: string
 }
 
 const LANGUAGE_LABEL: Record<DigestLanguage, string> = {
@@ -173,6 +175,7 @@ export async function summarize(
         maxTokens: attempt === 0 ? budget : Math.min(budget * 2, 32768),
         temperature: 0.3,
         signal: request.signal,
+        purpose: 'digest-prose',
       })).trim()
       if (text === '') lastErr = 'empty model output'
     } catch (error) {

@@ -28,6 +28,8 @@ export interface PrefsFile extends Prefs {
   loopGuard?: boolean
   /** 定时备份：周期 + 目录 + 保留份数 */
   backup?: { enabled?: boolean; period?: 'day' | 'week' | 'month'; dir?: string; keep?: number }
+  /** 开发日志：完整记录每次模型调用的 prompt/回复、token 用量与生成速度（devlog/ 目录 JSONL） */
+  devLog?: boolean
   /** UI 翻译模型覆盖（独立于日报模型 llm） */
   translateLlm?: { provider: string; model: string }
   /** 订阅分类列表（缺省/未设=全部订阅） */
@@ -76,6 +78,7 @@ export function normalizePrefs(value: unknown): PrefsFile {
     autoTranslate: r.autoTranslate === true ? true : undefined,
     showNavEntry: r.showNavEntry === false ? false : undefined,
     loopGuard: typeof r.loopGuard === 'boolean' ? (r.loopGuard as boolean) : undefined,
+    devLog: r.devLog === true ? true : undefined,
     backup: (() => { const b = (typeof r.backup === 'object' && r.backup !== null ? r.backup : {}) as Record<string, unknown>; const period = b.period === 'week' || b.period === 'month' ? b.period : 'day'; const o = { enabled: b.enabled === true, period: period as 'day' | 'week' | 'month', dir: typeof b.dir === 'string' && b.dir ? b.dir : undefined, keep: typeof b.keep === 'number' && Number.isFinite(b.keep) && b.keep >= 1 ? Math.floor(b.keep) : 7 }; return (o.enabled || o.dir) ? o : undefined })(),
     translateLlm: (() => { const t = (typeof r.translateLlm === 'object' && r.translateLlm !== null ? r.translateLlm : {}) as Record<string, unknown>; return typeof t.provider === 'string' && typeof t.model === 'string' && t.provider && t.model ? { provider: t.provider, model: t.model } : undefined })(),
     subscribedTopics: Array.isArray(r.subscribedTopics) ? (r.subscribedTopics as unknown[]).filter((t): t is string => typeof t === 'string' && !!t) : undefined,

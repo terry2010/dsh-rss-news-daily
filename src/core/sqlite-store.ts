@@ -109,6 +109,35 @@ export class SqliteStore {
   private metaObj: StoreMeta & { health?: Record<string, FeedSource['health']> } = { lastFetchAt: '', lastDigestAt: '', lastDigestDay: '' } as StoreMeta & { health?: Record<string, FeedSource['health']> }
   private srcList: FeedSource[] = []
   private window: FeedItem[] = [] // items getter 的有界窗口（最近 maxItems 条）
+  private dirtyItems = new Map<string, FeedItem>() // 自上次 save 以来被改过的条目（窗口 Proxy 脏标记）
+  private proxyCache = new WeakMap<object, object>()
+
+  /** 条目脏检测：窗口对象套 Proxy，任意层级写入（含 state.* 嵌套）都把根条目记入 dirtyItems——
+      save() 只回写脏行。全窗口重写在万级条目库上是秒级事件循环阻塞（API 全卡）。 */
+  private track<T>(value: T, mark: () => void): T {
+    if (value === null || typeof value !== 'object') return value
+    const hit = this.proxyCache.get(value as object)
+    if (hit) return hit as T
+    const proxy = new Proxy(value as object, {
+      get: (target, key) => this.track(Reflect.get(target, key), mark),
+      set: (target, key, v) => {
+        const changed = !Object.is(Reflect.get(target, key), v)
+        const ok = Reflect.set(target, key, v)
+        if (ok && changed) mark()
+        return ok
+      },
+      deleteProperty: (target, key) => {
+        const ok = Reflect.deleteProperty(target, key)
+        if (ok) mark()
+        return ok
+      },
+    })
+    this.proxyCache.set(value as object, proxy)
+    return proxy as T
+  }
+  private wrapItem(item: FeedItem): FeedItem {
+    return this.track(item, () => { this.dirtyItems.set(item.id, item) })
+  }
 
   constructor(options: SqliteStoreOptions) {
     this.path = options.path
@@ -161,7 +190,8 @@ export class SqliteStore {
   }
 
   private refreshWindow(): void {
-    this.window = (this.db.prepare('SELECT * FROM items ORDER BY fetchedAt DESC LIMIT ?').all(this.maxItems) as Row[]).map(rowToItem)
+    // 不清 dirtyItems：窗口重建丢的是代理外壳，脏条目快照仍可回写（已删行 UPDATE 0 行无害，自清于下次 commit）
+    this.window = (this.db.prepare('SELECT * FROM items ORDER BY fetchedAt DESC LIMIT ?').all(this.maxItems) as Row[]).map((r) => this.wrapItem(rowToItem(r)))
   }
 
   // ---- 公开契约（同 Store） ----
@@ -206,14 +236,16 @@ export class SqliteStore {
     const ins = this.db.prepare(`INSERT OR IGNORE INTO items
       (id,hash,sourceId,topic,title,link,summary,content,publishedAt,fetchedAt,digestedDay,score,llmScore,llmReason,aiTitle,aiSummary,dupOf,dupCount,hotCycles,tags,reasons,state)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    let added = 0
+    const fresh: FeedItem[] = []
     this.db.exec('BEGIN')
     try {
-      for (const i of items) { if ((ins.run(...itemToRow(i) as (string | number | null)[])).changes > 0) { this.window.unshift(i); added++ } }
+      for (const i of items) { if ((ins.run(...itemToRow(i) as (string | number | null)[])).changes > 0) fresh.push(i) }
       this.db.exec('COMMIT')
     } catch (e) { this.db.exec('ROLLBACK'); throw e }
+    // 逐条 unshift 是 O(n·k)；反转后一次前插等价（每条 unshift 会把已插入项逆序压到队首）
+    this.window.splice(0, 0, ...fresh.reverse().map((i) => this.wrapItem(i)))
     if (this.window.length > this.maxItems) this.window.length = this.maxItems
-    return added
+    return fresh.length
   }
 
   markDigested(ids: string[], day: string): void {
@@ -226,19 +258,24 @@ export class SqliteStore {
   countUndigested(day: string): number {
     return (this.db.prepare("SELECT COUNT(*) c FROM items WHERE digestedDay != ?").get(day) as { c: number }).c
   }
-  /** save：把窗口内条目回写 + meta/health 落 kv（写穿透已在各处做，save 兜底） */
+  /** save：脏条目回写 + meta/health 落 kv（写穿透已在各处做，save 兜底）。
+      只 UPDATE 自上次 save 以来被改过的行——万级窗口全量重写会把事件循环堵秒级。 */
   async save(): Promise<void> {
-    const up = this.db.prepare(`UPDATE items SET topic=?,title=?,link=?,summary=?,content=?,publishedAt=?,digestedDay=?,score=?,llmScore=?,llmReason=?,aiTitle=?,aiSummary=?,dupOf=?,dupCount=?,hotCycles=?,tags=?,reasons=?,state=? WHERE id=?`)
+    const dirtyItems = [...this.dirtyItems.values()]
     this.db.exec('BEGIN')
     try {
-      for (const i of this.window) {
-        const r = itemToRow(i)
-        up.run(r[3], r[4], r[5], r[6], r[7], r[8], r[10], r[11], r[12], r[13], r[14], r[15], r[16], r[17], r[18], r[19], r[20], r[21], i.id)
+      if (dirtyItems.length) {
+        const up = this.db.prepare(`UPDATE items SET topic=?,title=?,link=?,summary=?,content=?,publishedAt=?,digestedDay=?,score=?,llmScore=?,llmReason=?,aiTitle=?,aiSummary=?,dupOf=?,dupCount=?,hotCycles=?,tags=?,reasons=?,state=? WHERE id=?`)
+        for (const i of dirtyItems) {
+          const r = itemToRow(i)
+          up.run(r[3], r[4], r[5], r[6], r[7], r[8], r[10], r[11], r[12], r[13], r[14], r[15], r[16], r[17], r[18], r[19], r[20], r[21], i.id)
+        }
       }
       const setMeta = this.db.prepare('INSERT OR REPLACE INTO meta (key,value) VALUES (?,?)')
       for (const [k, v] of Object.entries(this.metaObj)) if (k !== 'health') setMeta.run(k, JSON.stringify(v))
       setMeta.run('health', JSON.stringify(this.metaObj.health ?? {}))
       this.db.exec('COMMIT')
+      this.dirtyItems.clear()
     } catch (e) { this.db.exec('ROLLBACK'); throw e }
     this.prune()
   }
@@ -248,6 +285,7 @@ export class SqliteStore {
     const n = this.count()
     this.db.exec('DELETE FROM items')
     this.window = []
+    this.dirtyItems.clear()
     return n
   }
 

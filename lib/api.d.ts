@@ -46,6 +46,13 @@ export interface ApiDeps {
             id: string;
         }>>;
     } | undefined;
+    /** 宿主目录选择服务（可选能力）；native 能力弹系统对话框，browse/缺失时 pick-dir 返回 supported:false */
+    getDirectoryPicker?: () => {
+        capability?: () => {
+            kind?: string;
+            pick?: (s: AbortSignal) => Promise<string | null>;
+        };
+    } | undefined;
     /** config 层的 llm 路由对（用于 effective 判定展示） */
     configLlm?: {
         provider: string;
@@ -56,6 +63,8 @@ export interface ApiDeps {
         digestTimes: string[];
         fetchTimes: string[];
     };
+    /** 开发日志目录（prefs.devLog 开启时 LLM 全量对话 JSONL 落这里） */
+    devlogDir?: string;
 }
 /** 注册阅读器全部路由；返回 disposer。MOUNT 于 ctx.inject(['webServer']) 内调用。 */
 export declare function mountApi(ws: WebServerLike, deps: ApiDeps): () => void;

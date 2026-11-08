@@ -69,6 +69,42 @@ test('sql: save 持久化窗口内修改（state/meta）', async () => {
   assert.equal(st2.meta.lastFetchAt, '2026-10-28T00:00:00Z')
 })
 
+test('sql: 脏标记覆盖嵌套 state/顶层字段/deleteProperty', async () => {
+  const { st, dir } = await mk()
+  st.addItems([mkItem('a'), mkItem('b')])
+  const a = st.items.find((i) => i.id === 'a')
+  a.state.translation = '标题\n\n正文'
+  a.state.translationRetries = 2
+  a.llmScore = 8.5
+  a.llmReason = 'r'
+  delete a.llmReason
+  st.items.find((i) => i.id === 'b').tags = ['x']
+  await st.save()
+  const { SqliteStore } = await import('../lib/core/sqlite-store.js')
+  const st2 = new SqliteStore({ path: join(dir, 'store.db') })
+  await st2.load()
+  const a2 = st2.items.find((i) => i.id === 'a')
+  assert.equal(a2.state.translation, '标题\n\n正文')
+  assert.equal(a2.state.translationRetries, 2)
+  assert.equal(a2.llmScore, 8.5)
+  assert.equal(a2.llmReason, undefined) // delete 落库为 NULL
+  assert.deepEqual(st2.items.find((i) => i.id === 'b').tags, ['x'])
+})
+
+test('sql: 脏标记跨 refreshWindow 存活（删源重建窗口后 save 仍落盘在途修改）', async () => {
+  const { st, dir } = await mk()
+  const srcA = { id: 'https://a/feed', url: 'https://a/feed', title: 'A', enabled: true, addedAt: '', category: 'AI', tier: 1, lang: 'en', method: 'direct', builtin: false, weight: 1, summarize: true, proxy: null, health: {} }
+  st.addSource(srcA)
+  st.addItems([mkItem('a', { sourceId: srcA.id }), mkItem('b', { sourceId: 'other' })])
+  st.items.find((i) => i.id === 'b').state.read = true // b 脏、尚未 save
+  st.removeSource(srcA.id) // 删 a → refreshWindow 重建窗口（b 换新代理外壳）
+  await st.save()
+  const { SqliteStore } = await import('../lib/core/sqlite-store.js')
+  const st2 = new SqliteStore({ path: join(dir, 'store.db') })
+  await st2.load()
+  assert.equal(st2.items.find((i) => i.id === 'b')?.state.read, true)
+})
+
 test('sql: prune 过期+低质优先', async () => {
   const old = new Date(Date.now() - 100 * 86400e3).toISOString()
   const { st } = await mk({ maxItems: 2, retentionDays: () => 90, pruneLowQuality: () => true })

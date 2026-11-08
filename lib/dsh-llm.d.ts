@@ -22,8 +22,12 @@ export declare function resolveDshRoute(llm: LlmRuntime, route: DshLlmRoute): Pr
 export interface CollectDiag {
     reasoningChars: number;
     tail: string;
+    genMs?: number;
+    partial?: string;
 }
 export declare function setLlmDiagFile(path: string): void;
+export declare function setDevLogDir(dir: string): void;
+export declare function setDevLogEnabled(fn: () => boolean): void;
 /** dsh-loop-recover 的检测器（装了就用，没装就跳过——它只拦 agent 循环，不护我们的旁路调用）。
  *  变量形式的 specifier 让 tsc 不做静态解析——该包是宿主 profile 的可选共存插件，非本包依赖。 */
 type LoopHit = {
@@ -49,6 +53,7 @@ export declare class DshLlmClient implements LlmClient {
     private readonly route;
     private readonly log;
     private readonly idleTimeoutMs;
+    private readonly tag;
     private resolution?;
     /** 本 client 生命周期内的累计 token 用量（pipeline 每次 digest 新建实例 → 即单次日报用量） */
     readonly usage: {
@@ -57,7 +62,7 @@ export declare class DshLlmClient implements LlmClient {
         _seen?: number;
         _seenOut?: number;
     };
-    constructor(llm: LlmRuntime, route: DshLlmRoute, log: LogSink, idleTimeoutMs?: number);
+    constructor(llm: LlmRuntime, route: DshLlmRoute, log: LogSink, tag?: string, idleTimeoutMs?: number);
     generateText(request: LlmTextRequest): Promise<string>;
     private call;
 }

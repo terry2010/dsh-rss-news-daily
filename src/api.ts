@@ -4,9 +4,10 @@
  */
 
 import { existsSync } from 'node:fs'
-import { copyFile, cp, mkdir, readFile, readdir, rm } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, platform } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { zonedDayBounds } from './core/time.js'
@@ -86,10 +87,14 @@ export interface ApiDeps {
   runDigest: (force?: boolean, day?: string) => Promise<unknown>
   /** 宿主 LLM runtime（可选能力）；用于 /api/llm 列 provider/model */
   getLlm?: () => { listProviders(): Array<{ id: string }>; listModels(p: string): Promise<Array<{ id: string }>> } | undefined
+  /** 宿主目录选择服务（可选能力）；native 能力弹系统对话框，browse/缺失时 pick-dir 返回 supported:false */
+  getDirectoryPicker?: () => { capability?: () => { kind?: string; pick?: (s: AbortSignal) => Promise<string | null> } } | undefined
   /** config 层的 llm 路由对（用于 effective 判定展示） */
   configLlm?: { provider: string; model: string }
   /** config 层的调度默认（UI 覆盖的回落） */
   configSchedule?: { digestTimes: string[]; fetchTimes: string[] }
+  /** 开发日志目录（prefs.devLog 开启时 LLM 全量对话 JSONL 落这里） */
+  devlogDir?: string
 }
 
 // === API 端点 ===
@@ -333,6 +338,7 @@ function apiPrefs(deps: ApiDeps) {
         bannedKeywords: body.bannedKeywords, sourceWeight: body.sourceWeight,
         proxyUrl: body.proxyUrl, autoTranslate: body.autoTranslate,
         showNavEntry: body.showNavEntry, loopGuard: body.loopGuard, backup: body.backup,
+        devLog: body.devLog,
         digestOpts: body.digestOpts, subscribedTopics: body.subscribedTopics,
       }).filter(([, v]) => v !== undefined))
       deps.prefs.save(patch)
@@ -464,6 +470,52 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
       } catch { /* 读不到 profile 则按未启用 */ }
     }
     sendJson(r, 200, { ok: true, installed, enabled, pref: deps.prefs.get().loopGuard ?? null, active: loopDetectStatus() === 'active' })
+  }) }))
+  // 系统目录选择：借宿主 directoryPicker 的 native 能力弹一次 OS 对话框；
+  // browse 能力只有逐级浏览原语、无单次 pick，远程部署降级为手动输入
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/pick-dir`, handler: guard(async (q, r) => {
+    if (q.method !== 'POST') { r.statusCode = 405; r.end(); return }
+    const cap = deps.getDirectoryPicker?.()?.capability?.()
+    if (cap?.kind !== 'native' || typeof cap.pick !== 'function') {
+      sendJson(r, 200, { ok: true, supported: false, path: null })
+      return
+    }
+    try {
+      const path = await cap.pick(AbortSignal.timeout(300_000))
+      sendJson(r, 200, { ok: true, supported: true, path })
+    } catch (e) {
+      sendJson(r, 200, { ok: true, supported: true, path: null, error: String((e as Error)?.message || e) })
+    }
+  }) }))
+  // 开发日志：状态查询 + 系统文件管理器打开日志目录（路径固定为插件数据目录下的 devlog/，不接受外部输入）
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/devlog`, handler: guard(async (_q, r) => {
+    const dir = deps.devlogDir
+    const enabled = deps.prefs.get().devLog === true
+    let files: Array<{ name: string; size: number; mtime: string }> = []
+    if (dir && existsSync(dir)) {
+      const names = (await readdir(dir).catch(() => [] as string[])).filter((n) => n.startsWith('dev-') && n.endsWith('.jsonl')).sort().reverse().slice(0, 7)
+      files = await Promise.all(names.map(async (name) => {
+        const st = await stat(join(dir, name)).catch(() => null)
+        return { name, size: st?.size ?? 0, mtime: st ? new Date(st.mtimeMs).toISOString() : '' }
+      }))
+    }
+    sendJson(r, 200, { ok: true, enabled, dir: dir ?? null, files })
+  }) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/devlog/open`, handler: guard(async (q, r) => {
+    if (q.method !== 'POST') { r.statusCode = 405; r.end(); return }
+    const dir = deps.devlogDir
+    if (!dir) return sendJson(r, 200, { ok: false, error: 'devlog dir not configured' })
+    try {
+      await mkdir(dir, { recursive: true })
+      const p = platform()
+      const [cmd, args] = p === 'darwin' ? ['open', [dir]]
+        : p === 'win32' ? ['explorer.exe', [dir]]
+        : ['xdg-open', [dir]]
+      const child = spawn(cmd, args, { detached: true, stdio: 'ignore' })
+      child.unref()
+      child.once('error', (e) => sendJson(r, 200, { ok: false, error: String(e) }))
+      child.once('spawn', () => sendJson(r, 200, { ok: true }))
+    } catch (e) { sendJson(r, 200, { ok: false, error: String((e as Error)?.message || e) }) }
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/llm`, handler: guard(apiLlm(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/schedule`, handler: guard(async (q, r) => {

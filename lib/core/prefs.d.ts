@@ -38,6 +38,8 @@ export interface PrefsFile extends Prefs {
         dir?: string;
         keep?: number;
     };
+    /** 开发日志：完整记录每次模型调用的 prompt/回复、token 用量与生成速度（devlog/ 目录 JSONL） */
+    devLog?: boolean;
     /** UI 翻译模型覆盖（独立于日报模型 llm） */
     translateLlm?: {
         provider: string;

@@ -51,6 +51,8 @@ export interface LlmTextRequest {
     maxTokens?: number;
     temperature?: number;
     signal?: AbortSignal;
+    /** 调用场景标记（开发日志用）：digest 内部多种调用共享 client，靠它区分 */
+    purpose?: string;
 }
 /** Render the prompt body for a request. */
 export declare function buildPrompt(request: SummarizeRequest): {
