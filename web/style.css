@@ -232,7 +232,7 @@ button[disabled] { opacity: .45; cursor: default; }
 .settings-intro { padding: var(--s2) 2px 0; }
 .settings-intro h2 { margin: 0; font-size: 20px; font-weight: 600; }
 .settings-intro p, .settings-help { margin: 4px 0 10px; color: var(--dim); font-size: 13px; }
-.settings-card, .settings-fold { min-width: 0; background: var(--tabs-track); border: 1px solid var(--line-input); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 14px 14px; }
+.settings-card, .settings-fold { min-width: 0; --block-bg: color-mix(in srgb, var(--tabs-track) 45%, var(--bg)); background: var(--block-bg); border: 1px solid var(--line-input); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); background-image: linear-gradient(to bottom, transparent 40%, var(--block-bg) 92%), linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: auto, 14px 14px, 14px 14px; }
 .settings-card { padding: var(--s4); }
 .settings-card > h3 { margin: 0 0 6px; color: var(--fg); font-size: 15px; }
 .settings-subsection { padding-top: var(--s3); margin-top: var(--s3); border-top: .5px solid var(--line); }
