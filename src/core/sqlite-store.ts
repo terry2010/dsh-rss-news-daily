@@ -4,7 +4,7 @@
  * 所有条目变更写穿透；meta/sources/health 内存镜像 + save 落盘。
  */
 import { DatabaseSync } from 'node:sqlite'
-import { existsSync, mkdirSync, renameSync, createWriteStream, createReadStream } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, copyFileSync, rmSync, createWriteStream, createReadStream } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { FeedItem, FeedSource } from './types.js'
@@ -187,6 +187,17 @@ export class SqliteStore {
     for (const ls of legacySources) if (!this.srcList.find((s) => s.url === ls.url)) this.addSource(ls)
     this.refreshWindow()
     this.prune()
+  }
+
+  /** 热恢复：关库 → file 覆盖 store.db → 重新 load（meta/sources/窗口全部重建）。
+      调用方须先停抓取/生成；脏窗口清空避免旧数据写回恢复库。 */
+  async restoreFrom(file: string): Promise<void> {
+    try { this.db.close() } catch { /* 幂等 */ }
+    for (const ext of ['', '-wal', '-shm']) rmSync(`${this.path}${ext}`, { force: true })
+    copyFileSync(file, this.path)
+    this.dirtyItems.clear()
+    this.proxyCache = new WeakMap()
+    await this.load()
   }
 
   private refreshWindow(): void {

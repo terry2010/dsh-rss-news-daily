@@ -35,6 +35,9 @@ export declare class SqliteStore {
     private wrapItem;
     constructor(options: SqliteStoreOptions);
     load(): Promise<void>;
+    /** 热恢复：关库 → file 覆盖 store.db → 重新 load（meta/sources/窗口全部重建）。
+        调用方须先停抓取/生成；脏窗口清空避免旧数据写回恢复库。 */
+    restoreFrom(file: string): Promise<void>;
     private refreshWindow;
     get meta(): StoreMeta & {
         health?: Record<string, FeedSource["health"]>;

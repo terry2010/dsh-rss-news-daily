@@ -445,14 +445,52 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
       sendJson(r, 200, { ok: true, file })
     } catch (e) { sendJson(r, 500, { ok: false, error: String((e as Error)?.message || e) }) }
   }) }))
-  // 恢复：解 zip 到 .restore-pending/，重启 dsh 后开库前整体覆盖（库+日报+设置）
+  // 恢复：先停在跑任务（抓取/翻译/评分/日报生成）→ 解 zip → 热替换库+设置+日报，免重启
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/restore`, handler: guard(async (q, r) => {
     if (q.method !== 'POST') { r.statusCode = 405; r.end(); return }
     const body = await readBody(q) as { path?: string }
     if (!body.path?.trim()) { sendJson(r, 400, { ok: false, error: 'path required' }); return }
+    const dataDir = dirname(deps.store.path)
     try {
-      const res = await stageRestore(dirname(deps.store.path), body.path.trim())
-      sendJson(r, 200, { ok: true, ...res, needsRestart: true })
+      // 1) 在飞任务全部叫停，等它们真正退出（写库的动作不能与换库并发）
+      await Promise.all([
+        deps.svc.cancelFetch?.().catch(() => undefined),
+        deps.svc.stopDigest?.().catch(() => undefined),
+      ])
+      const waitStop = async (prog?: () => Promise<{ running?: boolean; cancelled?: boolean }>) => {
+        if (!prog) return true
+        for (let i = 0; i < 100; i++) {
+          const p = await prog().catch(() => ({ running: false }))
+          if (!p?.running) return true
+          await new Promise((s) => setTimeout(s, 300))
+        }
+        return false
+      }
+      const stopped = await Promise.all([
+        waitStop(deps.svc.fetchProgress?.bind(deps.svc)),
+        waitStop(deps.svc.digestProgress?.bind(deps.svc)),
+      ])
+      if (!stopped.every(Boolean)) { sendJson(r, 409, { ok: false, error: '任务停止超时，请稍后再试' }); return }
+      // 2) 解包到 .restore-pending/（boot 兜底路径也走这里）
+      const staged = await stageRestore(dataDir, body.path.trim())
+      const pending = join(dataDir, '.restore-pending')
+      const st = deps.store as { restoreFrom?: (f: string) => Promise<void> }
+      if (st.restoreFrom && existsSync(join(pending, 'store.db'))) {
+        // 3) 热恢复：库整体替换重载、prefs 重读、日报目录替换
+        await st.restoreFrom(join(pending, 'store.db'))
+        const pp = join(pending, 'prefs.json')
+        if (existsSync(pp)) { await copyFile(pp, join(dataDir, 'prefs.json')); (deps.prefs as { load?: () => void }).load?.() }
+        const pd = join(pending, 'digests')
+        if (existsSync(pd)) {
+          await rm(join(dataDir, 'digests'), { recursive: true, force: true })
+          await cp(pd, join(dataDir, 'digests'), { recursive: true })
+        }
+        await rm(pending, { recursive: true, force: true })
+        sendJson(r, 200, { ok: true, ...staged })
+      } else {
+        // 无热恢复能力的 store：留在 pending，重启生效
+        sendJson(r, 200, { ok: true, ...staged, needsRestart: true })
+      }
     } catch (e) { sendJson(r, 400, { ok: false, error: String((e as Error)?.message || e) }) }
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/loopguard`, handler: guard(async (_q, r) => {

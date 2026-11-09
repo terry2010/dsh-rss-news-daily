@@ -115,10 +115,10 @@
       <summary><span>个性化内容</span><small>想多看/少看什么、关注哪些分类、用什么模型</small></summary>
       <div class="settings-fold-body">
       <p class="settings-help">告诉插件你喜欢什么，或哪些内容不想看。例如：多推 AI Agent、少推币圈、屏蔽裁员。</p>
-      <div class="toolbar settings-tune">
-        <label class="f f-ta" for="tuneText"><span class="f-lab">调教偏好</span><textarea id="tuneText" rows="3" placeholder="写下你想多看、少看或屏蔽的内容"></textarea></label>
-        <span class="f-end"><button id="btnTune" class="primary">应用</button>
-        <button id="btnResetPrefs">重置推荐偏好</button></span>
+      <div class="settings-tune">
+        <label class="tune-label" for="tuneText">调教偏好</label>
+        <textarea id="tuneText" rows="3" placeholder="写下你想多看、少看或屏蔽的内容"></textarea>
+        <div class="tune-actions"><button id="btnTune" class="primary">应用</button><button id="btnResetPrefs">重置推荐偏好</button></div>
       </div>
       <div id="tuneResult"></div>
       <div class="settings-subsection">
@@ -187,7 +187,7 @@
           <label for="restorePath">恢复备份</label>
           <input type="text" id="restorePath" placeholder="备份 zip 路径，如 ~/backups/rss-backup-….zip">
           <button id="btnRestore" class="push-right">恢复</button>
-          <small class="field-sub">恢复会覆盖当前新闻库、日报/快报和全部设置，重启 dsh 后生效。</small>
+          <small class="field-sub">恢复会先停止在跑任务，然后覆盖当前新闻库、日报/快报和全部设置。</small>
         </div>
         <div class="field">
           <span id="backupInfo" class="hist"></span>

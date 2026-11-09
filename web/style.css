@@ -121,11 +121,11 @@ button[disabled] { opacity: .45; cursor: default; }
 label[for=backupDir].f { max-width: 368px; }
 label[for=proxyUrl].f { max-width: 460px; }
 label[for=testUrl].f { max-width: 345px; }
-/* 多行文本胶囊：label 顶对齐，textarea 无边框吃满 */
-.f-ta { flex: 1; min-width: 85px; max-width: 460px; height: auto; align-items: flex-start; padding: 6px 3px 6px 6px; }
-.f-ta .f-lab { padding-top: 5px; }
-.f-ta textarea { border: none; background: transparent; box-shadow: none; flex: 1; min-width: 0; padding: 4px 0; margin: 0; resize: vertical; font: 12.5px/1.5 var(--f-ui); color: var(--fg); }
-.f-ta textarea:focus { outline: none; }
+/* 调教块：label 在输入框外，按钮下一行靠右 */
+.settings-tune .tune-label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 4px; }
+.settings-tune textarea { display: block; width: 100%; max-width: 460px; background: var(--inbg); border: 1px solid var(--line-input); border-radius: var(--r-md); padding: 6px 10px; margin: 0; font: 12.5px/1.5 var(--f-ui); color: var(--fg); resize: vertical; transition: border-color var(--m-in) var(--ease), box-shadow var(--m-in) var(--ease); }
+.settings-tune textarea:focus { outline: none; border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); }
+.tune-actions { display: flex; gap: 6px; justify-content: flex-end; max-width: 460px; margin-top: 6px; }
 .f-check { display: inline-flex; align-items: center; gap: 6px; height: var(--ctl-h); color: var(--lead); font-size: 12.5px; padding: 0 4px; cursor: pointer; }
 /* dsh 双态 toggle：seg 轨道 + elevated 滑丸覆盖激活侧（未读|全部） */
 .f-sw2 { position: relative; padding: 0; margin-left: auto; }
