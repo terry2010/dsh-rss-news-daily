@@ -90,9 +90,9 @@ input:not([type="checkbox"]):not([type="radio"]), select { background: var(--inb
 input:not([type="checkbox"]):not([type="radio"]):focus, select:focus { outline: none; border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); }
 .f input:not([type="checkbox"]):not([type="radio"]), .f select { border: none; background: transparent; box-shadow: none; height: 100%; padding: 0; flex: 1; min-width: 0; }
 .f input:not([type="checkbox"]):not([type="radio"]):focus, .f select:focus { box-shadow: none; }
-.f select { padding-right: 18px; max-width: 100px; }
+.f select { padding-right: 16px; max-width: 66px; }
 #srcFilter { max-width: 75px; }
-.f input[type="date"] { width: 88px; flex: none; }
+.f input[type="date"] { width: 58px; flex: none; }
 input::placeholder { color: var(--dim2); }
 input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--acc); margin: 0; flex-shrink: 0; }
 select { padding-right: 26px; }
