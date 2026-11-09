@@ -518,7 +518,7 @@ function mdLite(md) {
     const l = raw.trimEnd(), e = inline(l)
     const h = l.match(/^(#{1,4})\s+(.*)$/)
     if (h) { closeLists(); const id = h[2].replace(/[<>"'`]/g, '').trim(); out.push(`<h${h[1].length} id="${id}">${inline(h[2])}</h${h[1].length}>`); continue }
-    if (l.startsWith('>')) { const c = l.replace(/^>\s?/, ''); if (!inBq) { closeLists(); out.push('<blockquote>'); inBq = true } else out.push('<br>'); out.push(inline(c)); continue }
+    if (l.startsWith('>')) { const c = l.replace(/^>\s?/, ''); if (!c.trim()) continue; if (!inBq) { closeLists(); out.push('<blockquote>'); inBq = true } else out.push('<br>'); out.push(inline(c)); continue }
     if (/^---+$/.test(l.trim())) { closeLists(); out.push('<hr>'); continue }
     if (l.startsWith('- ') || l.startsWith('* ')) { if (inOl) { out.push('</ol>'); inOl = false } if (!inUl) { out.push('<ul>'); inUl = true } out.push(`<li>${inline(l.slice(2))}</li>`); continue }
     const ol = l.match(/^(\d+)\.\s+(.*)$/)
