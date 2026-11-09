@@ -38,6 +38,9 @@
     "digest"
   ],
   "license": "MIT",
+  "author": "terry2010 <jstel@126.com>",
+  "homepage": "https://github.com/terry2010/dsh-rss-news-daily",
+  "bugs": "https://github.com/terry2010/dsh-rss-news-daily/issues",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/terry2010/dsh-rss-news-daily.git"
