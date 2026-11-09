@@ -184,6 +184,12 @@
           <small class="field-sub">超过后，最新备份完成时自动删除最旧的备份。</small>
         </div>
         <div class="field">
+          <label for="restorePath">恢复备份</label>
+          <input type="text" id="restorePath" placeholder="备份 zip 路径，如 ~/backups/rss-backup-….zip">
+          <button id="btnRestore" class="push-right">恢复</button>
+          <small class="field-sub">恢复会覆盖当前新闻库、日报/快报和全部设置，重启 dsh 后生效。</small>
+        </div>
+        <div class="field">
           <span id="backupInfo" class="hist"></span>
         </div>
       </div>

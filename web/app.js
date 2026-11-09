@@ -330,6 +330,18 @@ $('#btnBackupNow').addEventListener('click', async () => {
     toast('备份完成')
   } catch (e) { $('#backupInfo').textContent = ''; toast(`备份失败: ${e.message}`) }
 })
+// 恢复：zip 解到 .restore-pending/，下次启动开库前整体覆盖（库+日报+设置）
+$('#btnRestore').addEventListener('click', async () => {
+  const path = $('#restorePath').value.trim()
+  if (!path) { toast('先填备份 zip 路径'); return }
+  if (!confirm('恢复会覆盖当前新闻库、日报/快报和全部设置，确定继续？')) return
+  $('#backupInfo').textContent = '恢复解包中…'
+  try {
+    const r = await post('/restore', { path })
+    $('#backupInfo').textContent = ''
+    toast(r.needsRestart ? '已就绪：重启 dsh 后生效' : '已恢复')
+  } catch (e) { $('#backupInfo').textContent = ''; toast(`恢复失败: ${e.message}`) }
+})
 // 备份文件夹：系统目录选择走宿主 directoryPicker native 能力（/api/pick-dir）
 $('#btnPickBackupDir').addEventListener('click', async () => {
   const btn = $('#btnPickBackupDir')

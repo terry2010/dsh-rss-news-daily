@@ -121,7 +121,6 @@ button[disabled] { opacity: .45; cursor: default; }
 label[for=backupDir].f { max-width: 368px; }
 label[for=proxyUrl].f { max-width: 460px; }
 label[for=testUrl].f { max-width: 345px; }
-#llmModel, #tlModel { max-width: 132px; }
 /* 多行文本胶囊：label 顶对齐，textarea 无边框吃满 */
 .f-ta { flex: 1; min-width: 85px; max-width: 460px; height: auto; align-items: flex-start; padding: 6px 3px 6px 6px; }
 .f-ta .f-lab { padding-top: 5px; }
@@ -307,6 +306,8 @@ label[for=testUrl].f { max-width: 345px; }
 .push-right { margin-left: auto; }
 .field-sub { flex-basis: 100%; color: var(--dim); }
 #backupKeep { width: 64px; }
+#restorePath { flex: 1; min-width: 0; max-width: 340px; }
+#llmModel, #tlModel { max-width: 198px; }
 #prefsView h4 { margin: 12px 0 4px; font-size: 13px; font-weight: 600; }
 #prefsView h4:first-child { margin-top: 0; }
 h3 { font-size: 14px; margin: 18px 0 8px; color: var(--lead); }

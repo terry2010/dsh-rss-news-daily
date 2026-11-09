@@ -36,6 +36,7 @@ import { parseTune } from './core/tune.js'
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { digestFileName } from './digest.js'
+import { applyPendingRestore, backupDirOf, runBackupZip } from './backup.js'
 import { normalizeUrl } from './service.js'
 import { learnFromFeedback } from './core/tune.js'
 import { zonedDayKey, zonedDayBounds } from './core/time.js'
@@ -82,6 +83,7 @@ export function apply(ctx: Context, config: ConfigType) {
   const probe = probeSqlite()
   if (!probe.ok) throw new Error('node:sqlite unavailable in this host (requires Node >=22.5)')
   if (!probe.fts) log.warn('SQLite FTS5/trigram unavailable in this host; search falls back to LIKE')
+  applyPendingRestore(dataDir, log) // 上次请求过恢复：开库前整体覆盖写回
   const store = new SqliteStore({
     path: join(dataDir, 'store.db'), maxItems: () => prefs.get().digestOpts?.storeMaxItems ?? config.fetch.maxStoredItems, log,
     retentionDays: () => prefs.get().digestOpts?.retentionDays ?? 90,
@@ -215,22 +217,11 @@ export function apply(ctx: Context, config: ConfigType) {
       log.info(`autoTranslate: ${translated}/${fresh.length} items translated`)
     }
   }
-  // 定时备份：目录 rss-backup-<stamp>/ 含 store.db 快照 + digests/ + prefs.json；超额删最旧
-  const backupDirOf = (d: string) => join(d.replace(/^~(?=$|\/)/, homedir()))
+  // 定时备份：单文件 rss-backup-<stamp>.zip（store.db 快照 + digests/ + prefs.json）；超额删最旧
   const runBackup = async (): Promise<string> => {
     const b = prefs.get().backup
     if (!b?.dir) return ''
-    const dir = backupDirOf(b.dir)
-    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16)
-    const dest = join(dir, `rss-backup-${stamp}`)
-    await mkdir(dest, { recursive: true })
-    store.snapshot?.(join(dest, 'store.db'))
-    await cp(join(dataDir, 'digests'), join(dest, 'digests'), { recursive: true }).catch(() => { })
-    await copyFile(join(dataDir, 'prefs.json'), join(dest, 'prefs.json')).catch(() => { })
-    const keep = Math.max(1, b.keep ?? 7)
-    const entries = (await readdir(dir)).filter((n) => n.startsWith('rss-backup-')).sort()
-    for (const old of entries.slice(0, Math.max(0, entries.length - keep)))
-      await rm(join(dir, old), { recursive: true, force: true }).catch(() => { })
+    const dest = await runBackupZip(dataDir, store, backupDirOf(b.dir), b.keep ?? 7)
     ;(store.meta as { lastBackupAt?: string }).lastBackupAt = new Date().toISOString()
     log.info(`backup done: ${dest}`)
     return dest
