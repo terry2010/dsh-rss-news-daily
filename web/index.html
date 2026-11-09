@@ -116,7 +116,7 @@
       <div class="settings-fold-body">
       <p class="settings-help">告诉插件你喜欢什么，或哪些内容不想看。例如：多推 AI Agent、少推币圈、屏蔽裁员。</p>
       <div class="toolbar settings-tune">
-        <label class="f f-grow" for="tuneText"><span class="f-lab">调教偏好</span><input type="text" id="tuneText" placeholder="写下你想多看、少看或屏蔽的内容"></label>
+        <label class="f f-ta" for="tuneText"><span class="f-lab">调教偏好</span><textarea id="tuneText" rows="3" placeholder="写下你想多看、少看或屏蔽的内容"></textarea></label>
         <span class="f-end"><button id="btnTune" class="primary">应用</button>
         <button id="btnResetPrefs">重置推荐偏好</button></span>
       </div>
@@ -180,10 +180,10 @@
         <div class="field">
           <label for="backupKeep">最多保留份数</label>
           <input type="number" id="backupKeep" min="1" placeholder="默认 7">
-          <small>超过后，最新备份完成时自动删除最旧的备份。</small>
+          <button id="btnBackupNow" class="push-right">立即备份</button>
+          <small class="field-sub">超过后，最新备份完成时自动删除最旧的备份。</small>
         </div>
         <div class="field">
-          <button id="btnBackupNow">立即备份</button>
           <span id="backupInfo" class="hist"></span>
         </div>
       </div>

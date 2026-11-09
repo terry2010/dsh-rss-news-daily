@@ -118,6 +118,15 @@ button[disabled] { opacity: .45; cursor: default; }
 .f:focus-within { border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); }
 .f-lab { font-size: 11.5px; font-weight: 400; color: var(--dim); flex: none; }
 .f-grow { flex: 1; min-width: 85px; max-width: 230px; }
+label[for=backupDir].f { max-width: 368px; }
+label[for=proxyUrl].f { max-width: 460px; }
+label[for=testUrl].f { max-width: 345px; }
+#llmModel, #tlModel { max-width: 132px; }
+/* 多行文本胶囊：label 顶对齐，textarea 无边框吃满 */
+.f-ta { flex: 1; min-width: 85px; max-width: 460px; height: auto; align-items: flex-start; padding: 6px 3px 6px 6px; }
+.f-ta .f-lab { padding-top: 5px; }
+.f-ta textarea { border: none; background: transparent; box-shadow: none; flex: 1; min-width: 0; padding: 4px 0; margin: 0; resize: vertical; font: 12.5px/1.5 var(--f-ui); color: var(--fg); }
+.f-ta textarea:focus { outline: none; }
 .f-check { display: inline-flex; align-items: center; gap: 6px; height: var(--ctl-h); color: var(--lead); font-size: 12.5px; padding: 0 4px; cursor: pointer; }
 /* dsh 双态 toggle：seg 轨道 + elevated 滑丸覆盖激活侧（未读|全部） */
 .f-sw2 { position: relative; padding: 0; margin-left: auto; }
@@ -295,6 +304,11 @@ button[disabled] { opacity: .45; cursor: default; }
 .hint { font-size: 12px; color: var(--dim); }
 .field { margin: var(--s2) 0; display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
 .field > label { color: var(--lead); font-size: 13px; min-width: 5.5em; }
+.push-right { margin-left: auto; }
+.field-sub { flex-basis: 100%; color: var(--dim); }
+#backupKeep { width: 64px; }
+#prefsView h4 { margin: 12px 0 4px; font-size: 13px; font-weight: 600; }
+#prefsView h4:first-child { margin-top: 0; }
 h3 { font-size: 14px; margin: 18px 0 8px; color: var(--lead); }
 .findbar { position: fixed; top: 8px; right: 12px; z-index: 99; background: var(--panel); border: 1px solid var(--acc); border-radius: var(--r-md); padding: 5px; display: flex; gap: 4px; align-items: center; box-shadow: var(--shadow-hi); }
 .findbar input { height: 28px !important; width: 150px; }
