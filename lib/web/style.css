@@ -90,7 +90,7 @@ input:not([type="checkbox"]):not([type="radio"]), select { background: var(--inb
 input:not([type="checkbox"]):not([type="radio"]):focus, select:focus { outline: none; border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); }
 .f input:not([type="checkbox"]):not([type="radio"]), .f select { border: none; background: transparent; box-shadow: none; height: 100%; padding: 0; flex: 1; min-width: 0; }
 .f input:not([type="checkbox"]):not([type="radio"]):focus, .f select:focus { box-shadow: none; }
-.f select { padding-right: 16px; max-width: 66px; }
+.f select { padding-right: 10px; max-width: 66px; }
 #srcFilter { max-width: 75px; }
 .f input[type="date"] { width: 58px; flex: none; }
 input::placeholder { color: var(--dim2); }
@@ -110,7 +110,7 @@ button.danger.armed { background: var(--err); color: #fff; box-shadow: none; }
 button[disabled] { opacity: .45; cursor: default; }
 
 /* ---- 字段：dsh _wrap 胶囊——label 内嵌左侧，发丝边包整粒 ---- */
-.f { display: inline-flex; align-items: center; gap: 5px; height: var(--ctl-h); padding: 0 3px 0 9px; background: var(--inbg); border: 1px solid var(--line-input); border-radius: var(--r-md); min-width: 0; transition: border-color var(--m-in) var(--ease), box-shadow var(--m-in) var(--ease); }
+.f { display: inline-flex; align-items: center; gap: 3px; height: var(--ctl-h); padding: 0 3px 0 6px; background: var(--inbg); border: 1px solid var(--line-input); border-radius: var(--r-md); min-width: 0; transition: border-color var(--m-in) var(--ease), box-shadow var(--m-in) var(--ease); }
 .f:focus-within { border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 25%, transparent); }
 .f-lab { font-size: 11.5px; font-weight: 400; color: var(--dim); flex: none; }
 .f-grow { flex: 1; min-width: 85px; }
