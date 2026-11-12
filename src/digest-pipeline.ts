@@ -249,6 +249,8 @@ export async function appendHourlyBrief(opts: {
   onItemDone?: (done: number, total: number, stage?: string) => void
   llmTimeoutMs?: number
   llmMaxTokens?: number
+  /** 实段写入后回调（时段摘要, 入选数）；0 入选的空时段说明不触发 */
+  onBrief?: (brief: string, count: number) => void
   log?: LogSink
 }): Promise<number> {
   const log = opts.log || noopLog
@@ -334,6 +336,7 @@ export async function appendHourlyBrief(opts: {
   }
   await writeFile(file, head + body, 'utf8')
   log.info(`hourlyBrief ${opts.time}: ${scored.length} items -> ${file}`)
+  try { opts.onBrief?.(brief, scored.length) } catch { /* 通知等旁路不得影响写盘结果 */ }
   return scored.length
 }
 

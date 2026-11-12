@@ -160,6 +160,89 @@ test('api /prefs POST: subscribedTopics=[] 显式清空(非保留)', async () =>
   assert.deepEqual(prefs.get().subscribedTopics, []) // 空数组=清空订阅=全部入池
 })
 
+// ---- 阅读字号 fontSize ----
+
+test('prefs: fontSize 消毒——限域 clamp、非数剔除、空对象=未设', async () => {
+  const { normalizePrefs } = await import('../lib/core/prefs.js')
+  const ok = normalizePrefs({ fontSize: { global: 1.2, items: 0.8, digest: 1.6, hourly: 1 } }).fontSize
+  assert.deepEqual([ok.global, ok.items, ok.digest, ok.hourly], [1.2, 0.8, 1.6, 1])
+  const cl = normalizePrefs({ fontSize: { global: 9, items: 0.01 } }).fontSize
+  assert.deepEqual([cl.global, cl.items, cl.digest, cl.hourly], [2, 0.5, undefined, undefined]) // clamp [0.5,2]
+  assert.equal(normalizePrefs({ fontSize: { global: 'big', items: NaN } }).fontSize, undefined) // 非数全剔→未设
+  assert.equal(normalizePrefs({ fontSize: {} }).fontSize, undefined) // 空对象=清除
+  assert.equal(normalizePrefs({}).fontSize, undefined)
+})
+
+test('api /prefs POST: fontSize 整体替换——global 覆盖清除分项,{} 清空', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const { PrefsStore } = await import('../lib/core/prefs.js')
+  const prefs = new PrefsStore(join(mkdtempSync(join(tmpdir(), 'rnd-pr-')), 'p.json'))
+  prefs.save({ fontSize: { items: 1.2, digest: 0.9 } })
+  const regs = []; mountApi({ register: (o) => { regs.push(o); return () => {} } }, {
+    store: await mkStore(), prefs, readerPageSize: 50,
+  })
+  const h = findH(regs, '/dsh-rss-news-daily/api/prefs')
+  let res = mkRes()
+  await h(mkReq('POST', '/dsh-rss-news-daily/api/prefs', { fontSize: { global: 1.3 } }), res)
+  assert.deepEqual([prefs.get().fontSize.global, prefs.get().fontSize.items, prefs.get().fontSize.digest], [1.3, undefined, undefined]) // 设置页统一调→分项被清除
+  res = mkRes()
+  await h(mkReq('POST', '/dsh-rss-news-daily/api/prefs', { fontSize: {} }), res)
+  assert.equal(prefs.get().fontSize, undefined) // 重置=清空
+})
+
+// ---- 无效内容过滤 ----
+
+test('parser: isShortLead 双口径——汉字/英文词数任一达标即非短', async () => {
+  const { isShortLead } = await import('../lib/core/parser.js')
+  assert.equal(isShortLead('点击查看原文'), true) // 6 汉字 <15
+  assert.equal(isShortLead('这是一条有实质内容的新闻摘要共十五个汉字以上了喂'), false) // ≥15 汉字
+  assert.equal(isShortLead('Click here'), true) // 2 词 <10
+  assert.equal(isShortLead('This is a normal english summary with more than ten words in it'), false) // >10 词
+  assert.equal(isShortLead(''), true) // 空=短
+  assert.equal(isShortLead('点击查看原文', 5), false) // 阈值可调：6≥5→非短
+  assert.equal(isShortLead('Click here', 15, 1), false) // en 阈值 1：2≥1→非短
+})
+
+test('parser: inBlocklist 归一化等值——空白/标点/大小写不敏感，不做包含', async () => {
+  const { inBlocklist, leadKey } = await import('../lib/core/parser.js')
+  const list = ['点击查看原文', '视频请见原文']
+  assert.equal(inBlocklist('点击查看原文', list), true)
+  assert.equal(inBlocklist('点击，查看 原文', list), true) // 归一化同键
+  assert.equal(inBlocklist('这是很长的正文其中含有点击查看原文这几个字但它是完整摘要', list), false) // 非等值不误伤
+  assert.equal(inBlocklist('正常内容', list), false)
+  assert.equal(inBlocklist('', list), false)
+  assert.equal(leadKey('A B'), leadKey('ab'))
+})
+
+test('prefs: contentBlocklist/stubLimits 消毒——去重/截断/清空', async () => {
+  const { normalizePrefs } = await import('../lib/core/prefs.js')
+  const ok = normalizePrefs({ contentBlocklist: [' 点击查看原文 ', '点击查看原文', '', '视频见原文'], stubLimits: { zh: 20, en: 5 } })
+  assert.deepEqual(ok.contentBlocklist, ['点击查看原文', '视频见原文']) // trim+去重+剔空
+  assert.deepEqual([ok.stubLimits.zh, ok.stubLimits.en], [20, 5])
+  const cl = normalizePrefs({ stubLimits: { zh: 9999, en: 0, bad: 'x' } }).stubLimits
+  assert.deepEqual([cl.zh, cl.en], [500, 1]) // clamp [1,500]
+  assert.equal(normalizePrefs({ contentBlocklist: [] }).contentBlocklist, undefined) // 空数组=清除
+  assert.equal(normalizePrefs({ stubLimits: {} }).stubLimits, undefined)
+})
+
+test('api /prefs POST: contentBlocklist 变更触发存量回扫', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const { PrefsStore } = await import('../lib/core/prefs.js')
+  const prefs = new PrefsStore(join(mkdtempSync(join(tmpdir(), 'rnd-bl-')), 'p.json'))
+  let rescanned = 0
+  const regs = []; mountApi({ register: (o) => { regs.push(o); return () => {} } }, {
+    store: await mkStore(), prefs, readerPageSize: 50,
+    svc: { rescanStubContent: async () => { rescanned++; return 2 } },
+  })
+  const h = findH(regs, '/dsh-rss-news-daily/api/prefs')
+  await h(mkReq('POST', '/dsh-rss-news-daily/api/prefs', { contentBlocklist: ['点击查看原文'] }), mkRes())
+  assert.deepEqual(prefs.get().contentBlocklist, ['点击查看原文'])
+  assert.equal(rescanned, 1) // 名单字段给出→回扫一次
+  await h(mkReq('POST', '/dsh-rss-news-daily/api/prefs', { stubLimits: { zh: 20 } }), mkRes())
+  assert.equal(rescanned, 1) // 只改阈值不回扫
+  assert.deepEqual([prefs.get().stubLimits.zh, prefs.get().stubLimits.en], [20, undefined])
+})
+
 // ---- scheduler 补跑 ----
 
 test('scheduler: 错过日报且在 catchUpHours 内→补跑', async () => {

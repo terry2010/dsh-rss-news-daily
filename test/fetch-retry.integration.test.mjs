@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const RSS = `<?xml version="1.0"?><rss version="2.0"><channel><title>Retry feed</title>
-<item><title>English astronomy headline</title><link>https://news.example/item-1</link><guid>retry-item-1</guid><description>English astronomy summary</description></item>
+<item><title>English astronomy headline</title><link>https://news.example/item-1</link><guid>retry-item-1</guid><description>English astronomy summary with enough additional words here to comfortably exceed the short-content threshold</description></item>
 </channel></rss>`
 const req = (method, url, body) => ({
   method, url, headers: {},

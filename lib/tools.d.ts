@@ -114,6 +114,8 @@ export interface NewsService {
     retrySource(urlOrId: string): Promise<boolean>;
     /** 编辑源属性（title/category/enabled/summarize/proxy/cooldownHours） */
     updateSource(urlOrId: string, patch: Record<string, unknown>): Promise<unknown>;
+    /** 无效名单变更后回扫存量：命中名单的短正文条目置 hidden；返回新隐藏数 */
+    rescanStubContent?(): Promise<number>;
     /** 中止进行中的日报生成（LLM 流逐条失败→降级收尾） */
     stopDigest?(): Promise<unknown>;
 }

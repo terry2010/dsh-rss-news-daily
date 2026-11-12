@@ -47,6 +47,8 @@ export interface PrefsFile extends Prefs {
     };
     /** 订阅分类列表（缺省/未设=全部订阅） */
     subscribedTopics?: string[];
+    /** 新快报生成时发桌面通知（缺省=关；macOS 点击可打开快报，其余平台仅展示） */
+    notifyDesktop?: boolean;
     /** UI 日报参数覆盖；单字段未设=跟随 cordis config 默认 */
     digestOpts?: {
         digestItems?: number;
@@ -63,6 +65,20 @@ export interface PrefsFile extends Prefs {
         retentionDays?: number;
         pruneLowQuality?: boolean;
         storeMaxItems?: number;
+    };
+    /** 阅读字号缩放（1=默认）。global=设置页统一值；items/digest/hourly=各页 A−A＋ 分项值；分项优先于 global */
+    fontSize?: {
+        global?: number;
+        items?: number;
+        digest?: number;
+        hourly?: number;
+    };
+    /** 无效正文名单：入库新闻正文命中即整条隐藏（归一化等值匹配）；AI 判定无效的短正文自动追加 */
+    contentBlocklist?: string[];
+    /** 短正文判定阈值（汉字数/英文词数双口径，低于即进名单匹配+AI 判定；缺省 15/10） */
+    stubLimits?: {
+        zh?: number;
+        en?: number;
     };
 }
 /** 把未知输入消毒成 PrefsFile；畸形字段回默认，不抛错。 */

@@ -34,8 +34,16 @@ export interface PrefsFile extends Prefs {
   translateLlm?: { provider: string; model: string }
   /** 订阅分类列表（缺省/未设=全部订阅） */
   subscribedTopics?: string[]
+  /** 新快报生成时发桌面通知（缺省=关；macOS 点击可打开快报，其余平台仅展示） */
+  notifyDesktop?: boolean
   /** UI 日报参数覆盖；单字段未设=跟随 cordis config 默认 */
   digestOpts?: { digestItems?: number; perTopicLimit?: number; minLlmScore?: number; candidateHours?: number; llmScoreCandidates?: number; summaryMaxItems?: number; summaryConcurrency?: number; digestMaxLength?: number; scoreOnFetch?: boolean; rescoreMissing?: boolean; hourlyBrief?: boolean; retentionDays?: number; pruneLowQuality?: boolean; storeMaxItems?: number }
+  /** 阅读字号缩放（1=默认）。global=设置页统一值；items/digest/hourly=各页 A−A＋ 分项值；分项优先于 global */
+  fontSize?: { global?: number; items?: number; digest?: number; hourly?: number }
+  /** 无效正文名单：入库新闻正文命中即整条隐藏（归一化等值匹配）；AI 判定无效的短正文自动追加 */
+  contentBlocklist?: string[]
+  /** 短正文判定阈值（汉字数/英文词数双口径，低于即进名单匹配+AI 判定；缺省 15/10） */
+  stubLimits?: { zh?: number; en?: number }
 }
 
 function numMapOf(v: unknown): Record<string, number> {
@@ -82,7 +90,11 @@ export function normalizePrefs(value: unknown): PrefsFile {
     backup: (() => { const b = (typeof r.backup === 'object' && r.backup !== null ? r.backup : {}) as Record<string, unknown>; const period = b.period === 'week' || b.period === 'month' ? b.period : 'day'; const o = { enabled: b.enabled === true, period: period as 'day' | 'week' | 'month', dir: typeof b.dir === 'string' && b.dir ? b.dir : undefined, keep: typeof b.keep === 'number' && Number.isFinite(b.keep) && b.keep >= 1 ? Math.floor(b.keep) : 7 }; return (o.enabled || o.dir) ? o : undefined })(),
     translateLlm: (() => { const t = (typeof r.translateLlm === 'object' && r.translateLlm !== null ? r.translateLlm : {}) as Record<string, unknown>; return typeof t.provider === 'string' && typeof t.model === 'string' && t.provider && t.model ? { provider: t.provider, model: t.model } : undefined })(),
     subscribedTopics: Array.isArray(r.subscribedTopics) ? (r.subscribedTopics as unknown[]).filter((t): t is string => typeof t === 'string' && !!t) : undefined,
+    notifyDesktop: r.notifyDesktop === true ? true : undefined,
     digestOpts: (() => { const d = (typeof r.digestOpts === 'object' && r.digestOpts !== null ? r.digestOpts : {}) as Record<string, unknown>; const b = (k: string) => typeof d[k] === 'boolean' ? (d[k] as boolean) : undefined; const num = (k: string) => typeof d[k] === 'number' && Number.isFinite(d[k]) ? (d[k] as number) : undefined; const o = { digestItems: num('digestItems'), perTopicLimit: num('perTopicLimit'), minLlmScore: num('minLlmScore'), candidateHours: num('candidateHours'), llmScoreCandidates: num('llmScoreCandidates'), summaryMaxItems: num('summaryMaxItems'), summaryConcurrency: num('summaryConcurrency'), digestMaxLength: num('digestMaxLength'), scoreOnFetch: b('scoreOnFetch'), rescoreMissing: b('rescoreMissing'), hourlyBrief: b('hourlyBrief'), retentionDays: num('retentionDays'), pruneLowQuality: b('pruneLowQuality'), storeMaxItems: num('storeMaxItems') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),
+    fontSize: (() => { const f = (typeof r.fontSize === 'object' && r.fontSize !== null ? r.fontSize : {}) as Record<string, unknown>; const num = (k: string) => typeof f[k] === 'number' && Number.isFinite(f[k]) ? Math.min(2, Math.max(0.5, Math.round((f[k] as number) * 100) / 100)) : undefined; const o = { global: num('global'), items: num('items'), digest: num('digest'), hourly: num('hourly') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),
+    contentBlocklist: (() => { const seen = new Set<string>(); const out: string[] = []; for (const s of strListOf(r.contentBlocklist)) { const t = s.trim().slice(0, 300); if (t && !seen.has(t)) { seen.add(t); out.push(t) } } return out.length ? out.slice(0, 2000) : undefined })(),
+    stubLimits: (() => { const s = (typeof r.stubLimits === 'object' && r.stubLimits !== null ? r.stubLimits : {}) as Record<string, unknown>; const num = (k: string) => typeof s[k] === 'number' && Number.isFinite(s[k]) ? Math.min(500, Math.max(1, Math.floor(s[k]))) : undefined; const o = { zh: num('zh'), en: num('en') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),
   }
 }
 

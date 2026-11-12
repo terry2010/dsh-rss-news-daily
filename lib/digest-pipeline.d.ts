@@ -87,6 +87,8 @@ export declare function appendHourlyBrief(opts: {
     onItemDone?: (done: number, total: number, stage?: string) => void;
     llmTimeoutMs?: number;
     llmMaxTokens?: number;
+    /** 实段写入后回调（时段摘要, 入选数）；0 入选的空时段说明不触发 */
+    onBrief?: (brief: string, count: number) => void;
     log?: LogSink;
 }): Promise<number>;
 /** 生成并落盘当日日报；返回 DigestDocument（含 degraded/note 元数据）。 */

@@ -27,7 +27,7 @@ execSync('npm run build', { cwd: root, stdio: 'inherit' })
 
 rmSync(target, { recursive: true, force: true })
 mkdirSync(target, { recursive: true })
-for (const p of ['lib', 'web', 'cordis.patch.yml', 'package.json', 'README.md']) {
+for (const p of ['lib', 'web', 'native', 'cordis.patch.yml', 'package.json', 'README.md']) {
   const src = join(root, p)
   if (existsSync(src)) cpSync(src, join(target, p), { recursive: true })
 }

@@ -7,6 +7,7 @@
  */
 
 import type { DigestLanguage, FeedItem } from './core/types.js'
+import { stripLeadStub } from './core/parser.js'
 
 export interface DigestRenderOptions {
   /** Display date of the briefing (e.g. "2026-08-17"). */
@@ -122,7 +123,7 @@ export function renderDigest(options: DigestRenderOptions): string {
       : `${index + 1}. ${title}`
     const meta = [source, day, item.dupCount ? `同题 ${item.dupCount + 1} 家报道` : '', item.llmScore != null ? `评分 ${item.llmScore}` : '', (item.hotCycles ?? 0) >= 2 ? `🔥${item.hotCycles}时段` : '', ...(item.tags || []).map((t) => `#${t}`)].filter((part) => part !== '').join(' · ')
     // 逐条降级回落：aiBlocks 缺失时用 aiSummary/feed 原摘要（截 90 字），保证每条都有摘要行
-    const lead = (item.aiSummary || item.summary || '').trim().slice(0, 90)
+    const lead = stripLeadStub(item.aiSummary || item.summary || '').slice(0, 90)
     const reasons = item.reasons?.length ? ` · _${item.reasons.join('、')}_` : ''
     // 中英对照：有译文的条目加中文标题行 + 译文行
     const tlTitle = tnl0 > 0 ? tlRaw.slice(0, tnl0).trim() : ''

@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 import type { FeedItem, FeedSource, FetchCycleResult, LogSink, SourceFetchResult } from './core/types.js'
 import { noopLog, isStaleItem } from './core/types.js'
-import { parseFeedDocument, stripHtml, truncateCodePoints } from './core/parser.js'
+import { parseFeedDocument, stripHtml, stripLeadStub, truncateCodePoints } from './core/parser.js'
 import { findDuplicate, itemHash } from './core/dedupe.js'
 import type { StoreLike } from './core/store.js'
 import type { createFetcher } from './core/fetcher.js'
@@ -186,8 +186,8 @@ function toItem(source: FeedSource, p: ReturnType<typeof parseFeedDocument>['ite
     sourceId: source.id,
     title: p.title,
     link: p.link,
-    summary: truncateCodePoints(stripHtml(p.summary || ''), maxChars),
-    content: truncateCodePoints(stripHtml(p.content || ''), maxChars),
+    summary: truncateCodePoints(stripLeadStub(stripHtml(p.summary || '')), maxChars),
+    content: truncateCodePoints(stripLeadStub(stripHtml(p.content || '')), maxChars),
     publishedAt: p.publishedAt || now.toISOString(),
     fetchedAt: now.toISOString(),
     hash: itemHash(p.title, p.summary || p.content, false),

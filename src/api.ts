@@ -339,10 +339,14 @@ function apiPrefs(deps: ApiDeps) {
         bannedKeywords: body.bannedKeywords, sourceWeight: body.sourceWeight,
         proxyUrl: body.proxyUrl, autoTranslate: body.autoTranslate,
         showNavEntry: body.showNavEntry, loopGuard: body.loopGuard, backup: body.backup,
-        devLog: body.devLog,
+        devLog: body.devLog, notifyDesktop: body.notifyDesktop,
         digestOpts: body.digestOpts, subscribedTopics: body.subscribedTopics,
+        fontSize: body.fontSize,
+        contentBlocklist: body.contentBlocklist, stubLimits: body.stubLimits,
       }).filter(([, v]) => v !== undefined))
       deps.prefs.save(patch)
+      // 名单变更后回扫存量：新加词条命中的短正文条目立刻隐藏（删词条不解隐——hidden 可能来自别的途径）
+      if (body.contentBlocklist !== undefined) await deps.svc?.rescanStubContent?.()
       return sendJson(res, 200, { ok: true, prefs: deps.prefs.get() })
     }
     sendJson(res, 405, { ok: false, error: `unsupported ${method}` })

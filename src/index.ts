@@ -31,12 +31,14 @@ import { runDailyDigest, scoreNewItems, appendHourlyBrief, textLooksForeign } fr
 import { DshLlmClient, setDevLogDir, setDevLogEnabled, setLlmDiagFile, setLoopGuardEnabled } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
 import type { FeedItem } from './core/types.js'
+import { inBlocklist, isShortLead, leadKey } from './core/parser.js'
 import { mountApi } from './api.js'
 import { parseTune } from './core/tune.js'
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { digestFileName } from './digest.js'
 import { applyPendingRestore, backupDirOf, runBackupZip } from './backup.js'
+import { desktopNotify } from './notify.js'
 import { normalizeUrl } from './service.js'
 import { learnFromFeedback } from './core/tune.js'
 import { zonedDayKey, zonedDayBounds } from './core/time.js'
@@ -135,6 +137,27 @@ export function apply(ctx: Context, config: ConfigType) {
     } catch { /* 调试写盘失败不影响主流程 */ }
   }
   const briefEnabled = (dopts?: { hourlyBrief?: boolean }) => dopts?.hourlyBrief ?? config.fetch.hourlyBrief
+  // 桌面通知的点击目标：desktop 走 dsh://open 深链唤起主窗口（pending-view.json
+  // 让 client.js 自动切到快报视图）；web 走浏览器直达阅读器 ?kind=hourly；
+  // headless（无 webServer）只有通知没有点击。
+  // desktop 判别：桌面版宿主由 Electron main 以 ELECTRON_RUN_AS_NODE=1 + ipc
+  // spawn 拉起（dsh-desktop-host）；`dsh web`/CLI 两者皆无 → 浏览器直达。
+  let wsGetOrigin: (() => string) | undefined
+  const isDesktopHost = () =>
+    process.env.ELECTRON_RUN_AS_NODE === '1' || (process as { connected?: boolean }).connected === true
+  const pendingViewFile = join(dataDir, 'pending-view.json')
+  const notifyBrief = (hm: string, brief: string) => {
+    if (!prefs.get().notifyDesktop) return
+    let click: { url?: string; flagFile?: string } = {}
+    if (isDesktopHost()) {
+      // pending-view.json 由 helper 在「点击时」写——通知弹出只展示，
+      // 真点下去才让 client.js 切快报视图，不打断用户当前操作。
+      click = { url: 'dsh://open', flagFile: pendingViewFile }
+    } else {
+      try { const o = wsGetOrigin?.(); if (o) click = { url: `${o.replace(/\/+$/, '')}/dsh-rss-news-daily/?kind=hourly` } } catch { /* 未 listen 则无点击 */ }
+    }
+    desktopNotify(`📰 ${hm} 时段快报`, brief.replace(/\s+/g, ' ').slice(0, 500), click)
+  }
   const briefNow = async (fresh: FeedItem[], signal?: AbortSignal) => {
     const now = new Date()
     const day = zonedDayKey(now, config.timezone || undefined)
@@ -151,6 +174,7 @@ export function apply(ctx: Context, config: ConfigType) {
       signal,
       llmTimeoutMs: config.llm.timeoutMs,
       llmMaxTokens: config.llm.maxTokens,
+      onBrief: (brief) => notifyBrief(hm, brief),
     })
   }
   const scoreAndBrief = async (cycleStart: string, signal?: AbortSignal) => {
@@ -187,14 +211,63 @@ export function apply(ctx: Context, config: ConfigType) {
     } catch (e) { dbgScore('error', { error: e instanceof Error ? e.message : String(e) }); log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }
     finally { scoringInFlight = false }
   }
+  // 无效正文过滤：短正文（缺省 <15汉字/<10英文词，阈值 prefs.stubLimits 可调）先查 prefs.contentBlocklist
+  // ——命中整条 hidden；未命中走一次翻译模型的 YES/NO 判定，无效则 stubLead（列表只显标题）并把正文追加进名单
+  const judgeStubs = async (cycleStart: string, signal?: AbortSignal) => {
+    const p = prefs.get()
+    const zh = p.stubLimits?.zh ?? 15, en = p.stubLimits?.en ?? 10
+    const list = [...(p.contentBlocklist ?? [])]
+    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.hidden)
+    const pending: FeedItem[] = []
+    let dirty = false, added = false
+    for (const it of fresh) {
+      const text = (it.summary || it.content || '').trim()
+      if (!isShortLead(text, zh, en)) continue
+      if (inBlocklist(text, list)) { it.state.hidden = true; dirty = true; continue }
+      if (!text) { it.state.stubLead = true; dirty = true; continue } // 空正文：免判直接只显标题
+      if (!it.state.stubLead) pending.push(it)
+    }
+    if (pending.length && llmRuntime) {
+      // 按正文归一化分组：100 条同文只调一次 AI，结果套到全组（同题源的短正文完全一致）
+      const groups = new Map<string, { text: string; items: FeedItem[] }>()
+      for (const it of pending) {
+        const text = (it.summary || it.content || '').trim()
+        const k = leadKey(text)
+        if (k.length < 2) { it.state.stubLead = true; dirty = true; continue } // 归一化近空=无信息量，免判
+        const g = groups.get(k) ?? { text: text.slice(0, 300), items: [] }
+        g.items.push(it); groups.set(k, g)
+      }
+      if (!signal?.aborted && groups.size) fetchProg = { ...fetchProg, running: true, done: 0, total: groups.size, stage: 'judge', current: '' }
+      const client = new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'stub-judge')
+      for (const g of groups.values()) {
+        if (signal?.aborted) break
+        try {
+          const out = await client.generateText({
+            system: '判断给定"新闻正文"是否为无效内容——占位/引导/无实际信息的短文本（如"点击查看原文""视频请见原文""内容已被删除"），有实质摘要信息的判有效。只输出 YES（无效）或 NO（有效），不要解释。',
+            prompt: `正文：${g.text}`,
+            maxTokens: 64,
+            signal: llmSignal(signal),
+          })
+          if (/\byes\b/i.test(out)) {
+            for (const it of g.items) it.state.stubLead = true
+            if (!inBlocklist(g.text, list)) { list.push(g.text); added = true }
+            dirty = true
+          }
+        } catch (e) { if (signal?.aborted) break; log.warn(`stub-judge failed: ${String((e as Error)?.message || e)}`) }
+        fetchProg.done += 1
+      }
+    }
+    if (added) prefs.save({ contentBlocklist: list })
+    if (dirty) await store.save()
+  }
   // autoTranslate：本轮新入库外文条目逐条翻译（手动+定时两路径共用）
   const translateFresh = async (cycleStart: string, signal?: AbortSignal) => {
     if (!prefs.get().autoTranslate || !llmRuntime) return
-    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.translation && !i.aiSummary && isForeign(i))
+    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.hidden && !i.state.translation && !i.aiSummary && isForeign(i))
     // 历史失败重试：translationError 且未超次数的旧条目每轮捎带一批；限量防长尾占满抓取周期
     // 外文未翻全部进重试（早退轮次不打 error 标记的条目也会搁浅——不能只挑有 error 的）
     const backlog = store.items
-      .filter((i) => i.fetchedAt < cycleStart && !i.state.translation && !i.aiSummary
+      .filter((i) => i.fetchedAt < cycleStart && !i.state.hidden && !i.state.translation && !i.aiSummary
         && (i.state.translationRetries ?? 0) < 3 && isForeign(i))
       .slice(0, 50)
     const queue = [...fresh, ...backlog]
@@ -242,6 +315,7 @@ export function apply(ctx: Context, config: ConfigType) {
     fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length, stage: 'fetch', current: '' }
     return runFetchCycle({ ...makeFetchOpts(pool), force, signal: controller.signal })
       .then(async (result) => {
+        await judgeStubs(cycleStart, controller.signal)
         await translateFresh(cycleStart, controller.signal)
         await scoreAndBrief(cycleStart, controller.signal) // 纳入生命周期：快报写完前 running 不置闲
         void maybeBackup()
@@ -335,6 +409,20 @@ export function apply(ctx: Context, config: ConfigType) {
       return { ok: true, translation: item.state.translation }
     },
     digestProgress: async () => ({ ...digestProg, cancelled: digestCancelled }),
+    rescanStubContent: async () => { // 名单改了就回扫：命中且短正文的存量条目立刻隐藏（单向——删词条不解隐）
+      const p = prefs.get()
+      const list = p.contentBlocklist ?? []
+      if (!list.length) return 0
+      const zh = p.stubLimits?.zh ?? 15, en = p.stubLimits?.en ?? 10
+      let n = 0
+      for (const it of store.items) {
+        if (it.state.hidden) continue
+        const text = (it.summary || it.content || '').trim()
+        if (text && isShortLead(text, zh, en) && inBlocklist(text, list)) { it.state.hidden = true; n++ }
+      }
+      if (n) { await store.save(); log.info(`stub rescan: ${n} items hidden by contentBlocklist`) }
+      return n
+    },
     testFetch: async (url, proxy) => {
       const d = await fetcher(url, undefined, { proxy })
       return 'error' in d ? { error: d.error } : { status: d.status, body: d.body.slice(0, 600) }
@@ -557,8 +645,9 @@ export function apply(ctx: Context, config: ConfigType) {
     if (directoryPickerSvc) log.info(`directoryPicker service available: ${directoryPickerSvc.capability?.().kind ?? 'unknown'}`)
   })
   ctx.inject(['webServer'], (c) => {
-    const ws = (c as unknown as { webServer?: unknown }).webServer
+    const ws = (c as unknown as { webServer?: { getOrigin?: () => string } }).webServer
     if (ws) {
+      wsGetOrigin = typeof ws.getOrigin === 'function' ? () => ws.getOrigin!() : undefined
       disposers.push(mountApi(ws as Parameters<typeof mountApi>[0], {
         store,
         prefs,

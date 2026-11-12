@@ -11,7 +11,7 @@
 <meta property="og:description" content="自动抓取订阅源，AI 评分整理出一份精选日报。">
 <meta property="og:type" content="website">
 <title>RSS 每日精选 · dsh-rss-news-daily</title>
-<link rel="stylesheet" href="web/style.css?v=0.8.1">
+<link rel="stylesheet" href="web/style.css?v=0.8.2">
 </head>
 <body>
 <header>
@@ -200,6 +200,43 @@
       <div class="settings-fold-body">
         <label class="setting-check"><input type="checkbox" id="navEntry"> 在左侧工作区导航显示「新闻精选」入口</label>
         <p class="settings-help">打开后，左栏「插件」下方会出现📰新闻精选入口，点开就是阅读器页面。改动在重启 dsh 后生效。</p>
+        <label class="setting-check"><input type="checkbox" id="notifyDesktop"> 新快报生成时发送桌面通知</label>
+        <p class="settings-help">通知内容为该时段快报摘要。macOS 上点击通知可直接打开快报，其余平台仅展示。默认关闭。</p>
+      </div>
+    </details>
+
+    <details class="settings-fold" open>
+      <summary><span>阅读字号</span><small>统一放大/缩小阅读文字；各阅读页也可单独调整</small></summary>
+      <div class="settings-fold-body">
+        <p class="settings-help">统一调整「全部新闻 / 日报 / 快报」三处阅读字号（每次 ±10%，80%–160%）。在这里调整会覆盖并清除三处各自的单独设置；「全部新闻」条目行、「日报」节标题、「快报」节标题右侧也有 A− A＋ 可单独调整。改动立即生效并保存，重启 dsh 后保持。</p>
+        <div class="toolbar">
+          <button id="btnFzDown" title="统一缩小字号">A−</button>
+          <span id="fzVal" class="fz-val">100%</span>
+          <button id="btnFzUp" title="统一放大字号">A＋</button>
+          <span class="f-end"><button id="btnFzReset" title="全部恢复默认字号">重置</button></span>
+        </div>
+        <div id="fzScopes" class="hist"></div>
+      </div>
+    </details>
+
+    <details class="settings-fold" open>
+      <summary><span>无效内容过滤</span><small>过短正文自动识别：命中名单整条隐藏，AI 判无效只显标题</small></summary>
+      <div class="settings-fold-body">
+        <p class="settings-help">正文短于阈值的新闻进入检查：命中下方名单的整条不在「全部新闻」显示；未命中时由 AI 判断，判无效的只显示标题、并把该正文自动追加进名单。名单每行一条，归一化后精确匹配（忽略空白/标点/大小写）。AI 判定在抓取后自动进行，无需操作。</p>
+        <div class="setting-grid setting-grid-compact">
+          <label class="setting-control">汉字阈值
+            <span class="setting-input"><input type="number" id="stubZh" min="1" max="500" style="width:90px"> 字</span>
+            <small>正文汉字数低于此值进检查（默认 15）</small>
+          </label>
+          <label class="setting-control">英文词数阈值
+            <span class="setting-input"><input type="number" id="stubEn" min="1" max="500" style="width:90px"> 词</span>
+            <small>英文单词数低于此值进检查（默认 10）</small>
+          </label>
+        </div>
+        <label class="setting-control" style="display:block;margin-top:10px">无效内容名单（每行一条）
+          <textarea id="stubList" rows="7" spellcheck="false" placeholder="点击查看原文"></textarea>
+        </label>
+        <div class="toolbar settings-actions"><button id="btnStubSave" class="primary">保存</button></div>
       </div>
     </details>
 
@@ -363,8 +400,8 @@
   </section>
 </main>
 
-<script src="web/changelog.js?v=0.8.1"></script>
-<script src="web/onboarding.js?v=0.8.1"></script>
-<script src="web/app.js?v=0.8.1"></script>
+<script src="web/changelog.js?v=0.8.2"></script>
+<script src="web/onboarding.js?v=0.8.2"></script>
+<script src="web/app.js?v=0.8.2"></script>
 </body>
 </html>

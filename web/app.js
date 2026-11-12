@@ -5,8 +5,15 @@ const API = '/dsh-rss-news-daily/api'
 const applyTheme = (t) => { if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t }
 applyTheme(new URLSearchParams(location.search).get('theme'))
 window.addEventListener('message', (e) => { if (e.data && e.data.type === 'rnd-theme') applyTheme(e.data.theme) })
+// 宿主跳转指令（通知点击→client.js postMessage）：切到今日精选页并按指定 kind 展示
+window.addEventListener('message', (e) => {
+  const d = e && e.data
+  if (!d || d.type !== 'rnd-view') return
+  state.digestKind = d.kind === 'hourly' ? 'hourly' : 'digest'
+  document.querySelector('.tab[data-tab="digest"]')?.click()
+})
 
-const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: 'digest', generating: false, sort: 'published', total: 0, pageSize: 50, daySetOn: '', dayPicked: '', archiveYears: [], forceArchive: sessionStorage.getItem('rnd-force-archive') === '1' }
+const state = { page: 1, items: [], sources: [], prefs: null, digestDay: '', digestKind: new URLSearchParams(location.search).get('kind') === 'hourly' ? 'hourly' : 'digest', generating: false, sort: 'published', total: 0, pageSize: 50, daySetOn: '', dayPicked: '', archiveYears: [], forceArchive: sessionStorage.getItem('rnd-force-archive') === '1' }
 const $ = (sel) => document.querySelector(sel)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 /** 输出链接白名单：只放行 http(s)，javascript:/data: 一律清空 */
@@ -37,6 +44,50 @@ async function loadStatus() {
     $('#statusbar').textContent = `${s.enabled}/${s.sources} 源 · 今日+${s.todayAdded ?? 0} · 本次+${s.lastAdded ?? 0} · 共${s.items} 条 · ${s.failures?.length ? `${s.failures.length} 源异常${s.cooling ? `（${s.cooling} 冷却中）` : ''}` : '健康'}`
   } catch { $('#statusbar').textContent = '状态不可用' }
 }
+
+// ---- 阅读字号缩放：scope=items(全部新闻)/digest(日报)/hourly(快报)；存 prefs.fontSize 重启后仍生效 ----
+// 分项值(items/digest/hourly)优先于设置页统一值(global)；设置页调整=整体覆盖 fontSize，分项被清除
+const FZ = { MIN: 0.8, MAX: 1.6, STEP: 0.1 }
+// feed description 常见"查看原文"类引导文案——后端入库已剥，这里再兜底存量数据
+const LEAD_STUB = /(?:…|\.{2,})?\s*(?:点击\s*(?:查看|阅读|标题)?\s*(?:查看|阅读)?原文|阅读原文|阅读全文|点击阅读全文|点击查看全文|查看全文|点击阅读|阅读详细|阅读更多|查看更多|查看详情|详情请点击|点此查看全文|read(?:\s+the)?\s+full\s+(?:article|story|post|content)|continue\s+reading|read\s+more|view\s+original)\s*(?:[>》»→›↗]|\.{1,3})*/gi
+const FZ_LABEL = { items: '全部新闻', digest: '日报', hourly: '快报' }
+const fzEff = (scope) => { const f = state.prefs?.fontSize || {}; return f[scope] ?? f.global ?? 1 }
+const fzPct = (v) => `${Math.round(v * 100)}%`
+function applyFontSize() {
+  const st = document.documentElement.style
+  for (const s of ['items', 'digest', 'hourly']) st.setProperty(`--fz-${s}`, String(fzEff(s)))
+  const f = state.prefs?.fontSize || {}
+  if ($('#fzVal')) $('#fzVal').textContent = f.global != null ? fzPct(f.global) : (f.items != null || f.digest != null || f.hourly != null ? '分项' : '100%')
+  if ($('#fzScopes')) $('#fzScopes').textContent = `全部新闻 ${fzPct(fzEff('items'))} · 日报 ${fzPct(fzEff('digest'))} · 快报 ${fzPct(fzEff('hourly'))}`
+}
+async function saveFontSize(next) {
+  try {
+    const r = await post('/prefs', { fontSize: next })
+    state.prefs = r.prefs || state.prefs
+    // 旧后端（页面热更但插件未重启）白名单没有 fontSize——POST 被丢弃。本地先生效，并提示重启后才持久化
+    const wanted = Object.values(next).some((v) => v !== undefined)
+    const saved = r.prefs?.fontSize && Object.values(r.prefs.fontSize).some((v) => v !== undefined)
+    if (wanted && !saved) {
+      state.prefs = { ...(state.prefs || {}), fontSize: next }
+      applyFontSize()
+      toast('字号已生效；旧版后端未保存此项——重启 dsh 后才持久')
+      return true
+    }
+    applyFontSize()
+    return true
+  } catch (e) { toast(`保存失败: ${e.message}`); return false }
+}
+const fzStep = async (scope, d) => { // 页内 A−A＋：基于该视图当前生效值步进，显式落该 scope（盖住 global）
+  if (!state.prefs) await loadPrefs() // 点击可能早于 prefs 预载返回——先取再合并，防覆盖服务端已有值
+  const v = Math.min(FZ.MAX, Math.max(FZ.MIN, Math.round((fzEff(scope) + d * FZ.STEP) * 10) / 10))
+  saveFontSize({ ...(state.prefs?.fontSize || {}), [scope]: v }).then((ok) => ok && toast(`${FZ_LABEL[scope]}字号 ${fzPct(v)}`))
+}
+const fzGlobal = async (d) => { // 设置页统一调：整体覆盖 fontSize——之前各页的分项设置被清除
+  if (!state.prefs) await loadPrefs() // 同上
+  const v = Math.min(FZ.MAX, Math.max(FZ.MIN, Math.round(((state.prefs?.fontSize?.global ?? 1) + d * FZ.STEP) * 10) / 10))
+  saveFontSize({ global: v }).then((ok) => ok && toast(`阅读字号统一为 ${fzPct(v)}`))
+}
+const fzCtl = (scope) => `<span class="fz-ctl"><button data-fz="${scope}" data-d="-1" title="缩小「${FZ_LABEL[scope]}」字号（重启后仍生效）">A−</button><button data-fz="${scope}" data-d="1" title="放大「${FZ_LABEL[scope]}」字号（重启后仍生效）">A＋</button></span>`
 
 // ---- 条目流 ----
 
@@ -136,7 +187,7 @@ function itemHtml(i) {
       <div class="item-head">${scoreBadge(i)}
         <a class="tlink" data-id="${esc(i.id)}" href="${esc(safeUrl(i.link) || '#')}" target="_blank" rel="noopener">${esc(i.title)}</a>
       </div>
-      <div class="item-meta"><b class="item-src" title="${esc(i.sourceId)}">${esc(state.sources?.find((x) => x.id === i.sourceId || x.url === i.sourceId)?.title || i.sourceId)}</b> · ${esc(i.topic)} · ${(() => { const d = new Date(i.publishedAt || i.fetchedAt); const p = (n) => String(n).padStart(2, '0'); return isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}` })()}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(() => {
+      <div class="item-meta"><b class="item-src" title="${esc(i.sourceId)}">${esc(state.sources?.find((x) => x.id === i.sourceId || x.url === i.sourceId)?.title || i.sourceId)}</b> · ${esc(i.topic)} · ${(() => { const d = new Date(i.publishedAt || i.fetchedAt); const p = (n) => String(n).padStart(2, '0'); return isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}` })()}${fzCtl('items')}${i.digestedDay ? ' · 已入日报' : ''}${i.reasons?.length ? ` · <i>${esc(i.reasons.join('、'))}</i>` : ''}${(() => {
         if (i.aiSummary) return '' // 已有中文核心事实，不再提供翻译
         const t = i.title + (i.summary || '')
         const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length
@@ -145,8 +196,8 @@ function itemHtml(i) {
         if (st.translation) return ` <button data-act="translate" data-id="${esc(i.id)}" title="重新翻译">重译</button>${state.tlHidden?.has(i.id) ? ` <button data-act="showtl" data-id="${esc(i.id)}" title="显示译文">显示翻译</button>` : ` <button data-act="hidetl" data-id="${esc(i.id)}" title="隐藏译文">隐藏翻译</button>`}`
         return ` <button data-act="translate" data-id="${esc(i.id)}" title="翻译成中文">译</button>`
       })()}</div>
-      <div class="item-lead">${esc((i.aiSummary || i.summary || '').slice(0, 140))}</div>
-      ${(() => { if (i.aiSummary || state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); const body = nl > 0 ? t.slice(nl).replace(/\s+/g, ' ').trim() : t; return body && nl > 0 ? `<div class="item-lead item-tl-body">译: ${esc(body.slice(0, 240))}</div>` : '' })()}
+      ${(() => { if (st.stubLead) return ''; const lead = (i.aiSummary || i.summary || '').replace(LEAD_STUB, '').trim(); return lead ? `<div class="item-lead">${esc(lead.slice(0, 140))}</div>` : '' })()}
+      ${(() => { if (st.stubLead || i.aiSummary || state.tlHidden?.has(i.id)) return ''; const t = (st.translation || '').trim(); const nl = t.indexOf('\n'); const body = nl > 0 ? t.slice(nl).replace(/\s+/g, ' ').trim() : t; return body && nl > 0 ? `<div class="item-lead item-tl-body">译: ${esc(body.slice(0, 240))}</div>` : '' })()}
       <div class="item-actions">
         <button data-act="${st.read ? 'unread' : 'read'}" data-id="${esc(i.id)}" title="${st.read ? '标为未读（展开简介）' : '标为已读（收起简介）'}">${st.read ? '◉' : '✓'}</button>
         <button data-act="${st.liked === 1 ? 'unlike' : 'like'}" data-id="${esc(i.id)}" title="推荐学习：以后多推同类">👍</button>
@@ -158,6 +209,8 @@ function itemHtml(i) {
 }
 
 $('#itemList').addEventListener('click', async (e) => {
+  const fz = e.target.closest('button[data-fz]') // 条目行右侧字号控件：缩放作用于整个「全部新闻」视图
+  if (fz) { fzStep(fz.dataset.fz, +fz.dataset.d); return }
   const link = e.target.closest('a.tlink') // 点标题=标已读（不阻塞跳转）
   if (link) {
     const it = state.items.find((x) => x.id === link.dataset.id)
@@ -239,7 +292,7 @@ const startFetchPoll = () => {
     try {
       const p = await api('/fetch-progress')
       if (p.running) {
-        const st = p.cancelled ? '停止中' : p.stage === 'translate' ? '翻译中' : p.stage === 'score' ? '评分中' : '抓取中'; b.textContent = `⏹ ${st}(${p.done}/${p.total}) 点我取消`; b.disabled = false; markFetchingSrc(p.current)
+        const st = p.cancelled ? '停止中' : p.stage === 'translate' ? '翻译中' : p.stage === 'score' ? '评分中' : p.stage === 'judge' ? '过滤中' : '抓取中'; b.textContent = `⏹ ${st}(${p.done}/${p.total}) 点我取消`; b.disabled = false; markFetchingSrc(p.current)
         if (++tickN % 3 === 0 && !$('#tab-items')?.hidden) { // ~2.4s 静默刷新列表：仅在阅读器页执行（隐藏tab锚点会滚到顶）
           savePos(); await loadItems()
           const p2 = JSON.parse(localStorage.getItem(POS_KEY) || 'null')
@@ -276,6 +329,16 @@ setInterval(() => {
 $('#navEntry').addEventListener('change', async (e) => {
   try { const r = await post('/prefs', { showNavEntry: e.target.checked }); state.prefs = r.prefs || state.prefs; toast(e.target.checked ? '已开启导航入口（重启生效）' : '已隐藏导航入口（重启生效）') }
   catch (err) { toast(`保存失败: ${err.message}`) }
+})
+$('#notifyDesktop').addEventListener('change', async (e) => {
+  try { const r = await post('/prefs', { notifyDesktop: e.target.checked }); state.prefs = r.prefs || state.prefs; toast(e.target.checked ? '已开启桌面通知' : '已关闭桌面通知') }
+  catch (err) { toast(`保存失败: ${err.message}`) }
+})
+// 阅读字号：设置页统一调覆盖并清除各页分项；重置=清空 fontSize 全回默认
+$('#btnFzDown').addEventListener('click', () => fzGlobal(-1))
+$('#btnFzUp').addEventListener('click', () => fzGlobal(1))
+$('#btnFzReset').addEventListener('click', () => {
+  saveFontSize({}).then((ok) => ok && toast('字号已重置为默认（100%）'))
 })
 async function loadLoopGuard() {
   try {
@@ -376,6 +439,7 @@ async function loadDigest() {
   const dv = $('#digestDay').value.trim()
   const day = /^\d{4}-\d{2}-\d{2}$/.test(dv) ? dv : localDay // 本地日界：UTC toISOString 会让凌晨看到的日期停在昨天
   $('#digestDay').value = day
+  $('#digestView').dataset.kind = state.digestKind // 字号变量按 kind 取（--fz-digest/--fz-hourly）
   try {
     const r = await api(`/digest/${day}${state.digestKind === 'hourly' ? '?kind=hourly' : ''}`)
     state.digestRendered = r.markdown
@@ -383,18 +447,21 @@ async function loadDigest() {
     injectDayNav(day)
     injectHourNav()
     injectDomainNav()
+    injectFzCtl()
   } catch {
     // 该天无日报但有快报 → 自动切快报展示（同一天的内容优先于跨天回退）
     if (state.digestKind === 'digest') {
       try {
         const r = await api(`/digest/${day}?kind=hourly`)
         state.digestKind = 'hourly'
+        $('#digestView').dataset.kind = 'hourly'
         syncRunBtn()
         state.digestRendered = r.markdown
         $('#digestView').innerHTML = mdLite(r.markdown)
         injectDayNav(day)
         injectHourNav()
         injectDomainNav()
+        injectFzCtl()
         return
       } catch { /* 快报也没有→继续原回退 */ }
     }
@@ -411,6 +478,7 @@ async function loadDigest() {
         injectDayNav(yday)
         injectHourNav()
         injectDomainNav()
+        injectFzCtl()
         return
       } catch { /* 前一天也没有→走空态 */ }
     }
@@ -489,6 +557,14 @@ function injectDomainNav() {
   })))
 }
 
+/** 节标题右侧字号控件：日报→各 h2（概述/领域目录/重要新闻…）；快报→各 h3（领域速览/重要新闻） */
+function injectFzCtl() {
+  const hourly = state.digestKind === 'hourly'
+  $('#digestView').querySelectorAll(hourly ? 'h3' : 'h2').forEach((h) => {
+    if (!h.querySelector('.fz-ctl')) h.insertAdjacentHTML('beforeend', fzCtl(hourly ? 'hourly' : 'digest'))
+  })
+}
+
 function injectHourNav() {
   const secs = [...document.querySelectorAll('#digestView h2')].filter((h) => /^\d{2}:\d{2}\s*时段快报/.test(h.textContent.trim()))
   secs.forEach((h, i) => {
@@ -501,6 +577,12 @@ function injectHourNav() {
     if (t) fastScrollTo(t)
   }))
 }
+
+// 节标题右侧字号控件：委托到 #digestView（缩放作用于当前 kind 对应视图）
+$('#digestView').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-fz]')
+  if (b) fzStep(b.dataset.fz, +b.dataset.d)
+})
 
 // 领域目录/返回目录等 #锚点链接：委托到 #digestView 一次绑定，走同一个 150ms 快速滚动。
 // 快报同名 #### 领域 跨时段重复：优先在链接所在的 ## 节内命中，避免旧时段跳到最新节的同名块
@@ -898,6 +980,7 @@ async function loadPrefs() {
   try {
     const r = await api('/prefs')
     state.prefs = r.prefs
+    applyFontSize() // 字号缩放跟 prefs 走：启动/进设置页都重放一遍
     renderPrefs()
     $('#proxyUrl').value = r.prefs.proxyUrl || ''
     const d = r.prefs.digestOpts || {}
@@ -906,6 +989,9 @@ async function loadPrefs() {
     $('#dRescore').checked = d.rescoreMissing !== false
     $('#dHourly').checked = d.hourlyBrief !== false
     $('#dPruneQ').checked = d.pruneLowQuality !== false
+    $('#stubZh').value = r.prefs.stubLimits?.zh ?? ''
+    $('#stubEn').value = r.prefs.stubLimits?.en ?? ''
+    $('#stubList').value = (r.prefs.contentBlocklist || []).join('\n')
     renderSubTopics(r.prefs)
   } catch { /* ignore */ }
 }
@@ -945,6 +1031,17 @@ const saveSubTopics = async () => {
   } catch (e) { toast(`保存失败: ${e.message}`) }
 }
 $('#subTopics').addEventListener('change', saveSubTopics) // 委托:动态复选框
+// 无效内容过滤：阈值 + 名单一起存；后端保存后自动回扫存量（新词条命中的短正文条目立刻隐藏）
+const saveStubCfg = async () => {
+  const num = (id) => { const v = $(`#${id}`).value.trim(); const n = Number(v); return v === '' || !Number.isFinite(n) ? undefined : Math.max(1, Math.floor(n)) }
+  const list = [...new Set($('#stubList').value.split('\n').map((s) => s.trim()).filter(Boolean))]
+  try {
+    const r = await post('/prefs', { stubLimits: { zh: num('stubZh'), en: num('stubEn') }, contentBlocklist: list })
+    state.prefs = r.prefs
+    toast(`已保存（名单 ${list.length} 条）`)
+  } catch (e) { toast(`保存失败: ${e.message}`) }
+}
+$('#btnStubSave').addEventListener('click', saveStubCfg)
 $('#btnSubSave')?.remove()
 $('#btnFetchTest').addEventListener('click', async () => {
   const out = $('#fetchTestOut')
@@ -1051,6 +1148,7 @@ async function loadLlm() {
       ? `翻译模型: ${t.provider}/${t.model}` + (tlModels && !tlModels.includes(t.model) ? '（该模型不在 provider 列表中，请重新选择）' : '')
       : '翻译模型: 跟随日报模型'
     $('#navEntry').checked = state.prefs?.showNavEntry !== false
+    $('#notifyDesktop').checked = state.prefs?.notifyDesktop === true
     loadLoopGuard()
     loadBackup()
     $('#autoTranslate').checked = !!state.prefs?.autoTranslate
@@ -1437,7 +1535,10 @@ $('#findPrev').addEventListener('click', () => doFind(true))
 $('#findClose').addEventListener('click', () => { findbar.hidden = true; window.getSelection()?.removeAllRanges() })
 
 state.sort = 'published'; $('#sortSel').value = 'published' // 每次进入默认按发布时间（抓取后切过的 fetched 不残留）
+$('#digestView').dataset.kind = state.digestKind // ?kind=hourly 直达时首帧就选对字号变量
+loadPrefs() // 预载 prefs：字号缩放进首页就生效（设置页输入也顺手填好）
 moveTabInd($('.tab.active'), false)
 window.addEventListener('resize', () => moveTabInd($('.tab.active'), false))
+if (state.digestKind === 'hourly') $('.tab[data-tab="digest"]')?.click() // ?kind=hourly 直达快报页
 loadStatus(); loadSources().then(async () => { await loadItems(); if (pendingPos?.id) scrollToAnchor(pendingPos) })
 setInterval(loadStatus, 2000) // 未读计数 2s 轮询

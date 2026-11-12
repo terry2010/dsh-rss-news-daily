@@ -49,6 +49,8 @@ export interface ItemState {
   hidden: boolean
   /** +1 like / -1 dislike / 0 */
   liked: 1 | -1 | 0
+  /** AI 判定的无效正文（占位/引导短文本）：列表只显标题 */
+  stubLead?: boolean
   /** 中文译文（翻译模型输出） */
   translation?: string
   /** 翻译失败原因（诊断用） */

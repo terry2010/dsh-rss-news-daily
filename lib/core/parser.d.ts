@@ -38,6 +38,13 @@ export declare function parseXml(xml: string): XmlEl;
 export declare function parseFeedDocument(body: string): ParsedFeed;
 /** HTML/XML sanitization helper: strip tags and collapse whitespace. */
 export declare function stripHtml(html: string): string;
+export declare function stripLeadStub(text: string): string;
+/** "短正文"判定：汉字数 < zh 且 英文单词数 < en ——两种口径都短才算可疑（默认 15 字 / 10 词） */
+export declare function isShortLead(text: string, zh?: number, en?: number): boolean;
+/** 无效名单匹配键：去全部空白/标点/符号 + 小写——"点击，查看原文" 与 "点击查看原文" 同键 */
+export declare function leadKey(text: string): string;
+/** 内容命中无效名单：归一化后精确等值（不做包含匹配——防"广告"类词条误伤正常长文） */
+export declare function inBlocklist(text: string, list: readonly string[]): boolean;
 /**
  * Truncate text to at most `max` code points without splitting a surrogate
  * pair (`.slice` on UTF-16 indices can leave a dangling half).
