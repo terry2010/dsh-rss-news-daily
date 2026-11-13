@@ -27,11 +27,13 @@ import { effectiveSources, runFetchCycle, addSource, previewSource, removeSource
 import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
-import { runDailyDigest, scoreNewItems, appendHourlyBrief, textLooksForeign } from './digest-pipeline.js'
-import { DshLlmClient, setDevLogDir, setDevLogEnabled, setLlmDiagFile, setLoopGuardEnabled } from './dsh-llm.js'
+import { runDailyDigest, scoreNewItems, appendHourlyBrief, textLooksForeign, zhTitleOf } from './digest-pipeline.js'
+import { DshLlmClient, llmCallAvgMs, llmQueueSnapshot, setDevLogDir, setDevLogEnabled, setLlmConcurrency, setLlmDiagFile, setLoopGuardEnabled } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
 import type { FeedItem } from './core/types.js'
-import { inBlocklist, isShortLead, leadKey } from './core/parser.js'
+import { inBlocklist, isShortLead, leadKey, truncateCodePoints } from './core/parser.js'
+import { listTopics, newTopicId, queryTopicCandidates, runTopicPipeline, topicKeyOf, upsertTopicMeta } from './topic-pipeline.js'
+import type { TopicMeta, TopicParams } from './topic-pipeline.js'
 import { mountApi } from './api.js'
 import { parseTune } from './core/tune.js'
 import { execFile } from 'node:child_process'
@@ -82,6 +84,7 @@ export function apply(ctx: Context, config: ConfigType) {
   const devlogDir = join(dataDir, 'devlog')
   setDevLogDir(devlogDir) // 完整 prompt/response 只在 prefs.devLog 开启时写
   setDevLogEnabled(() => prefs.get().devLog === true)
+  setLlmConcurrency(() => prefs.get().llmConcurrency ?? 1) // 全局 AI 并发：默认 1 全串行，改设置即生效
   const probe = probeSqlite()
   if (!probe.ok) throw new Error('node:sqlite unavailable in this host (requires Node >=22.5)')
   if (!probe.fts) log.warn('SQLite FTS5/trigram unavailable in this host; search falls back to LIKE')
@@ -103,6 +106,35 @@ export function apply(ctx: Context, config: ConfigType) {
   const enabledCount = sources.filter((s) => s.enabled).length
   let fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }
   let digestProg = { running: false, done: 0, total: 0, stage: '' }
+  // ---- 进度 ETA：优先本轮实测速率（自动吸收并发/排队），冷启动退 purpose EMA；非 LLM 阶段无兜底只认实测 ----
+  const etaClock = new Map<string, { stage: string; t0: number; done0: number }>()
+  const progressEta = (key: string, p: { running: boolean; done: number; total: number; stage: string },
+    opts: { purpose?: string | null; tail?: () => number } = {}): number | undefined => {
+    if (!p.running || !p.total) { etaClock.delete(key); return undefined }
+    let cur = etaClock.get(key)
+    if (!cur || cur.stage !== p.stage) etaClock.set(key, (cur = { stage: p.stage, t0: Date.now(), done0: p.done }))
+    const made = p.done - cur.done0 // 本阶段内已完成的单位数
+    const left = Math.max(0, p.total - p.done)
+    const tail = opts.tail?.() ?? 0
+    if (made >= 1) return Math.max(0, Math.round(left * ((Date.now() - cur.t0) / made) + tail))
+    if (opts.purpose === null) return tail > 0 ? Math.round(tail) : undefined
+    const avg = opts.purpose ? llmCallAvgMs(opts.purpose) : llmCallAvgMs()
+    return avg == null ? (tail > 0 ? Math.round(tail) : undefined) : Math.round(left * avg + tail)
+  }
+  const FETCH_STAGE_PURPOSE: Record<string, string | null> = { fetch: null, score: 'score', judge: 'judge', translate: 'translate' } // fetch 是网络抓取：非 LLM 阶段不给模型均值兜底
+  const fetchEta = () => progressEta('fetch', fetchProg, { purpose: FETCH_STAGE_PURPOSE[fetchProg.stage] ?? null })
+  const digestEta = () => progressEta('digest', digestProg, digestProg.stage === 'finishing'
+    ? { purpose: null, tail: () => llmCallAvgMs('digest-prose') ?? llmCallAvgMs() ?? 0 }
+    : { purpose: digestProg.stage === 'translate' ? 'translate' : 'item-summary' })
+  const topicTailEst = () => (llmCallAvgMs('topic-merge') ?? llmCallAvgMs() ?? 0) + (llmCallAvgMs('topic-title') ?? 0)
+  const topicEta = () => progressEta('topic', topicProg, topicProg.stage === 'chunks'
+    ? { purpose: 'topic-chunk', tail: topicTailEst }
+    : { purpose: null, tail: topicTailEst })
+  // ---- LLM 队列归属：三条管线各自的客户端 tag 集合——进度端据此显示「排队等待中」而非干等 ----
+  const FETCH_QUEUE_TAGS = ['brief', 'brief-translate', 'score', 'stub-judge', 'translate', 'classify']
+  const DIGEST_QUEUE_TAGS = ['digest', 'digest-translate']
+  const TOPIC_QUEUE_TAGS = ['topic']
+  let topicProg = { running: false, done: 0, total: 0, stage: '', id: '' }
   let fetchAbort: AbortController | undefined
   let fetchCancelled = false // 「停止」请求标记：进度接口透出，前端区分"已取消"与"已完成"
   let digestCancelled = false
@@ -125,7 +157,7 @@ export function apply(ctx: Context, config: ConfigType) {
     log,
   })
   // token 用量分账：把 client.usage 累计进 meta.tokenStats（按日+按功能，实现在 core/token-stats）
-  const addTokens = (feature: 'digest' | 'score' | 'translate', usage?: { inputTokens: number; outputTokens: number }) =>
+  const addTokens = (feature: 'digest' | 'score' | 'translate' | 'topic', usage?: { inputTokens: number; outputTokens: number }) =>
     addTokenStats(store.meta, feature, usage, zonedDayKey(new Date(), config.timezone || undefined))
   // P1+P8：评分+快报——fetch 完成后 fire-and-forget（调度/手动路径共用，不阻塞 fetch 返回）
   let scoringInFlight = false // 闩锁：与 digest rescoreMissing 互斥，防同批双评
@@ -245,8 +277,10 @@ export function apply(ctx: Context, config: ConfigType) {
           const out = await client.generateText({
             system: '判断给定"新闻正文"是否为无效内容——占位/引导/无实际信息的短文本（如"点击查看原文""视频请见原文""内容已被删除"），有实质摘要信息的判有效。只输出 YES（无效）或 NO（有效），不要解释。',
             prompt: `正文：${g.text}`,
-            maxTokens: 64,
-            signal: llmSignal(signal),
+            maxTokens: 256, // YES/NO 输出虽短，推理模型 reasoning 也要占预算
+            signal,
+            timeoutMs: config.llm.timeoutMs,
+            purpose: 'judge',
           })
           if (/\byes\b/i.test(out)) {
             for (const it of g.items) it.state.stubLead = true
@@ -331,8 +365,7 @@ export function apply(ctx: Context, config: ConfigType) {
   const runFetch = () => runFetchPool(effectiveSources(config.sources, store))
   // 所有 LLM 调用必须带超时——本地模型半死（连接挂起不响应）会把 runFetchPool 永不 settle，
   // 调度 mkCycle 的 running 锁随之卡死，后续每轮定时抓取全部跳过（生产曾停摆 11 小时）。
-  const llmSignal = (signal?: AbortSignal) =>
-    AbortSignal.any([AbortSignal.timeout(config.llm.timeoutMs), ...(signal ? [signal] : [])])
+  // 超时经 timeoutMs 字段由 client 在拿到并发槽位后按次生效——排队等锁不消耗超时预算。
   // 翻译核心：标签协议解析 → 统一存 '标题\n\n正文'；标签缺失回退原样
   const translateItemCore = async (item: { id: string; title: string; summary?: string; state: { translation?: string; translationError?: string; translationRetries?: number } }, signal?: AbortSignal) => {
     const client = new DshLlmClient(llmRuntime!, pickTranslateRoute(), log, 'translate')
@@ -340,7 +373,9 @@ export function apply(ctx: Context, config: ConfigType) {
       system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
       prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
       maxTokens: config.llm.maxTokens, // 推理模型 reasoning 计入输出预算——1200 曾被思考吃光产出空回复
-      signal: llmSignal(signal),
+      signal,
+      timeoutMs: config.llm.timeoutMs,
+      purpose: 'translate',
     })
     addTokens('translate', client.usage) // 每条独立 client——usage 即本条用量
     const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
@@ -360,8 +395,9 @@ export function apply(ctx: Context, config: ConfigType) {
       const text = await client.generateText({
         system: `把 RSS 源归类到这些分类之一：${CLASSIFY_CATS.join('、')}。只输出分类名，不要解释。`,
         prompt: `频道：${feed.title}\n\n条目：${feed.items.slice(0, 5).map((i) => i.title).join('；')}`,
-        maxTokens: 20,
-        signal: llmSignal(),
+        maxTokens: 256, // 分类输出虽短，推理模型 reasoning 也要占预算
+        timeoutMs: config.llm.timeoutMs,
+        purpose: 'classify',
       })
       return CLASSIFY_CATS.find((c) => text.trim().includes(c)) || ''
     } catch { return '' }
@@ -399,7 +435,7 @@ export function apply(ctx: Context, config: ConfigType) {
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),
     runFetch: runFetchForce,
-    fetchProgress: async () => ({ ...fetchProg, cancelled: fetchCancelled }),
+    fetchProgress: async () => ({ ...fetchProg, cancelled: fetchCancelled, etaMs: fetchEta(), queue: llmQueueSnapshot(FETCH_QUEUE_TAGS) }),
     translateItem: async (id) => {
       const item = store.items.find((i) => i.id === id)
       if (!item) return { ok: false, error: 'item not found' }
@@ -408,7 +444,7 @@ export function apply(ctx: Context, config: ConfigType) {
       await store.save()
       return { ok: true, translation: item.state.translation }
     },
-    digestProgress: async () => ({ ...digestProg, cancelled: digestCancelled }),
+    digestProgress: async () => ({ ...digestProg, cancelled: digestCancelled, etaMs: digestEta(), queue: llmQueueSnapshot(DIGEST_QUEUE_TAGS) }),
     rescanStubContent: async () => { // 名单改了就回扫：命中且短正文的存量条目立刻隐藏（单向——删词条不解隐）
       const p = prefs.get()
       const list = p.contentBlocklist ?? []
@@ -493,6 +529,82 @@ export function apply(ctx: Context, config: ConfigType) {
       return true
     },
     stopDigest: async () => { if (digestAbort) { digestAbort.abort(); digestCancelled = true } return true },
+    // ---- AI 专题 ----
+    previewTopic: async (params: TopicParams, page = 1, filterSourceId?: string) => { // 只读候选预览：同生成管线的查询路径，不调 LLM；15 条/页；filterSourceId 仅过滤展示用，源统计仍按全入文集
+      const r = queryTopicCandidates(store, params, config.timezone || undefined)
+      const byId = new Map(effectiveSources(config.sources, store).map((s) => [s.id, { title: s.title }]))
+      const counts = new Map<string, number>()
+      for (const it of r.items) counts.set(it.sourceId, (counts.get(it.sourceId) || 0) + 1)
+      const sources = [...counts.entries()].map(([id, count]) => ({ id, title: byId.get(id)?.title || id, count }))
+        .sort((a, b) => b.count - a.count || a.title.localeCompare(b.title))
+      const filtered = filterSourceId ? r.items.filter((it) => it.sourceId === filterSourceId) : r.items
+      const pg = Math.max(1, Math.min(Math.ceil(page) || 1, Math.max(1, Math.ceil(filtered.length / 15))))
+      return {
+        hitCount: r.hitCount, dedupCount: r.dedupCount, capCount: r.items.length, filterCount: filtered.length,
+        page: pg, pageCount: Math.max(1, Math.ceil(filtered.length / 15)), sources,
+        items: filtered.slice((pg - 1) * 15, pg * 15).map((it) => ({
+          id: it.id, title: zhTitleOf(it), link: it.link,
+          source: byId.get(it.sourceId)?.title || it.sourceId,
+          date: (it.publishedAt || it.fetchedAt || '').slice(0, 10),
+          score: Math.round(topicKeyOf(it) * 10) / 10,
+          dupCount: it.dupCount || 0,
+        })),
+      }
+    },
+    runTopic: async (params: TopicParams) => {
+      const queued = topicBusy // 在跑一个时新专题进内存队列（落 queued 元数据——列表可见+可取消，重启懒修复成 error）
+      if (queued && topicQueue.length >= TOPIC_QUEUE_MAX) return { ok: false, error: `排队已满（${TOPIC_QUEUE_MAX}）` }
+      const now = new Date().toISOString()
+      const meta: TopicMeta = { // generating/queued 条目先落盘——列表立即可见，重启后懒修复
+        id: newTopicId(), title: truncateCodePoints(params.keywords.join('·'), 40) || '专题',
+        keywords: params.keywords, from: params.from, to: params.to,
+        sourceIds: params.sourceIds, focus: params.focus,
+        minScore: params.minScore, maxItems: params.maxItems,
+        createdAt: now, updatedAt: now,
+        hitCount: 0, dedupCount: 0, itemCount: 0, usedCount: 0,
+        durationMs: 0, degraded: false, excerpt: '', status: queued ? 'queued' : 'generating',
+      }
+      await upsertTopicMeta(join(dataDir, 'digests'), meta)
+      if (queued) topicQueue.push(meta); else launchTopic(meta)
+      return { ok: true, id: meta.id, queued }
+    },
+    regenTopic: async (id: string) => { // 覆盖重生成：沿用 meta 参数，同 id 重写正文；busy 时排队
+      const old = (await listTopics(join(dataDir, 'digests'), { queuedIds: topicQueue.map((m) => m.id) })).find((m) => m.id === id)
+      if (!old) return { ok: false, error: 'not found' }
+      if (old.status === 'generating' || old.status === 'queued') return { ok: false, error: '生成中/排队中不可重生成' }
+      const queued = topicBusy
+      if (queued && topicQueue.length >= TOPIC_QUEUE_MAX) return { ok: false, error: `排队已满（${TOPIC_QUEUE_MAX}）` }
+      const meta: TopicMeta = {
+        ...old, status: queued ? 'queued' : 'generating', error: undefined,
+        hitCount: 0, dedupCount: 0, itemCount: 0, usedCount: 0,
+        durationMs: 0, degraded: false, updatedAt: new Date().toISOString(),
+      }
+      await upsertTopicMeta(join(dataDir, 'digests'), meta)
+      if (queued) topicQueue.push(meta); else launchTopic(meta)
+      return { ok: true, id: meta.id, queued }
+    },
+    topicProgress: async () => ({ ...topicProg, etaMs: topicEta(), queue: llmQueueSnapshot(TOPIC_QUEUE_TAGS), queuedIds: topicQueue.map((m) => m.id) }),
+    stopTopic: async (id?: string) => {
+      const qi = id ? topicQueue.findIndex((m) => m.id === id) : -1
+      if (qi >= 0) { // 排队中取消：撤队+落 error（与"手动停止"的在跑取消同构——都是用户主动终止）
+        const meta = topicQueue.splice(qi, 1)[0]
+        meta.status = 'error'; meta.error = '排队中已取消'; meta.updatedAt = new Date().toISOString()
+        await upsertTopicMeta(join(dataDir, 'digests'), meta).catch(() => {})
+        return { ok: true, cancelled: 'queued' }
+      }
+      if (topicAbort && (!id || id === topicProg.id)) { topicAbort.abort(); return true }
+      if (topicProg.running) { // 无控制器却在"跑"＝发射台同步抛错残留：就地修复，否则该行永远挂 generating
+        await listTopics(join(dataDir, 'digests')).catch(() => []) // 懒修复把非活跃 generating 落 error（含本条）
+        topicProg = { running: false, done: 0, total: 0, stage: '', id: '' }
+        topicBusy = false
+      }
+      return true
+    },
+    dequeueTopic: (id: string) => { // 删除排队项前的摘队——只动内存队列，meta 由 deleteTopic 处理
+      const qi = topicQueue.findIndex((m) => m.id === id)
+      if (qi >= 0) { topicQueue.splice(qi, 1); return true }
+      return false
+    },
     status: () => {
       const list = effectiveSources(config.sources, store)
       const failures = list.filter((s) => s.health.lastError).map((s) => ({ name: s.title, error: s.health.lastError! }))
@@ -513,7 +625,7 @@ export function apply(ctx: Context, config: ConfigType) {
           if (!qi || !since) return (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0
           return qi.call(store, { fetchedAfter: since, fetchedBefore: '9999-12-31', pageSize: 1 }).total
         })(),
-        todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate } : undefined })(),
+        todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate, topic: d.topic ?? 0 } : undefined })(),
         tokenStats: store.meta.tokenStats,
         version: (() => { try { return (JSON.parse(readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '..', 'package.json'), 'utf8')) as { version?: string }).version } catch { return undefined } })(),
         lastFetchAt: store.meta.lastFetchAt,
@@ -539,6 +651,66 @@ export function apply(ctx: Context, config: ConfigType) {
   }
   let digestBusy = false // 服务端防重入：调度与手动 /api/digest-run 并发会竞态落盘
   let digestAbort: AbortController | undefined // 「停止生成」：中止在飞的 LLM 调用（流逐条失败→降级收尾，不落半文件）
+  let topicBusy = false // 同时只跑一个专题；busy 时新建/重生成进内存队列，跑完自动排水
+  let topicAbort: AbortController | undefined
+  const topicQueue: TopicMeta[] = [] // 排队中的专题（内存态；meta 已落 queued——重启后懒修复成 error）
+  const TOPIC_QUEUE_MAX = 8
+  /** 在跑专题结束后排水：下一单 queued → generating 并发射（同步——.finally 与进度轮询间无窗口） */
+  const drainTopicQueue = () => {
+    const meta = topicQueue.shift()
+    if (!meta) return
+    meta.status = 'generating'
+    meta.updatedAt = new Date().toISOString()
+    void upsertTopicMeta(join(dataDir, 'digests'), meta).catch(() => {})
+    launchTopic(meta)
+  }
+  /** 专题 fire-and-forget 发射台：meta 已是 generating 落盘态；成功写 done，失败写 error 原因 */
+  const launchTopic = (meta: TopicMeta) => {
+    const digestsDir = join(dataDir, 'digests')
+    const controller = new AbortController()
+    topicBusy = true
+    topicAbort = controller
+    topicProg = { running: true, done: 0, total: 0, stage: 'candidates', id: meta.id }
+    try {
+      const topicClient = llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log, 'topic') : undefined
+      void runTopicPipeline({
+        store,
+        params: { keywords: meta.keywords, from: meta.from, to: meta.to, sourceIds: meta.sourceIds, focus: meta.focus, minScore: meta.minScore, maxItems: meta.maxItems },
+        meta,
+        llmClient: topicClient,
+        llmEnabled: config.llm.enabled,
+        summaryConcurrency: prefs.get().digestOpts?.summaryConcurrency ?? config.summary.concurrency,
+        llmTimeoutMs: config.llm.timeoutMs,
+        llmMaxTokens: config.llm.maxTokens,
+        signal: controller.signal,
+        sourcesById: new Map(effectiveSources(config.sources, store).map((s) => [s.id, { title: s.title }])),
+        digestsDir,
+        timezone: config.timezone,
+        log,
+        onProgress: (done, total, stage) => { topicProg.done = done; topicProg.total = total; topicProg.stage = stage },
+      }).then((m) => {
+        addTokens('topic', topicClient?.usage)
+        log.info(`topic generated: ${m.id} items=${m.itemCount} used=${m.usedCount} degraded=${m.degraded}`)
+      }).catch((e) => {
+        const reason = controller.signal.aborted ? '手动停止' : (e instanceof Error ? e.message : String(e))
+        meta.status = 'error'; meta.error = reason; meta.updatedAt = new Date().toISOString()
+        void upsertTopicMeta(digestsDir, meta).catch(() => {})
+        log.warn(`topic ${meta.id} failed: ${reason}`)
+      }).finally(() => {
+        topicBusy = false
+        topicAbort = undefined
+        topicProg = { running: false, done: 0, total: 0, stage: '', id: '' }
+        drainTopicQueue() // 排水：排队的下一个立即接棒（同 tick 重占 busy，进度轮询看不到空窗）
+      })
+    } catch (e) { // 同步抛出（pickRoute 配置错等）：不留 generating 死档/假活进度——懒修复豁免 activeId，丢了就没法救
+      topicBusy = false; topicAbort = undefined
+      topicProg = { running: false, done: 0, total: 0, stage: '', id: '' }
+      meta.status = 'error'; meta.error = e instanceof Error ? e.message : String(e); meta.updatedAt = new Date().toISOString()
+      void upsertTopicMeta(digestsDir, meta).catch(() => {})
+      drainTopicQueue() // 发射失败也要排水——队列不该被哑弹卡死
+      throw e
+    }
+  }
   const digestNow = (force = false, day?: string) => {
     if (digestBusy) return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'extractive' as const, degraded: true, note: 'digest already running' })
     digestBusy = true

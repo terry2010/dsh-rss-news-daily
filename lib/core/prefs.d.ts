@@ -66,13 +66,21 @@ export interface PrefsFile extends Prefs {
         pruneLowQuality?: boolean;
         storeMaxItems?: number;
     };
-    /** 阅读字号缩放（1=默认）。global=设置页统一值；items/digest/hourly=各页 A−A＋ 分项值；分项优先于 global */
+    /** 阅读字号缩放（1=默认）。global=设置页统一值；items/digest/hourly/topics=各页 A−A＋ 分项值；分项优先于 global */
     fontSize?: {
         global?: number;
         items?: number;
         digest?: number;
         hourly?: number;
+        topics?: number;
     };
+    /** 适应宽屏：items=全部新闻页、digest=今日精选页（日报/快报/专题共用）；默认开——显式 false 才回 880px 窄版 */
+    wide?: {
+        items?: boolean;
+        digest?: boolean;
+    };
+    /** 全局 AI 调用并发数（所有模型调用共用一个信号量；1=全串行，本地弱模型建议 1；1-8） */
+    llmConcurrency?: number;
     /** 无效正文名单：入库新闻正文命中即整条隐藏（归一化等值匹配）；AI 判定无效的短正文自动追加 */
     contentBlocklist?: string[];
     /** 短正文判定阈值（汉字数/英文词数双口径，低于即进名单匹配+AI 判定；缺省 15/10） */

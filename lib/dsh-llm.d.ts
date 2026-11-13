@@ -32,9 +32,11 @@ export declare function setDevLogEnabled(fn: () => boolean): void;
  *  变量形式的 specifier 让 tsc 不做静态解析——该包是宿主 profile 的可选共存插件，非本包依赖。 */
 type LoopHit = {
     kind?: string;
+    detail?: string;
+    evidence?: string;
     cutStart?: number;
 };
-type LoopDetect = (text: string) => LoopHit | null;
+type LoopDetect = (text: string, options?: Record<string, number>) => LoopHit | null;
 export declare function setLoopGuardEnabled(fn: () => boolean): void;
 /** 检测器实际状态：供 /api/loopguard 告诉用户"装了但没启用/根本没装" */
 export declare function loopDetectStatus(): 'untested' | 'active' | 'absent';
@@ -47,6 +49,23 @@ export declare function collectText(stream: AsyncIterable<StreamChunk>, usage?: 
 }, diag?: CollectDiag & {
     loop?: string;
 }, loopDetect?: LoopDetect): Promise<string>;
+export declare function setLlmConcurrency(fn: () => number): void;
+/** LLM 队列快照：tagSet 圈定「本任务」客户端 tag 集合，进度端据此区分「在执行」与「排队等锁」。
+ * tagAhead = 排在本任务首个排队调用之前的调用数 + 正占着槽位的他人调用数（并发=1 时即"还要等几个调用完成"） */
+export declare function llmQueueSnapshot(tagSet?: readonly string[]): {
+    limit: number;
+    running: number;
+    queued: number;
+    tagRunning: number;
+    tagQueued: number;
+    tagAhead: number;
+    /** 本任务排队中的调用明细（purpose 列表，长度===tagQueued） */
+    mineQueued: string[];
+    /** 前方占用明细：在飞的他人调用 + 队列里排在本任务之前的调用（长度===tagAhead） */
+    ahead: string[];
+};
+/** 某类调用的滑动平均耗时 ms；该桶无样本退全局均值，再无样本 undefined（前端据此显示「估算中」） */
+export declare function llmCallAvgMs(purpose?: string): number | undefined;
 /** {@link LlmClient} backed by the harness `ctx.llm` streaming service. */
 export declare class DshLlmClient implements LlmClient {
     private readonly llm;

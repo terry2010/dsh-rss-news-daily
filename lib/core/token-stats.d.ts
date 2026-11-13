@@ -5,13 +5,14 @@ export interface TokenDayStat {
     digest: number;
     score: number;
     translate: number;
+    topic: number;
 }
 export interface TokenStats {
     totalIn: number;
     totalOut: number;
     days: Record<string, TokenDayStat>;
 }
-export type TokenFeature = 'digest' | 'score' | 'translate';
+export type TokenFeature = 'digest' | 'score' | 'translate' | 'topic';
 export interface TokenUsage {
     inputTokens: number;
     outputTokens: number;

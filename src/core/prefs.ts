@@ -38,8 +38,12 @@ export interface PrefsFile extends Prefs {
   notifyDesktop?: boolean
   /** UI 日报参数覆盖；单字段未设=跟随 cordis config 默认 */
   digestOpts?: { digestItems?: number; perTopicLimit?: number; minLlmScore?: number; candidateHours?: number; llmScoreCandidates?: number; summaryMaxItems?: number; summaryConcurrency?: number; digestMaxLength?: number; scoreOnFetch?: boolean; rescoreMissing?: boolean; hourlyBrief?: boolean; retentionDays?: number; pruneLowQuality?: boolean; storeMaxItems?: number }
-  /** 阅读字号缩放（1=默认）。global=设置页统一值；items/digest/hourly=各页 A−A＋ 分项值；分项优先于 global */
-  fontSize?: { global?: number; items?: number; digest?: number; hourly?: number }
+  /** 阅读字号缩放（1=默认）。global=设置页统一值；items/digest/hourly/topics=各页 A−A＋ 分项值；分项优先于 global */
+  fontSize?: { global?: number; items?: number; digest?: number; hourly?: number; topics?: number }
+  /** 适应宽屏：items=全部新闻页、digest=今日精选页（日报/快报/专题共用）；默认开——显式 false 才回 880px 窄版 */
+  wide?: { items?: boolean; digest?: boolean }
+  /** 全局 AI 调用并发数（所有模型调用共用一个信号量；1=全串行，本地弱模型建议 1；1-8） */
+  llmConcurrency?: number
   /** 无效正文名单：入库新闻正文命中即整条隐藏（归一化等值匹配）；AI 判定无效的短正文自动追加 */
   contentBlocklist?: string[]
   /** 短正文判定阈值（汉字数/英文词数双口径，低于即进名单匹配+AI 判定；缺省 15/10） */
@@ -92,7 +96,9 @@ export function normalizePrefs(value: unknown): PrefsFile {
     subscribedTopics: Array.isArray(r.subscribedTopics) ? (r.subscribedTopics as unknown[]).filter((t): t is string => typeof t === 'string' && !!t) : undefined,
     notifyDesktop: r.notifyDesktop === true ? true : undefined,
     digestOpts: (() => { const d = (typeof r.digestOpts === 'object' && r.digestOpts !== null ? r.digestOpts : {}) as Record<string, unknown>; const b = (k: string) => typeof d[k] === 'boolean' ? (d[k] as boolean) : undefined; const num = (k: string) => typeof d[k] === 'number' && Number.isFinite(d[k]) ? (d[k] as number) : undefined; const o = { digestItems: num('digestItems'), perTopicLimit: num('perTopicLimit'), minLlmScore: num('minLlmScore'), candidateHours: num('candidateHours'), llmScoreCandidates: num('llmScoreCandidates'), summaryMaxItems: num('summaryMaxItems'), summaryConcurrency: num('summaryConcurrency'), digestMaxLength: num('digestMaxLength'), scoreOnFetch: b('scoreOnFetch'), rescoreMissing: b('rescoreMissing'), hourlyBrief: b('hourlyBrief'), retentionDays: num('retentionDays'), pruneLowQuality: b('pruneLowQuality'), storeMaxItems: num('storeMaxItems') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),
-    fontSize: (() => { const f = (typeof r.fontSize === 'object' && r.fontSize !== null ? r.fontSize : {}) as Record<string, unknown>; const num = (k: string) => typeof f[k] === 'number' && Number.isFinite(f[k]) ? Math.min(2, Math.max(0.5, Math.round((f[k] as number) * 100) / 100)) : undefined; const o = { global: num('global'), items: num('items'), digest: num('digest'), hourly: num('hourly') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),
+    fontSize: (() => { const f = (typeof r.fontSize === 'object' && r.fontSize !== null ? r.fontSize : {}) as Record<string, unknown>; const num = (k: string) => typeof f[k] === 'number' && Number.isFinite(f[k]) ? Math.min(2, Math.max(0.5, Math.round((f[k] as number) * 100) / 100)) : undefined; const o = { global: num('global'), items: num('items'), digest: num('digest'), hourly: num('hourly'), topics: num('topics') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),
+    wide: (() => { const w = (typeof r.wide === 'object' && r.wide !== null ? r.wide : {}) as Record<string, unknown>; const b = (k: string) => typeof w[k] === 'boolean' ? (w[k] as boolean) : undefined; const o = { items: b('items'), digest: b('digest') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),
+    llmConcurrency: typeof r.llmConcurrency === 'number' && Number.isFinite(r.llmConcurrency) ? Math.min(8, Math.max(1, Math.floor(r.llmConcurrency))) : undefined,
     contentBlocklist: (() => { const seen = new Set<string>(); const out: string[] = []; for (const s of strListOf(r.contentBlocklist)) { const t = s.trim().slice(0, 300); if (t && !seen.has(t)) { seen.add(t); out.push(t) } } return out.length ? out.slice(0, 2000) : undefined })(),
     stubLimits: (() => { const s = (typeof r.stubLimits === 'object' && r.stubLimits !== null ? r.stubLimits : {}) as Record<string, unknown>; const num = (k: string) => typeof s[k] === 'number' && Number.isFinite(s[k]) ? Math.min(500, Math.max(1, Math.floor(s[k]))) : undefined; const o = { zh: num('zh'), en: num('en') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),
   }

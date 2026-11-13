@@ -1,6 +1,20 @@
 /** ctx.tools 注册：news_* 前缀防撞名。值即契约 + render 投影。 */
 import type { Context } from '@deepseek-ai/cordis';
 import type { FeedSource, FetchCycleResult } from './core/types.js';
+import type { TopicParams } from './topic-pipeline.js';
+/** LLM 全局队列快照（llmQueueSnapshot 投影）：tagRunning/tagQueued 是本任务口径，tagAhead 是前方调用数 */
+export interface LlmQueueInfo {
+    limit: number;
+    running: number;
+    queued: number;
+    tagRunning: number;
+    tagQueued: number;
+    tagAhead: number;
+    /** 本任务排队中的调用 purpose 列表 */
+    mineQueued: string[];
+    /** 前方调用 purpose 明细（在飞的他人调用 + 队列里排在前面的） */
+    ahead: string[];
+}
 /** 插件对外操作的统一门面（index.ts 注入，避免 tools.ts 直接绑 store） */
 export interface NewsService {
     listSources(): FeedSource[];
@@ -42,12 +56,14 @@ export interface NewsService {
         source?: string;
         category?: string;
     }): Promise<FetchCycleResult>;
-    /** 抓取进度（{running,done,total,cancelled}），供 UI 轮询 */
+    /** 抓取进度（{running,done,total,cancelled,etaMs?,queue?}），供 UI 轮询 */
     fetchProgress?(): Promise<{
         running: boolean;
         done: number;
         total: number;
         cancelled?: boolean;
+        etaMs?: number;
+        queue?: LlmQueueInfo;
     }>;
     /** 中止进行中的抓取 */
     cancelFetch?(): Promise<unknown>;
@@ -57,12 +73,14 @@ export interface NewsService {
         translation?: string;
         error?: string;
     }>;
-    /** 日报生成进度（{running,done,total,cancelled}），供 UI 轮询 */
+    /** 日报生成进度（{running,done,total,cancelled,etaMs?,queue?}），供 UI 轮询 */
     digestProgress?(): Promise<{
         running: boolean;
         done: number;
         total: number;
         cancelled?: boolean;
+        etaMs?: number;
+        queue?: LlmQueueInfo;
     }>;
     /** 连通性测试：真实 fetcher 路径抓 url，返回 status/body 片段（验证出口/代理） */
     testFetch?(url: string, proxy?: string | boolean): Promise<{
@@ -118,6 +136,46 @@ export interface NewsService {
     rescanStubContent?(): Promise<number>;
     /** 中止进行中的日报生成（LLM 流逐条失败→降级收尾） */
     stopDigest?(): Promise<unknown>;
+    /** AI 专题：候选预览（只读，不调 LLM，不受生成锁限制） */
+    previewTopic?(params: TopicParams, page?: number, filterSourceId?: string): Promise<{
+        hitCount: number;
+        dedupCount: number;
+        capCount: number;
+        filterCount: number;
+        page: number;
+        pageCount: number;
+        sources: Array<Record<string, unknown>>;
+        items: Array<Record<string, unknown>>;
+    }>;
+    /** AI 专题：启动生成（同步落 generating 元数据后 fire-and-forget；topicBusy 时落 queued 排队） */
+    runTopic?(params: TopicParams): Promise<{
+        ok: boolean;
+        id?: string;
+        queued?: boolean;
+        error?: string;
+    }>;
+    /** AI 专题：同参覆盖重生成（仅 done/error；generating/queued 行禁用；busy 时排队） */
+    regenTopic?(id: string): Promise<{
+        ok: boolean;
+        id?: string;
+        queued?: boolean;
+        error?: string;
+    }>;
+    /** AI 专题生成进度（{running,done,total,stage,id,etaMs?,queue?,queuedIds?}），供 UI 轮询与懒修复排除 */
+    topicProgress?(): Promise<{
+        running: boolean;
+        done: number;
+        total: number;
+        stage?: string;
+        id?: string;
+        etaMs?: number;
+        queue?: LlmQueueInfo;
+        queuedIds?: string[];
+    }>;
+    /** 中止专题：id 命中排队项→撤队落 error；命中在跑（或不带 id）→abort 在飞调用 */
+    stopTopic?(id?: string): Promise<unknown>;
+    /** 把排队中的专题从内存队列摘除（删除接口用——不动 meta） */
+    dequeueTopic?(id: string): boolean;
 }
 /** 注册全部 news_* 工具；返回 disposer。 */
 export declare function registerTools(ctx: Context, svc: NewsService): () => void;

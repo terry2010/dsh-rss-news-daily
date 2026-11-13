@@ -64,7 +64,7 @@ export declare class SqliteStore {
     private exportToArchive;
     /** 清退：先过期后配额（低质优先 or 最老优先），SQL DELETE；删除前统一走年库归档 */
     private prune;
-    /** 跨窗口查询（/items 下推）：filter+sort+FTS+分页全在 SQL */
+    /** 跨窗口查询（/items 下推 + 专题候选）：filter+sort+FTS+分页全在 SQL */
     queryItems(opts: {
         day?: string;
         fetchedAfter?: string;
@@ -73,6 +73,13 @@ export declare class SqliteStore {
         source?: string;
         unread?: boolean;
         q?: string;
+        /** 专题：源白名单（精确 IN；空数组=不筛） */
+        sources?: string[];
+        /** 专题：发布/抓取回退时间区间（COALESCE(NULLIF(publishedAt,''),fetchedAt)） */
+        publishedAfter?: string;
+        publishedBefore?: string;
+        /** 专题：最低评分（COALESCE(llmScore, MIN(10,MAX(0,score*8)))，同 pickFinal 口径） */
+        minScore?: number;
         sort?: 'published' | 'fetched';
         page?: number;
         pageSize?: number;

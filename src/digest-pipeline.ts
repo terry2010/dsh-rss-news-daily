@@ -73,8 +73,8 @@ export interface DigestPipelineOptions {
   categoryPrompts?: Record<string, string>
 }
 
-/** 中文展示题：aiTitle（日报重写题）→ 译文首行（抓取期译题）→ 原标题 */
-function zhTitleOf(item: FeedItem): string {
+/** 中文展示题：aiTitle（日报重写题）→ 译文首行（抓取期译题）→ 原标题（专题管线复用） */
+export function zhTitleOf(item: FeedItem): string {
   const tl = (item.state?.translation || '').trim()
   const nl = tl.indexOf('\n')
   return item.aiTitle || (tl ? (nl > 0 ? tl.slice(0, nl) : tl).trim() : '') || item.title
@@ -118,9 +118,10 @@ async function translateItems(items: FeedItem[], client: LlmClient, opts: Partia
         const text = await client.generateText({
           system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
           prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
-          maxTokens: 1200,
+          maxTokens: 2048, // 推理模型 reasoning 计入输出预算——1200 曾被思考吃光产出空回复
           purpose: 'translate',
-          signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]),
+          signal: opts.signal,
+          timeoutMs: opts.llmTimeoutMs ?? 30_000,
         })
         const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
         item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
@@ -174,7 +175,8 @@ async function scoreChunk(
       prompt: chunk.map((it, idx) => `${idx + 1}. [${it.topic || '综合'}] ${it.title}`).join('\n'),
       maxTokens: opts.llmMaxTokens,
       purpose: 'score',
-      signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
+      signal: opts.signal,
+      timeoutMs: opts.llmTimeoutMs,
     })
     const m = text.match(/\[[\s\S]*\]/)
     const arr: Array<{ i: number; s: number; r?: string; t?: string[] }> = m ? JSON.parse(m[0]) : []
@@ -288,9 +290,10 @@ export async function appendHourlyBrief(opts: {
       brief = (await opts.llmClient.generateText({
         system: '你是新闻快报编辑。概括本时段新闻要点：先一句总起（主线/主题是什么），再分点列出具体事件（谁、做了什么），每点一行以 - 开头，至多 4 点，挑最重要的。不要解释。',
         prompt: scored.slice(0, 30).map((it, i) => `${i + 1}. [${it.topic || '综合'}] ${zhTitleOf(it)}`).join('\n'),
-        maxTokens: Math.min(opts.llmMaxTokens ?? 1500, 2000),
+        maxTokens: Math.min(opts.llmMaxTokens ?? 4096, 4096), // 快报概括+推理思考共用预算，2K 易被吃光
         purpose: 'brief',
-        signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]),
+        signal: opts.signal,
+        timeoutMs: opts.llmTimeoutMs ?? 30_000,
       })).trim() // 不压平：模型若分行输出则保留（多行逐行加 > 前缀）
     } catch (e) { log.warn(`hourly brief summary failed: ${String((e as Error)?.message || e)}`) }
   }
@@ -341,7 +344,7 @@ export async function appendHourlyBrief(opts: {
 }
 
 /** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。 */
-function dedupeStories(items: FeedItem[]): FeedItem[] {
+export function dedupeStories(items: FeedItem[]): FeedItem[] {
   const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
   const toks = (s: string) => {
     // CJK/拉丁边界断开：'openai发布gpt-6模型' → 'openai 发布 gpt 6 模型'
@@ -387,9 +390,10 @@ async function llmClusterItems(
     const text = await client.generateText({
       system: '把报道同一事件/同一主体的条目分组（措辞不同但同一件事）。只输出 JSON 数组的数组 [[序号,序号],[序号]]，无同题输出 []，不要解释。',
       prompt: top.map((it, idx) => `${idx + 1}. ${it.title}`).join('\n'),
-      maxTokens: 800,
+      maxTokens: 2048, // 聚类 JSON+推理思考共用预算，800 易被吃光
       purpose: 'cluster',
-      signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
+      signal: opts.signal,
+      timeoutMs: opts.llmTimeoutMs,
     })
     const arr = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] || 'null')
     if (!Array.isArray(arr)) return false
@@ -460,7 +464,8 @@ async function itemSummaries(
           prompt: `标题：${item.title}\n来源：${sourcesById.get(item.sourceId)?.title ?? item.sourceId}\n分类：${item.topic || '综合'}\n摘要：${truncateCodePoints(item.summary || item.content || '', 500)}`,
           maxTokens: opts.llmMaxTokens,
           purpose: 'item-summary',
-          signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs ?? 30_000), ...(opts.signal ? [opts.signal] : [])]),
+          signal: opts.signal,
+          timeoutMs: opts.llmTimeoutMs ?? 30_000,
         })
         const m = text.match(/\{[\s\S]*\}/)
         const j = m ? (JSON.parse(m[0]) as { title?: string; summary?: string; background?: string; impact?: string }) : null
@@ -555,7 +560,8 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     items, language: opts.language, mode: 'batch' as const, maxLength,
     maxTokens: opts.llmMaxTokens,
     notes: notes || undefined,
-    signal: AbortSignal.any([AbortSignal.timeout(opts.llmTimeoutMs), ...(opts.signal ? [opts.signal] : [])]),
+    signal: opts.signal,
+    timeoutMs: opts.llmTimeoutMs,
   })
   const llmOn = opts.llmEnabled && !!opts.llmClient
   // P6：按领域分组做 chunk——块摘要即领域速览，合并后仍得今日重点

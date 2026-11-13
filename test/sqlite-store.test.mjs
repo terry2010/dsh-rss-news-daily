@@ -205,3 +205,25 @@ test('sql: 低质清退不饿死未评分新条目（NULL llmScore 视为中档�
   assert.notEqual(st.items.find((i) => i.id === 'fresh'), undefined, 'unscored fresh item must survive prune')
   assert.equal(st.items.find((i) => i.id === 'old1'), undefined, 'oldest ungraded item should be evicted first')
 })
+
+test('sql: queryItems 专题参数——sources 精确 IN / 日期 COALESCE 回退 / minScore 公式', async () => {
+  const { st } = await mk()
+  st.addItems([
+    // publishedAt 空 → 过滤键回退 fetchedAt（2026-11-05 命中区间）
+    mkItem('a', { sourceId: 's1', publishedAt: '', fetchedAt: '2026-11-05T08:00:00Z', llmScore: 8 }),
+    // publishedAt 有效 → 用发布时间（fetchedAt 在区间内但发布日在区间外 → 不命中）
+    mkItem('b', { sourceId: 's1', publishedAt: '2026-10-01T00:00:00Z', fetchedAt: '2026-11-06T08:00:00Z', llmScore: 9 }),
+    mkItem('c', { sourceId: 's2', publishedAt: '2026-11-06T00:00:00Z', fetchedAt: '2026-11-06T08:00:00Z', llmScore: 4 }),
+    // 无 llmScore → 回退 score*8（score 0.9→7.2 <8 不命中 minScore=8）
+    mkItem('d', { sourceId: 's1', publishedAt: '2026-11-06T00:00:00Z', fetchedAt: '2026-11-06T08:00:00Z', score: 0.9 }),
+    // hidden 条目永不出现
+    mkItem('e', { sourceId: 's1', publishedAt: '2026-11-06T00:00:00Z', fetchedAt: '2026-11-06T08:00:00Z', llmScore: 10, state: { read: false, hidden: true, liked: 0 } }),
+  ])
+  const range = { publishedAfter: '2026-11-01T00:00:00Z', publishedBefore: '2026-11-08T00:00:00Z' }
+  const all = st.queryItems({ ...range })
+  assert.deepEqual(all.items.map((i) => i.id).sort(), ['a', 'c', 'd']) // b 发布日出区间、e 隐藏
+  const bySrc = st.queryItems({ ...range, sources: ['s1'] })
+  assert.deepEqual(bySrc.items.map((i) => i.id).sort(), ['a', 'd']) // c 源 s2 排除（精确 IN，不做 LIKE）
+  const hi = st.queryItems({ ...range, minScore: 8 })
+  assert.deepEqual(hi.items.map((i) => i.id), ['a']) // c=4、d=7.2 都不够
+})

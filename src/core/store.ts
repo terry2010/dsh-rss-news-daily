@@ -30,11 +30,11 @@ export interface StoreMeta {
   lastFetchAdded?: number
   lastFetchStartedAt?: string // 本轮抓取起点(UTC ISO)——「本次」实时计数以此为界
   deletedBuiltin?: string[] // 用户删除的内置源 URL(归一化)——墓碑,restart 后不复活
-  /** token 用量统计：按日+按功能分账（digest 日报/score 评分快报/translate 翻译） */
+  /** token 用量统计：按日+按功能分账（digest 日报/score 评分快报/translate 翻译/topic 专题） */
   tokenStats?: {
     totalIn: number
     totalOut: number
-    days: Record<string, { in: number; out: number; digest: number; score: number; translate: number }>
+    days: Record<string, { in: number; out: number; digest: number; score: number; translate: number; topic: number }>
   }
 }
 

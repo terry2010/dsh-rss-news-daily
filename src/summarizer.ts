@@ -39,6 +39,8 @@ export interface SummarizeRequest {
   maxTokens?: number
   /** Abort signal forwarded to the model call when supported. */
   signal?: AbortSignal
+  /** 单次调用执行超时（不含排队等锁，透传到 client 按次生效） */
+  timeoutMs?: number
 }
 
 export interface SummarizeResult {
@@ -58,6 +60,8 @@ export interface LlmTextRequest {
   maxTokens?: number
   temperature?: number
   signal?: AbortSignal
+  /** 单次调用执行超时（从拿到并发槽位起算，不含排队等锁——由 client 每次尝试单独生效） */
+  timeoutMs?: number
   /** 调用场景标记（开发日志用）：digest 内部多种调用共享 client，靠它区分 */
   purpose?: string
 }
@@ -164,7 +168,7 @@ export async function summarize(
   }
   const { system, prompt } = buildPrompt(request)
   // 推理模型偶发空回复（reasoning 吃光预算/本地服务抖动）：重试一次且预算翻倍，仍败才降级
-  const budget = request.maxTokens ?? Math.min(2048, 256 + Math.ceil(request.maxLength / 2))
+  const budget = request.maxTokens ?? Math.min(4096, 512 + Math.ceil(request.maxLength / 2)) // 推理模型 reasoning 计入输出预算，下限放宽到 4K
   let text = ''
   let lastErr: string | undefined
   for (let attempt = 0; attempt < 2 && text === ''; attempt++) {
@@ -175,6 +179,7 @@ export async function summarize(
         maxTokens: attempt === 0 ? budget : Math.min(budget * 2, 32768),
         temperature: 0.3,
         signal: request.signal,
+        timeoutMs: request.timeoutMs,
         purpose: 'digest-prose',
       })).trim()
       if (text === '') lastErr = 'empty model output'

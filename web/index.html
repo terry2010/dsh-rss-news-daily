@@ -67,12 +67,61 @@
       <div class="seg" role="group" aria-label="精选类型">
         <button id="btnKindDigest" class="active" title="当日精选日报">日报</button>
         <button id="btnKindHourly" title="逐时段快报">快报</button>
+        <button id="btnKindTopics" title="自定义专题报告">专题</button>
       </div>
+      <button id="btnTopicNew" class="primary" hidden title="按关键词从新闻库生成专题报告">＋ 新建专题</button>
       <button id="btnDigestRun" class="primary" title="立即生成今日日报">▶ 生成日报</button>
       <button id="btnDigestStop" hidden title="中止当前生成">⏹ 停止</button>
       <span id="digestBusy" class="busybar" hidden>⏳ 日报生成中…</span>
     </div>
     <article id="digestView" class="digest"></article>
+    <div id="topicModal" class="obOverlay" hidden>
+      <div class="obCard topic-card">
+        <button class="obSkip" data-close title="关闭">✕</button>
+        <h3>新建专题</h3>
+        <div class="obBody addsrc-form">
+          <label class="f" for="tpKeywords"><span class="f-lab">关键词</span><input id="tpKeywords" placeholder="空格或逗号分隔多个词，如：openai gpt-5"></label>
+          <div class="tp-dates">
+            <span class="f-lab">起止时间</span>
+            <button type="button" data-tp-days="3">近3天</button>
+            <button type="button" data-tp-days="7">近7天</button>
+            <button type="button" data-tp-days="30">近30天</button>
+            <button type="button" data-tp-days="0">全部</button>
+          </div>
+          <div class="tp-dates tp-date-row">
+            <input type="date" id="tpFrom" title="起始日期（含当天）">
+            <span class="tp-tilde">~</span>
+            <input type="date" id="tpTo" title="截止日期（含当天）">
+          </div>
+          <div class="tp-srcbox">
+            <div class="tp-src-head" id="tpSrcHead" title="点击展开/收起源列表">
+              <span class="f-lab">新闻源</span>
+              <input id="tpSrcQ" type="search" placeholder="点击展开选择源（默认全选）" autocomplete="off">
+              <button type="button" id="tpSrcAll">全选</button>
+              <button type="button" id="tpSrcNone">清空</button>
+              <span id="tpSrcCount" class="tp-srccount"></span>
+              <span id="tpSrcCaret" class="tp-caret">▾</span>
+            </div>
+            <div id="tpSrcList" class="tp-src-grid" hidden></div>
+          </div>
+          <div class="tp-opts">
+            <label class="f" for="tpMinScore"><span class="f-lab">最低评分</span><select id="tpMinScore"><option value="0" selected>不限</option><option value="3">≥3</option><option value="5">≥5</option><option value="7">≥7</option><option value="8">≥8</option></select></label>
+            <label class="f" for="tpMaxItems"><span class="f-lab">入文条数</span><select id="tpMaxItems"><option value="50">50</option><option value="100" selected>100</option><option value="200">200</option><option value="500">500</option></select></label>
+          </div>
+          <div class="tp-focus">
+            <label class="f-lab" for="tpFocus">专题重点（可选）</label>
+            <textarea id="tpFocus" rows="3" placeholder="这份专题偏重考察的方向，如：重点分析对开发者的影响"></textarea>
+          </div>
+          <p id="tpErr" class="addsrc-err" hidden></p>
+          <div id="tpPreview" class="src-preview tp-preview" hidden></div>
+          <div id="tpPager" class="tp-pager" hidden></div>
+        </div>
+        <div class="obNav">
+          <span></span>
+          <span><button data-close>取消</button><button id="btnTpGen" class="primary" disabled>生成专题</button></span>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- 订阅源管理 -->
@@ -208,7 +257,7 @@
     <details class="settings-fold" open>
       <summary><span>阅读字号</span><small>统一放大/缩小阅读文字；各阅读页也可单独调整</small></summary>
       <div class="settings-fold-body">
-        <p class="settings-help">统一调整「全部新闻 / 日报 / 快报」三处阅读字号（每次 ±10%，80%–160%）。在这里调整会覆盖并清除三处各自的单独设置；「全部新闻」条目行、「日报」节标题、「快报」节标题右侧也有 A− A＋ 可单独调整。改动立即生效并保存，重启 dsh 后保持。</p>
+        <p class="settings-help">统一调整「全部新闻 / 日报 / 快报 / 专题」四处阅读字号（每次 ±10%，80%–160%）。在这里调整会覆盖并清除四处各自的单独设置；「全部新闻」条目行、「日报」「快报」节标题、「专题」标题与列表工具行也有 A− A＋ 可单独调整。改动立即生效并保存，重启 dsh 后保持。</p>
         <div class="toolbar">
           <button id="btnFzDown" title="统一缩小字号">A−</button>
           <span id="fzVal" class="fz-val">100%</span>
@@ -216,6 +265,18 @@
           <span class="f-end"><button id="btnFzReset" title="全部恢复默认字号">重置</button></span>
         </div>
         <div id="fzScopes" class="hist"></div>
+      </div>
+    </details>
+
+    <details class="settings-fold" open>
+      <summary><span>适应宽屏</span><small>宽屏下放开内容区宽度上限；分别控制各阅读页</small></summary>
+      <div class="settings-fold-body">
+        <p class="settings-help">默认已开启：内容区放宽到约 1440px（正文约 1180px），适合宽屏/全屏。取消勾选则对应页面回到 880px 窄版（正文 720px）。改动立即生效并保存，重启 dsh 后保持。「重置」两处全部恢复默认（开启）。</p>
+        <div class="toolbar">
+          <label class="f"><input type="checkbox" id="wideItems"> 全部新闻</label>
+          <label class="f"><input type="checkbox" id="wideDigest"> 今日精选（日报 / 快报 / 专题）</label>
+          <span class="f-end"><button id="btnWideReset" title="两处全部恢复默认（开启宽屏）">重置</button></span>
+        </div>
       </div>
     </details>
 
@@ -319,6 +380,10 @@
           <label class="setting-control">同时生成摘要的数量
             <input type="number" id="dConc" min="1" max="8" placeholder="默认 3">
             <small>越大处理越快，但模型服务负担也更高。</small>
+          </label>
+          <label class="setting-control">AI 调用并发数
+            <input type="number" id="dLlmConc" min="1" max="8" placeholder="默认 1">
+            <small>全部模型调用共用的并发上限：1=全串行（本地弱模型建议）；调大后专题/翻译/评分/日报可并行——生成中的任务会排队手动翻译等调用。</small>
           </label>
         </div>
         <div class="settings-checks">

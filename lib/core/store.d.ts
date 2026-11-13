@@ -23,7 +23,7 @@ export interface StoreMeta {
     lastFetchAdded?: number;
     lastFetchStartedAt?: string;
     deletedBuiltin?: string[];
-    /** token 用量统计：按日+按功能分账（digest 日报/score 评分快报/translate 翻译） */
+    /** token 用量统计：按日+按功能分账（digest 日报/score 评分快报/translate 翻译/topic 专题） */
     tokenStats?: {
         totalIn: number;
         totalOut: number;
@@ -33,6 +33,7 @@ export interface StoreMeta {
             digest: number;
             score: number;
             translate: number;
+            topic: number;
         }>;
     };
 }

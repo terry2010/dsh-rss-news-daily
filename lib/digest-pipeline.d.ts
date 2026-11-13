@@ -64,6 +64,8 @@ export interface DigestPipelineOptions {
     /** v2：分类→输出指令映射（覆盖内置默认） */
     categoryPrompts?: Record<string, string>;
 }
+/** 中文展示题：aiTitle（日报重写题）→ 译文首行（抓取期译题）→ 原标题（专题管线复用） */
+export declare function zhTitleOf(item: FeedItem): string;
 /** 外文判定：非汉字字母（拉丁/谚文/假名/西里尔等）≥10 个且超过汉字数 2 倍才算外文。
  *  旧规则按字符占比 ≤50% 判定，中文标题夹带型号/产品名（Windows 8GB、GPT-6）
  *  会被误判送翻译、模型原样回显；改按"文字脚本占比"判定，URL 不计入。 */
@@ -91,6 +93,8 @@ export declare function appendHourlyBrief(opts: {
     onBrief?: (brief: string, count: number) => void;
     log?: LogSink;
 }): Promise<number>;
+/** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。 */
+export declare function dedupeStories(items: FeedItem[]): FeedItem[];
 /** 生成并落盘当日日报；返回 DigestDocument（含 degraded/note 元数据）。 */
 export declare function runDailyDigest(opts: DigestPipelineOptions): Promise<DigestDocument>;
 //# sourceMappingURL=digest-pipeline.d.ts.map

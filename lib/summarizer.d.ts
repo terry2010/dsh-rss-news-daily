@@ -35,6 +35,8 @@ export interface SummarizeRequest {
     maxTokens?: number;
     /** Abort signal forwarded to the model call when supported. */
     signal?: AbortSignal;
+    /** 单次调用执行超时（不含排队等锁，透传到 client 按次生效） */
+    timeoutMs?: number;
 }
 export interface SummarizeResult {
     text: string;
@@ -51,6 +53,8 @@ export interface LlmTextRequest {
     maxTokens?: number;
     temperature?: number;
     signal?: AbortSignal;
+    /** 单次调用执行超时（从拿到并发槽位起算，不含排队等锁——由 client 每次尝试单独生效） */
+    timeoutMs?: number;
     /** 调用场景标记（开发日志用）：digest 内部多种调用共享 client，靠它区分 */
     purpose?: string;
 }

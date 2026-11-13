@@ -363,9 +363,15 @@ export class SqliteStore {
     if (del > 0) this.refreshWindow()
   }
 
-  /** 跨窗口查询（/items 下推）：filter+sort+FTS+分页全在 SQL */
+  /** 跨窗口查询（/items 下推 + 专题候选）：filter+sort+FTS+分页全在 SQL */
   queryItems(opts: {
     day?: string; fetchedAfter?: string; fetchedBefore?: string; category?: string; source?: string; unread?: boolean; q?: string
+    /** 专题：源白名单（精确 IN；空数组=不筛） */
+    sources?: string[]
+    /** 专题：发布/抓取回退时间区间（COALESCE(NULLIF(publishedAt,''),fetchedAt)） */
+    publishedAfter?: string; publishedBefore?: string
+    /** 专题：最低评分（COALESCE(llmScore, MIN(10,MAX(0,score*8)))，同 pickFinal 口径） */
+    minScore?: number
     sort?: 'published' | 'fetched'; page?: number; pageSize?: number
   }): { total: number; items: FeedItem[] } {
     const where: string[] = ["json_extract(state,'$.hidden') IS NOT 1"]
@@ -373,6 +379,12 @@ export class SqliteStore {
     if (opts.day || opts.fetchedAfter) { where.push('fetchedAt >= ? AND fetchedAt <= ?'); args.push(opts.fetchedAfter || `${opts.day}T00:00:00`, opts.fetchedBefore || `${opts.day}T23:59:59.999Z`) }
     if (opts.category) { where.push('topic = ?'); args.push(opts.category) }
     if (opts.source) { where.push('sourceId LIKE ?'); args.push(`%${opts.source}%`) }
+    if (opts.sources?.length) { where.push(`sourceId IN (${opts.sources.map(() => '?').join(',')})`); args.push(...opts.sources) }
+    if (opts.publishedAfter || opts.publishedBefore) {
+      where.push("COALESCE(NULLIF(publishedAt,''),fetchedAt) >= ? AND COALESCE(NULLIF(publishedAt,''),fetchedAt) <= ?")
+      args.push(opts.publishedAfter || '0000-01-01', opts.publishedBefore || '9999-12-31')
+    }
+    if (typeof opts.minScore === 'number') { where.push('COALESCE(llmScore, MIN(10, MAX(0, score*8))) >= ?'); args.push(opts.minScore) }
     if (opts.unread) { where.push("json_extract(state,'$.read') IS NOT 1") }
     let from = 'FROM items'
     if (opts.q) {
