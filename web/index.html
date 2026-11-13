@@ -20,7 +20,7 @@
   <div class="tabs" role="tablist">
     <i class="tab-ind" aria-hidden="true"></i>
     <button class="tab active" data-tab="items" role="tab" aria-selected="true">全部新闻</button>
-    <button class="tab" data-tab="digest" role="tab" aria-selected="false">今日精选</button>
+    <button class="tab" data-tab="digest" role="tab" aria-selected="false">每日精选</button>
     <button class="tab" data-tab="sources" role="tab" aria-selected="false">订阅源</button>
     <button class="tab" data-tab="prefs" role="tab" aria-selected="false">设置</button>
   </div>
@@ -60,7 +60,7 @@
     <div class="pager"><button id="prevPage">‹ 上一页</button><span id="pageInfo"></span><button id="nextPage">下一页 ›</button></div>
   </section>
 
-  <!-- 今日精选日报 -->
+  <!-- 每日精选日报 -->
   <section id="tab-digest" hidden>
     <div class="toolbar">
       <label class="f" for="digestDay"><span class="f-lab">日期</span><input type="date" id="digestDay" title="查看历史日报（生成始终针对今天）"></label>
@@ -274,7 +274,7 @@
         <p class="settings-help">默认已开启：内容区放宽到约 1440px（正文约 1180px），适合宽屏/全屏。取消勾选则对应页面回到 880px 窄版（正文 720px）。改动立即生效并保存，重启 dsh 后保持。「重置」两处全部恢复默认（开启）。</p>
         <div class="toolbar">
           <label class="f"><input type="checkbox" id="wideItems"> 全部新闻</label>
-          <label class="f"><input type="checkbox" id="wideDigest"> 今日精选（日报 / 快报 / 专题）</label>
+          <label class="f"><input type="checkbox" id="wideDigest"> 每日精选（日报 / 快报 / 专题）</label>
           <span class="f-end"><button id="btnWideReset" title="两处全部恢复默认（开启宽屏）">重置</button></span>
         </div>
       </div>

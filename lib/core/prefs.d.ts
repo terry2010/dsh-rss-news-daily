@@ -74,7 +74,7 @@ export interface PrefsFile extends Prefs {
         hourly?: number;
         topics?: number;
     };
-    /** 适应宽屏：items=全部新闻页、digest=今日精选页（日报/快报/专题共用）；默认开——显式 false 才回 880px 窄版 */
+    /** 适应宽屏：items=全部新闻页、digest=每日精选页（日报/快报/专题共用）；默认开——显式 false 才回 880px 窄版 */
     wide?: {
         items?: boolean;
         digest?: boolean;
