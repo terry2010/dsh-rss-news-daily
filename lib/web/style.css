@@ -302,6 +302,7 @@ sup.cite { position: relative; font-style: normal; line-height: 0; font-size: .7
 .tp-focus textarea { width: 100%; box-sizing: border-box; background: var(--inbg); border: 1px solid var(--line-input); border-radius: var(--r-md); padding: 8px 10px; font: inherit; font-size: 13px; color: inherit; line-height: 1.5; resize: vertical; min-height: 3.6em; }
 .tp-focus textarea:focus { outline: none; border-color: var(--acc); }
 .tp-preview { max-height: none; overflow: visible; } /* 分页已限 15 条/页，内层不再套滚动（obBody 统一滚） */
+.tp-preview .pv-load { min-height: 320px; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 13px; } /* 加载占位：高度≈15条预览列表，弹层一次到位不二次跳大 */
 .tp-preview .tp-stats { color: var(--acc); font-size: 12.5px; font-weight: 600; }
 .tp-preview .score { margin-left: 4px; }
 .tp-preview i { color: var(--dim); font-style: normal; font-size: 11px; white-space: nowrap; }
@@ -316,7 +317,7 @@ sup.cite { position: relative; font-style: normal; line-height: 0; font-size: .7
 
 /* ---- 字号缩放控件：条目 meta 时间后 / 日报 h2 / 快报 h3 标题文字后的 A− A＋ ---- */
 .fz-ctl { display: inline; margin-left: 6px; white-space: nowrap; }
-.fz-ctl button { border: none; box-shadow: none; background: none; height: auto; padding: 0 4px; font-size: inherit; color: var(--dim); font-weight: 400; border-radius: 4px; }
+.fz-ctl button { border: 1px solid transparent; box-shadow: inset 0 0 0 .5px var(--line-l3); background: transparent; height: auto; padding: 0 5px; font-size: inherit; color: var(--dim); font-weight: 400; border-radius: var(--r-sm); }
 .fz-ctl button:hover { color: var(--fg); background: var(--hover); text-decoration: none; }
 .fz-ctl button + button { margin-left: 3px; }
 .digest .fz-ctl { font-size: .75em; vertical-align: middle; }
@@ -355,6 +356,7 @@ sup.cite { position: relative; font-style: normal; line-height: 0; font-size: .7
 .settings-card { padding: var(--s4); }
 .settings-card > h3 { margin: 0 0 6px; color: var(--fg); font-size: 15px; }
 .settings-subsection { padding-top: var(--s3); margin-top: var(--s3); border-top: .5px solid var(--line); }
+.settings-fold-body > .settings-subsection:first-child { padding-top: 0; margin-top: 0; border-top: none; } /* 折叠块首元素是子节时不出多余分隔线 */
 .settings-subsection h4 { margin: 0 0 4px; color: var(--lead); font-size: 13px; }
 .settings-subsection .settings-help { margin-bottom: var(--s2); }
 .settings-tune .f-grow { min-width: 220px; }

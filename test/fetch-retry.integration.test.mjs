@@ -206,13 +206,17 @@ test('翻译 LLM 挂起不返回 → llm.timeoutMs 超时释放抓取循环，�
     // llm.timeoutMs=5000：PATCH 异步立即返回，整条链路必须自行恢复——轮询到空闲
     await patchPromise
     assert.equal(patchRes.statusCode, 200)
+    let sawBusy = false
     for (let i = 0; i < 150; i++) {
       const pr = res()
       await route('/dsh-rss-news-daily/api/fetch-progress')(req('GET', '/dsh-rss-news-daily/api/fetch-progress'), pr)
-      if (!json(pr).running) break
+      const prog = json(pr)
+      if (prog.running || prog.queued || prog.taskWaiting) sawBusy = true
+      else if (sawBusy) break // 先等到任务忙（排水有一拍延迟），再等到全部空闲
       if (i === 149) throw new Error('fetch-progress did not go idle after llm timeout')
       await new Promise((r2) => setTimeout(r2, 100))
     }
+    assert.ok(sawBusy, 'fetch task should have become busy')
     assert.ok(Date.now() - started < 15_000, 'fetch cycle should settle after llm timeout')
     assert.equal(llmSignalAborted, true) // 超时信号确实中止了挂起的 LLM 流
 

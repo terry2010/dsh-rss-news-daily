@@ -194,13 +194,13 @@ test('api /prefs POST: fontSize 整体替换——global 覆盖清除分项,{} �
 
 test('parser: isShortLead 双口径——汉字/英文词数任一达标即非短', async () => {
   const { isShortLead } = await import('../lib/core/parser.js')
-  assert.equal(isShortLead('点击查看原文'), true) // 6 汉字 <15
-  assert.equal(isShortLead('这是一条有实质内容的新闻摘要共十五个汉字以上了喂'), false) // ≥15 汉字
-  assert.equal(isShortLead('Click here'), true) // 2 词 <10
-  assert.equal(isShortLead('This is a normal english summary with more than ten words in it'), false) // >10 词
+  assert.equal(isShortLead('点击查看原文'), true) // 6 汉字 ≤10
+  assert.equal(isShortLead('这是一条有实质内容的新闻摘要共十五个汉字以上了喂'), false) // >10 汉字
+  assert.equal(isShortLead('Click here'), true) // 2 词 ≤6
+  assert.equal(isShortLead('This is a normal english summary with more than ten words in it'), false) // >6 词
   assert.equal(isShortLead(''), true) // 空=短
-  assert.equal(isShortLead('点击查看原文', 5), false) // 阈值可调：6≥5→非短
-  assert.equal(isShortLead('Click here', 15, 1), false) // en 阈值 1：2≥1→非短
+  assert.equal(isShortLead('点击查看原文', 5), false) // 阈值可调：6>5→非短
+  assert.equal(isShortLead('Click here', 15, 1), false) // en 阈值 1：2>1→非短
 })
 
 test('parser: inBlocklist 归一化等值——空白/标点/大小写不敏感，不做包含', async () => {

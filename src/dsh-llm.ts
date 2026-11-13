@@ -206,6 +206,13 @@ const llmRunByTag = new Map<string, number>()
 let llmConcurrencyFn: () => number = () => 1
 export function setLlmConcurrency(fn: () => number): void { llmConcurrencyFn = fn }
 const llmLimit = () => Math.max(1, Math.min(8, Math.floor(llmConcurrencyFn() || 1)))
+// abort 冷却：在飞 fetch 被中止后 undici 拆除 socket 是异步竞态——立刻向同一 origin 连接池
+// 发新请求，writeH1 会把写排进垂死 socket（setTypeOfService EINVAL 直接崩宿主进程）。
+// 中止时刻打点，冷却期内拿槽「先同步占槽、延后兑现」：HTTP 推迟到 socket 拆完，计数语义不变。
+let lastLlmAbortAt = 0
+const LLM_ABORT_COOLDOWN_MS = 250
+const llmAbortCooldownLeft = () => Math.max(0, LLM_ABORT_COOLDOWN_MS - (Date.now() - lastLlmAbortAt))
+const noteLlmAbort = (): void => { lastLlmAbortAt = Date.now() }
 const bumpRunTag = (tag: string, d: number) => {
   const n = (llmRunByTag.get(tag) ?? 0) + d
   if (n <= 0) llmRunByTag.delete(tag); else llmRunByTag.set(tag, n)
@@ -226,7 +233,18 @@ function acquireLlmSlot(signal: AbortSignal | undefined, tag: string, purpose?: 
       bumpRunTag(tag, -1); releaseLlmSlot()
     }
   }
-  if (llmSlots < llmLimit()) return Promise.resolve(grant())
+  // 槽位已同步预留，兑现按冷却延后；冷却期 signal 中止→释放预留槽并 reject（不白占坑）
+  const deferred = (release: () => void): Promise<() => void> => {
+    const wait = llmAbortCooldownLeft()
+    if (signal?.aborted) { release(); return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error('aborted')) }
+    if (wait <= 0) return Promise.resolve(release)
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(release) }, wait)
+      const onAbort = () => { clearTimeout(t); release(); reject(signal?.reason instanceof Error ? signal.reason : new Error('aborted')) }
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
+  }
+  if (llmSlots < llmLimit()) return deferred(grant())
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(signal.reason instanceof Error ? signal.reason : new Error('aborted')); return } // 预检后到入队前的 abort 窗口：已终止的 signal 不会再派发 abort 事件
     let done = false
@@ -236,7 +254,7 @@ function acquireLlmSlot(signal: AbortSignal | undefined, tag: string, purpose?: 
         if (done) return
         done = true
         signal?.removeEventListener('abort', onAbort)
-        resolve(grant())
+        resolve(deferred(grant()))
       },
     }
     const onAbort = () => {
@@ -277,8 +295,11 @@ export function llmQueueSnapshot(tagSet?: readonly string[]): {
 }
 
 // ---- 调用耗时统计：按 purpose 分桶 EMA + 全局兜底（计时含等锁排队——并发=1 时这才是真实墙钟成本） ----
+// EMA 经 durPersist 落到 store.meta：重启后首轮 LLM 调用完成前 ETA 即可估值——否则冷启动必然空估
+export interface LlmDurState { global?: number; byPurpose?: Record<string, number> }
 const llmDurEma = new Map<string, number>()
 let llmDurGlobal: number | undefined
+let durPersist: { save?: (s: LlmDurState) => void } | null = null
 const LLM_EMA_A = 0.4
 /** 某类调用的滑动平均耗时 ms；该桶无样本退全局均值，再无样本 undefined（前端据此显示「估算中」） */
 export function llmCallAvgMs(purpose?: string): number | undefined {
@@ -288,9 +309,19 @@ export function llmCallAvgMs(purpose?: string): number | undefined {
   }
   return llmDurGlobal
 }
+export function setLlmDurPersistence(p: { save?: (s: LlmDurState) => void } | null): void { durPersist = p }
+/** 灌回持久化的 EMA——插件启动 store.load() 完成后调用 */
+export function setLlmDurState(s: LlmDurState | undefined): void {
+  if (!s) return
+  if (typeof s.global === 'number' && Number.isFinite(s.global) && s.global > 0) llmDurGlobal = s.global
+  for (const [k, v] of Object.entries(s.byPurpose ?? {})) {
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) llmDurEma.set(k, v)
+  }
+}
 function recordLlmMs(purpose: string | undefined, ms: number): void {
   llmDurGlobal = llmDurGlobal == null ? ms : llmDurGlobal * (1 - LLM_EMA_A) + ms * LLM_EMA_A
   if (purpose) llmDurEma.set(purpose, llmDurEma.has(purpose) ? llmDurEma.get(purpose)! * (1 - LLM_EMA_A) + ms * LLM_EMA_A : ms)
+  durPersist?.save?.({ global: llmDurGlobal, byPurpose: Object.fromEntries(llmDurEma) }) // 写 meta 内存对象；落盘随下一次 store.save()
 }
 
 /** {@link LlmClient} backed by the harness `ctx.llm` streaming service. */
@@ -403,6 +434,7 @@ export class DshLlmClient implements LlmClient {
       } catch (e) {
         lastReasoning = diag.reasoningChars
         lastTail = diag.tail
+        if (req.signal?.aborted) noteLlmAbort() // 在飞请求中止→冷却打点：后续新 LLM 请求等 socket 拆完再发
         const tail = diag.tail ? ` tail="${diag.tail.slice(-200).replace(/\s+/g, ' ')}"` : ''
         diagLog(`FAIL ${route.provider}/${route.model} reasoning=${diag.reasoningChars}c ms=${Date.now() - t0} err="${e instanceof Error ? e.message : String(e)}"${tail}`)
         const din = this.usage.inputTokens - u0in, dout = this.usage.outputTokens - u0out

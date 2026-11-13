@@ -64,8 +64,17 @@ export declare function llmQueueSnapshot(tagSet?: readonly string[]): {
     /** 前方占用明细：在飞的他人调用 + 队列里排在本任务之前的调用（长度===tagAhead） */
     ahead: string[];
 };
+export interface LlmDurState {
+    global?: number;
+    byPurpose?: Record<string, number>;
+}
 /** 某类调用的滑动平均耗时 ms；该桶无样本退全局均值，再无样本 undefined（前端据此显示「估算中」） */
 export declare function llmCallAvgMs(purpose?: string): number | undefined;
+export declare function setLlmDurPersistence(p: {
+    save?: (s: LlmDurState) => void;
+} | null): void;
+/** 灌回持久化的 EMA——插件启动 store.load() 完成后调用 */
+export declare function setLlmDurState(s: LlmDurState | undefined): void;
 /** {@link LlmClient} backed by the harness `ctx.llm` streaming service. */
 export declare class DshLlmClient implements LlmClient {
     private readonly llm;

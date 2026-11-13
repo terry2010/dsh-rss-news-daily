@@ -11,7 +11,7 @@
 <meta property="og:description" content="自动抓取订阅源，AI 评分整理出一份精选日报。">
 <meta property="og:type" content="website">
 <title>RSS 每日精选 · dsh-rss-news-daily</title>
-<link rel="stylesheet" href="web/style.css?v=c723dfdbe8">
+<link rel="stylesheet" href="web/style.css?v=29f6590c53">
 </head>
 <body>
 <header>
@@ -78,7 +78,7 @@
     <div id="topicModal" class="obOverlay" hidden>
       <div class="obCard topic-card">
         <button class="obSkip" data-close title="关闭">✕</button>
-        <h3>新建专题</h3>
+        <h3 id="tpTitle">新建专题</h3>
         <div class="obBody addsrc-form">
           <label class="f" for="tpKeywords"><span class="f-lab">关键词</span><input id="tpKeywords" placeholder="空格或逗号分隔多个词，如：openai gpt-5"></label>
           <div class="tp-dates">
@@ -157,11 +157,11 @@
   <section id="tab-prefs" class="settings-page" hidden>
     <div class="settings-intro">
       <h2>设置</h2>
-      <p>先选择关心的内容并安排更新时间；其他选项都可以保持默认，之后需要时再调整。</p>
+      <p>先选择关心的内容并安排更新时间；其他选项都可以保持默认，之后需要时再调整。除名单类长文本外，所有改动即时生效并自动保存。</p>
     </div>
 
     <details class="settings-fold" open>
-      <summary><span>个性化内容</span><small>想多看/少看什么、关注哪些分类、用什么模型</small></summary>
+      <summary><span>内容偏好与模型</span><small>想多看/少看什么、关注哪些分类、用什么模型</small></summary>
       <div class="settings-fold-body">
       <p class="settings-help">告诉插件你喜欢什么，或哪些内容不想看。例如：多推 AI Agent、少推币圈、屏蔽裁员。</p>
       <div class="settings-tune">
@@ -172,33 +172,42 @@
       <div id="tuneResult"></div>
       <div class="settings-subsection">
         <h4>每日精选关注分类</h4>
-        <p class="settings-help">未选择的分类仍会采集并显示在「全部新闻」，只是不进入每日精选。</p>
+        <p class="settings-help">未选择的分类仍会采集并显示在「全部新闻」，只是不进入每日精选。勾选即刻保存。</p>
         <div id="subTopics" class="settings-topics"></div>
-        <div class="toolbar"><button id="btnSubSave" class="primary">保存订阅</button></div>
       </div>
-
       <div class="settings-subsection">
         <h4>每日精选模型</h4>
-        <p class="settings-help">留空时使用 dsh 的默认模型。</p>
+        <p class="settings-help">留空时使用 dsh 的默认模型。选择即刻保存。</p>
         <div class="toolbar">
           <label class="f" for="llmProvider"><span class="f-lab">服务商</span><select id="llmProvider"><option value="">跟随 dsh 默认</option></select></label>
           <label class="f" for="llmModel"><span class="f-lab">模型</span><select id="llmModel"><option value="">选择模型</option></select></label>
-          <span class="f-end"><button id="btnLlmSave">保存</button>
-          <button id="btnLlmClear">恢复默认</button></span>
+          <span class="f-end"><button id="btnLlmClear">恢复默认</button></span>
         </div>
         <div id="llmInfo" class="hist"></div>
       </div>
       <div class="settings-subsection">
         <h4>外文新闻翻译</h4>
-        <p class="settings-help">可指定翻译模型；留空时跟随 dsh 默认模型。</p>
+        <p class="settings-help">可指定翻译模型；留空时跟随 dsh 默认模型。选择即刻保存。</p>
         <div class="toolbar">
           <label class="f" for="tlProvider"><span class="f-lab">服务商</span><select id="tlProvider"><option value="">跟随 dsh 默认</option></select></label>
           <label class="f" for="tlModel"><span class="f-lab">模型</span><select id="tlModel"><option value="">选择模型</option></select></label>
-          <span class="f-end"><button id="btnTlSave">保存</button></span>
         </div>
         <label class="setting-check"><input type="checkbox" id="autoTranslate"> 自动翻译抓取到的外文新闻</label>
         <div id="autoTlWarn" class="settings-warning" hidden>开启后会调用模型翻译外文新闻，条目较多时会增加模型用量。</div>
         <div id="tlInfo" class="hist"></div>
+      </div>
+      <div class="settings-subsection">
+        <h4>调用并发</h4>
+        <div class="setting-grid setting-grid-compact">
+          <label class="setting-control">同时生成摘要的数量
+            <input type="number" id="dConc" min="1" max="8" placeholder="默认 3">
+            <small>越大处理越快，但模型服务负担也更高。</small>
+          </label>
+          <label class="setting-control">AI 任务并发数
+            <input type="number" id="dLlmConc" min="1" max="8" placeholder="默认 1">
+            <small>同时在跑的任务数（抓取+评分/日报/专题各算一个任务）：1=全串行（本地弱模型建议）；调大后任务可并行，悬停进度条可见全部在跑/排队任务并逐个取消。</small>
+          </label>
+        </div>
       </div>
       <div class="settings-subsection">
         <h4>模型输出守护</h4>
@@ -210,101 +219,9 @@
     </details>
 
     <details class="settings-fold" open>
-      <summary><span>数据备份</span><small>定期把新闻库、快报、设置快照到文件夹</small></summary>
+      <summary><span>自动更新</span><small>每日精选生成和新闻更新的时间与频率</small></summary>
       <div class="settings-fold-body">
-        <label class="setting-check"><input type="checkbox" id="backupEnabled"> 启用定时备份</label>
-        <div class="field">
-          <label for="backupPeriod">备份周期</label>
-          <select id="backupPeriod">
-            <option value="day">每天</option>
-            <option value="week">每周</option>
-            <option value="month">每月</option>
-          </select>
-        </div>
-        <div class="toolbar">
-          <label class="f f-grow" for="backupDir"><span class="f-lab">备份文件夹</span><input type="text" id="backupDir" placeholder="例如 ~/.dsh/backups 或 ~/Desktop/backups"></label>
-          <span class="f-end"><button type="button" id="btnPickBackupDir" title="打开系统目录选择器">选择…</button></span>
-        </div>
-        <small>点「选择…」弹出系统目录选择器；也可以直接输入路径。</small>
-        <div class="field">
-          <label for="backupKeep">最多保留份数</label>
-          <input type="number" id="backupKeep" min="1" placeholder="默认 7">
-          <button id="btnBackupNow" class="push-right">立即备份</button>
-          <small class="field-sub">超过后，最新备份完成时自动删除最旧的备份。</small>
-        </div>
-        <div class="field">
-          <label for="restorePath">恢复备份</label>
-          <input type="text" id="restorePath" placeholder="备份 zip 路径，如 ~/backups/rss-backup-….zip">
-          <button id="btnRestore" class="push-right">恢复</button>
-          <small class="field-sub">恢复会先停止在跑任务，然后覆盖当前新闻库、日报/快报和全部设置。</small>
-        </div>
-        <div class="field">
-          <span id="backupInfo" class="hist"></span>
-        </div>
-      </div>
-    </details>
-
-    <details class="settings-fold" open>
-      <summary><span>界面入口</span><small>插件在 dsh 界面里的显示位置</small></summary>
-      <div class="settings-fold-body">
-        <label class="setting-check"><input type="checkbox" id="navEntry"> 在左侧工作区导航显示「新闻精选」入口</label>
-        <p class="settings-help">打开后，左栏「插件」下方会出现📰新闻精选入口，点开就是阅读器页面。改动在重启 dsh 后生效。</p>
-        <label class="setting-check"><input type="checkbox" id="notifyDesktop"> 新快报生成时发送桌面通知</label>
-        <p class="settings-help">通知内容为该时段快报摘要。macOS 上点击通知可直接打开快报，其余平台仅展示。默认关闭。</p>
-      </div>
-    </details>
-
-    <details class="settings-fold" open>
-      <summary><span>阅读字号</span><small>统一放大/缩小阅读文字；各阅读页也可单独调整</small></summary>
-      <div class="settings-fold-body">
-        <p class="settings-help">统一调整「全部新闻 / 日报 / 快报 / 专题」四处阅读字号（每次 ±10%，80%–160%）。在这里调整会覆盖并清除四处各自的单独设置；「全部新闻」条目行、「日报」「快报」节标题、「专题」标题与列表工具行也有 A− A＋ 可单独调整。改动立即生效并保存，重启 dsh 后保持。</p>
-        <div class="toolbar">
-          <button id="btnFzDown" title="统一缩小字号">A−</button>
-          <span id="fzVal" class="fz-val">100%</span>
-          <button id="btnFzUp" title="统一放大字号">A＋</button>
-          <span class="f-end"><button id="btnFzReset" title="全部恢复默认字号">重置</button></span>
-        </div>
-        <div id="fzScopes" class="hist"></div>
-      </div>
-    </details>
-
-    <details class="settings-fold" open>
-      <summary><span>适应宽屏</span><small>宽屏下放开内容区宽度上限；分别控制各阅读页</small></summary>
-      <div class="settings-fold-body">
-        <p class="settings-help">默认已开启：内容区放宽到约 1440px（正文约 1180px），适合宽屏/全屏。取消勾选则对应页面回到 880px 窄版（正文 720px）。改动立即生效并保存，重启 dsh 后保持。「重置」两处全部恢复默认（开启）。</p>
-        <div class="toolbar">
-          <label class="f"><input type="checkbox" id="wideItems"> 全部新闻</label>
-          <label class="f"><input type="checkbox" id="wideDigest"> 每日精选（日报 / 快报 / 专题）</label>
-          <span class="f-end"><button id="btnWideReset" title="两处全部恢复默认（开启宽屏）">重置</button></span>
-        </div>
-      </div>
-    </details>
-
-    <details class="settings-fold" open>
-      <summary><span>无效内容过滤</span><small>过短正文自动识别：命中名单整条隐藏，AI 判无效只显标题</small></summary>
-      <div class="settings-fold-body">
-        <p class="settings-help">正文短于阈值的新闻进入检查：命中下方名单的整条不在「全部新闻」显示；未命中时由 AI 判断，判无效的只显示标题、并把该正文自动追加进名单。名单每行一条，归一化后精确匹配（忽略空白/标点/大小写）。AI 判定在抓取后自动进行，无需操作。</p>
-        <div class="setting-grid setting-grid-compact">
-          <label class="setting-control">汉字阈值
-            <span class="setting-input"><input type="number" id="stubZh" min="1" max="500" style="width:90px"> 字</span>
-            <small>正文汉字数低于此值进检查（默认 15）</small>
-          </label>
-          <label class="setting-control">英文词数阈值
-            <span class="setting-input"><input type="number" id="stubEn" min="1" max="500" style="width:90px"> 词</span>
-            <small>英文单词数低于此值进检查（默认 10）</small>
-          </label>
-        </div>
-        <label class="setting-control" style="display:block;margin-top:10px">无效内容名单（每行一条）
-          <textarea id="stubList" rows="7" spellcheck="false" placeholder="点击查看原文"></textarea>
-        </label>
-        <div class="toolbar settings-actions"><button id="btnStubSave" class="primary">保存</button></div>
-      </div>
-    </details>
-
-    <details class="settings-fold" open>
-      <summary><span>自动更新</span><small>每日精选和新闻的更新时间与频率</small></summary>
-      <div class="settings-fold-body">
-      <p class="settings-help">设置每日精选生成时间和新闻更新时刻。若同时安排在同一时刻，会先更新新闻，再生成精选。</p>
+      <p class="settings-help">设置每日精选生成时间和新闻更新时刻。若同时安排在同一时刻，会先更新新闻，再生成精选。改动即刻保存生效。</p>
       <div class="settings-sched">
         <div class="sched-group"><span class="sched-label">生成每日精选</span><div id="schedDigestRows"></div></div>
         <div class="sched-group"><span class="sched-label">更新新闻</span><div id="schedFetchRows"></div></div>
@@ -317,7 +234,6 @@
         <label class="setting-check"><input type="checkbox" id="schedStartup"> 启动 dsh 时立即更新一次</label>
       </div>
       <div class="toolbar settings-actions">
-        <button id="btnSchedSave" class="primary">保存</button>
         <button id="btnSchedClear">恢复默认时间</button>
       </div>
       <div id="schedInfo" class="hist"></div>
@@ -325,12 +241,12 @@
     </details>
 
     <details class="settings-fold">
-      <summary><span>每日精选与新闻保留</span><small>调整精选数量、筛选方式和历史新闻保留时间</small></summary>
+      <summary><span>每日精选</span><small>精选数量、评分门槛、逐条摘要与时段快报</small></summary>
       <div class="settings-fold-body">
-        <p class="settings-help">这些选项会影响每日精选的内容和本机保留的新闻数量。修改后自动保存；不确定时保持默认即可。</p>
+        <p class="settings-help">这些选项会影响每日精选的内容和评分策略。修改后自动保存；不确定时保持默认即可。</p>
         <div class="setting-grid">
           <label class="setting-control">每日精选新闻数
-            <input type="number" id="dItems" min="1" max="200" placeholder="默认 20">
+            <input type="number" id="dItems" min="1" max="200" placeholder="默认 100">
             <small>控制每日精选收录多少条新闻。</small>
           </label>
           <label class="setting-control">每个分类最多收录
@@ -353,56 +269,133 @@
             <input type="number" id="dSumLen" min="50" max="3000" placeholder="默认 800">
             <small>控制每日精选开头总结的大致长度。</small>
           </label>
-          <label class="setting-control">新闻保留天数
-            <input type="number" id="dRetDays" min="0" placeholder="默认 90">
-            <small>设为 0 时不按天数清理，仍受数量上限影响。</small>
-          </label>
-          <label class="setting-control">新闻库存上限
-            <input type="number" id="dMaxItems" min="10" placeholder="默认 30000">
-            <small>超过后按质量/时间清退旧条目；约 1000 条/天的源建议 ≥20000。</small>
-          </label>
-        </div>
-        <label class="setting-check"><input type="checkbox" id="dHourly"> 生成时段快报</label>
-      </div>
-    </details>
-
-
-
-    <details class="settings-fold">
-      <summary><span>评分与整理选项</span><small>高级选项：评分数量、摘要处理和历史清理策略</small></summary>
-      <div class="settings-fold-body">
-        <p class="settings-help">以下设置面向希望细调处理方式的用户。调整后自动保存；恢复默认可还原插件建议值。</p>
-        <div class="setting-grid">
           <label class="setting-control">每轮最多评分新闻数
             <input type="number" id="dScoreN" min="0" placeholder="默认 40">
             <small>设为 0 表示关闭自动评分。</small>
           </label>
-          <label class="setting-control">同时生成摘要的数量
-            <input type="number" id="dConc" min="1" max="8" placeholder="默认 3">
-            <small>越大处理越快，但模型服务负担也更高。</small>
-          </label>
-          <label class="setting-control">AI 任务并发数
-            <input type="number" id="dLlmConc" min="1" max="8" placeholder="默认 1">
-            <small>同时在跑的任务数（抓取+评分/日报/专题各算一个任务）：1=全串行——一个任务跑完下一个才开始（本地弱模型建议）；调大后任务可并行，悬停进度条可见全部在跑/排队任务并逐个取消。</small>
-          </label>
         </div>
         <div class="settings-checks">
+          <label class="setting-check"><input type="checkbox" id="dHourly"> 生成时段快报</label>
           <label class="setting-check"><input type="checkbox" id="dScoreFetch"> 抓取后自动评分</label>
           <label class="setting-check"><input type="checkbox" id="dRescore"> 为缺少评分的新闻补评分</label>
-          <label class="setting-check"><input type="checkbox" id="dPruneQ"> 清理时优先移除低评分新闻</label>
         </div>
       </div>
     </details>
 
     <details class="settings-fold">
-      <summary><span>网络连接与排障</span><small>代理和订阅源连接测试，遇到抓取问题时使用</small></summary>
+      <summary><span>阅读与界面</span><small>字号、宽屏布局、导航入口与桌面通知</small></summary>
       <div class="settings-fold-body">
         <div class="settings-subsection">
+          <h4>阅读字号</h4>
+          <p class="settings-help">统一调整「全部新闻 / 日报 / 快报 / 专题」四处阅读字号（每次 ±10%，80%–160%）。在这里调整会覆盖并清除四处各自的单独设置；「全部新闻」条目行、「日报」「快报」节标题、「专题」标题与列表工具行也有 A− A＋ 可单独调整。改动立即生效并保存，重启 dsh 后保持。</p>
+          <div class="toolbar">
+            <button id="btnFzDown" title="统一缩小字号">A−</button>
+            <span id="fzVal" class="fz-val">100%</span>
+            <button id="btnFzUp" title="统一放大字号">A＋</button>
+            <span class="f-end"><button id="btnFzReset" title="全部恢复默认字号">重置</button></span>
+          </div>
+          <div id="fzScopes" class="hist"></div>
+        </div>
+        <div class="settings-subsection">
+          <h4>适应宽屏</h4>
+          <p class="settings-help">默认已开启：内容区放宽到约 1440px（正文约 1180px），适合宽屏/全屏。取消勾选则对应页面回到 880px 窄版（正文 720px）。「重置」两处全部恢复默认（开启）。</p>
+          <div class="toolbar">
+            <label class="f"><input type="checkbox" id="wideItems"> 全部新闻</label>
+            <label class="f"><input type="checkbox" id="wideDigest"> 每日精选（日报 / 快报 / 专题）</label>
+            <span class="f-end"><button id="btnWideReset" title="两处全部恢复默认（开启宽屏）">重置</button></span>
+          </div>
+        </div>
+        <div class="settings-subsection">
+          <h4>入口与通知</h4>
+          <label class="setting-check"><input type="checkbox" id="navEntry"> 在左侧工作区导航显示「新闻精选」入口</label>
+          <p class="settings-help">打开后，左栏「插件」下方会出现📰新闻精选入口，点开就是阅读器页面。改动在重启 dsh 后生效。</p>
+          <label class="setting-check"><input type="checkbox" id="notifyDesktop"> 新快报生成时发送桌面通知</label>
+          <p class="settings-help">通知内容为该时段快报摘要。macOS 上点击通知可直接打开快报，其余平台仅展示。默认关闭。</p>
+        </div>
+      </div>
+    </details>
+
+    <details class="settings-fold">
+      <summary><span>数据与备份</span><small>新闻库存上限、保留时间与定时备份/恢复</small></summary>
+      <div class="settings-fold-body">
+        <div class="settings-subsection">
+          <h4>新闻库存</h4>
+          <div class="setting-grid setting-grid-compact">
+            <label class="setting-control">新闻保留天数
+              <input type="number" id="dRetDays" min="0" placeholder="默认 90">
+              <small>设为 0 时不按天数清理，仍受数量上限影响。</small>
+            </label>
+            <label class="setting-control">新闻库存上限
+              <input type="number" id="dMaxItems" min="10" placeholder="默认 30000">
+              <small>超过后按质量/时间清退旧条目；约 1000 条/天的源建议 ≥20000。</small>
+            </label>
+          </div>
+          <label class="setting-check"><input type="checkbox" id="dPruneQ"> 清理时优先移除低评分新闻</label>
+        </div>
+        <div class="settings-subsection">
+          <h4>定时备份</h4>
+          <label class="setting-check"><input type="checkbox" id="backupEnabled"> 启用定时备份</label>
+          <div class="field">
+            <label for="backupPeriod">备份周期</label>
+            <select id="backupPeriod">
+              <option value="day">每天</option>
+              <option value="week">每周</option>
+              <option value="month">每月</option>
+            </select>
+          </div>
+          <div class="toolbar">
+            <label class="f f-grow" for="backupDir"><span class="f-lab">备份文件夹</span><input type="text" id="backupDir" placeholder="例如 ~/.dsh/backups 或 ~/Desktop/backups"></label>
+            <span class="f-end"><button type="button" id="btnPickBackupDir" title="打开系统目录选择器">选择…</button></span>
+          </div>
+          <small>点「选择…」弹出系统目录选择器；也可以直接输入路径。</small>
+          <div class="field">
+            <label for="backupKeep">最多保留份数</label>
+            <input type="number" id="backupKeep" min="1" placeholder="默认 7">
+            <button id="btnBackupNow" class="push-right">立即备份</button>
+            <small class="field-sub">超过后，最新备份完成时自动删除最旧的备份。</small>
+          </div>
+          <div class="field">
+            <span id="backupInfo" class="hist"></span>
+          </div>
+        </div>
+        <div class="settings-subsection">
+          <h4>恢复备份</h4>
+          <div class="field">
+            <label for="restorePath">备份 zip 路径</label>
+            <input type="text" id="restorePath" placeholder="备份 zip 路径，如 ~/backups/rss-backup-….zip">
+            <button id="btnRestore" class="push-right">恢复</button>
+            <small class="field-sub">恢复会先停止在跑任务，然后覆盖当前新闻库、日报/快报和全部设置。</small>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <details class="settings-fold">
+      <summary><span>高级与排障</span><small>无效内容过滤、网络代理、统计与开发工具</small></summary>
+      <div class="settings-fold-body">
+        <div class="settings-subsection">
+          <h4>无效内容过滤</h4>
+          <p class="settings-help">正文短于阈值的新闻进入检查：命中下方名单的整条不在「全部新闻」显示；未命中时由 AI 判断，判无效的只显示标题、并把该正文自动追加进名单。名单每行一条，归一化后精确匹配（忽略空白/标点/大小写）。AI 判定在抓取后自动进行，无需操作。</p>
+          <div class="setting-grid setting-grid-compact">
+            <label class="setting-control">汉字阈值
+              <span class="setting-input"><input type="number" id="stubZh" min="1" max="500" style="width:90px"> 字</span>
+              <small>正文汉字数不超过此值进检查（默认 10）</small>
+            </label>
+            <label class="setting-control">英文词数阈值
+              <span class="setting-input"><input type="number" id="stubEn" min="1" max="500" style="width:90px"> 词</span>
+              <small>英文单词数不超过此值进检查（默认 6）</small>
+            </label>
+          </div>
+          <label class="setting-control" style="display:block;margin-top:10px">无效内容名单（每行一条）
+            <textarea id="stubList" rows="7" spellcheck="false" placeholder="点击查看原文"></textarea>
+          </label>
+          <div class="toolbar settings-actions"><button id="btnStubSave" class="primary">保存</button></div>
+        </div>
+        <div class="settings-subsection">
           <h4>网络代理</h4>
-          <p class="settings-help">仅当部分新闻网站无法连接时再设置；留空时使用 dsh 的默认代理设置。</p>
+          <p class="settings-help">仅当部分新闻网站无法连接时再设置；留空时使用 dsh 的默认代理设置。输入后自动保存。</p>
           <div class="toolbar">
             <label class="f f-grow" for="proxyUrl"><span class="f-lab">代理地址</span><input type="text" id="proxyUrl" placeholder="例如：http://127.0.0.1:7890"></label>
-            <span class="f-end"><button id="btnProxySave">保存</button></span>
           </div>
         </div>
         <div class="settings-subsection">
@@ -414,42 +407,40 @@
           </div>
           <pre id="fetchTestOut" class="hist" hidden></pre>
         </div>
-      </div>
-    </details>
-
-    <details class="settings-fold">
-      <summary><span>推荐偏好明细</span><small>查看系统根据反馈逐步调整的推荐倾向</small></summary>
-      <div class="settings-fold-body"><div id="prefsView"></div></div>
-    </details>
-
-    <details id="statsDetails" class="settings-fold" hidden>
-      <summary><span>Token 用量与项目说明</span><small>开发者统计和引导内容</small></summary>
-      <div id="statsSection" class="settings-fold-body" hidden>
-        <h3>Token 用量</h3>
-        <div class="toolbar">
-          <label class="f" for="statsView"><span class="f-lab">视图</span><select id="statsView">
-            <option value="day">按日</option>
-            <option value="feature">按功能</option>
-            <option value="total">总计</option>
-          </select></label>
-          <label class="f" for="statsRange"><span class="f-lab">范围</span><select id="statsRange">
-            <option value="7">近 7 天</option>
-            <option value="30">近 30 天</option>
-            <option value="0">全部</option>
-          </select></label>
+        <div class="settings-subsection">
+          <h4>推荐偏好明细</h4>
+          <p class="settings-help">系统根据反馈逐步调整的推荐倾向明细。</p>
+          <div id="prefsView"></div>
         </div>
-        <div id="statsBody" class="hist"></div>
-        <h3 style="margin-top:16px">开发日志</h3>
-        <p class="settings-help">开启后把每次模型调用的完整 prompt/回复、token 用量与生成速度按天写入 devlog/*.jsonl（含新闻正文，仅保存在本机）。默认关闭。</p>
-        <label class="setting-check"><input type="checkbox" id="devLogEnabled"> 记录开发日志</label>
-        <div class="field" style="margin-top:6px">
-          <button id="btnOpenDevlog">打开日志文件夹</button>
-          <span id="devlogInfo" class="hint"></span>
+        <div class="settings-subsection">
+          <h4>Token 用量</h4>
+          <div class="toolbar">
+            <label class="f" for="statsView"><span class="f-lab">视图</span><select id="statsView">
+              <option value="day">按日</option>
+              <option value="feature">按功能</option>
+              <option value="total">总计</option>
+            </select></label>
+            <label class="f" for="statsRange"><span class="f-lab">范围</span><select id="statsRange">
+              <option value="7">近 7 天</option>
+              <option value="30">近 30 天</option>
+              <option value="0">全部</option>
+            </select></label>
+          </div>
+          <div id="statsBody" class="hist"></div>
         </div>
-        <label class="setting-check"><input type="checkbox" id="forceArchive"> 强行显示「📦 档案」按钮<small>（本次会话有效，重启 dsh 后恢复默认）</small></label>
-        <div class="field" style="margin-top:10px">
-          <button id="btnShowUpgrade">查看更新内容</button>
-          <button id="btnShowOnboard">重新看引导</button>
+        <div class="settings-subsection" id="devSection" hidden>
+          <h4>开发工具</h4>
+          <p class="settings-help">开启后把每次模型调用的完整 prompt/回复、token 用量与生成速度按天写入 devlog/*.jsonl（含新闻正文，仅保存在本机）。默认关闭。</p>
+          <label class="setting-check"><input type="checkbox" id="devLogEnabled"> 记录开发日志</label>
+          <div class="field" style="margin-top:6px">
+            <button id="btnOpenDevlog">打开日志文件夹</button>
+            <span id="devlogInfo" class="hint"></span>
+          </div>
+          <label class="setting-check"><input type="checkbox" id="forceArchive"> 强行显示「📦 档案」按钮<small>（本次会话有效，重启 dsh 后恢复默认）</small></label>
+          <div class="field" style="margin-top:10px">
+            <button id="btnShowUpgrade">查看更新内容</button>
+            <button id="btnShowOnboard">重新看引导</button>
+          </div>
         </div>
       </div>
     </details>
@@ -467,6 +458,6 @@
 
 <script src="web/changelog.js?v=b7d7bab42e"></script>
 <script src="web/onboarding.js?v=620ba93b6c"></script>
-<script src="web/app.js?v=9969ab3235"></script>
+<script src="web/app.js?v=4002301ba6"></script>
 </body>
 </html>

@@ -42,7 +42,7 @@ export interface DigestPipelineOptions {
   rescoreMissing?: boolean
   /** 翻译用 LLM client（translateLlm 路由）；存在时对英文条目生成中英对照译文 */
   translateClient?: LlmClient
-  /** 每完成一条回调（done, total, stage）——stage: summaries/translate/finishing，进度上报用 */
+  /** 每完成一条回调（done, total, stage）——stage: cluster/score/summaries/translate/finishing，进度上报用；阶段入口先发 (0,N,stage) 让 ETA 立即可算 */
   onItemDone?: (done: number, total: number, stage?: string) => void
   /** LLM maxTokens（config 透传，不再用 summarizer 内算值） */
   llmMaxTokens: number
@@ -109,6 +109,7 @@ async function translateItems(items: FeedItem[], client: LlmClient, opts: Partia
   const targets = items.filter((i) => textLooksForeign(i.title + (i.summary || '')))
   const queue = [...targets]
   let done = 0
+  if (targets.length) opts.onItemDone?.(0, targets.length, 'translate') // 入口即报：上一阶段 stale ETA 不外溢，本阶段 EMA 立刻可估
   const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency ?? 2) }, async () => {
     for (;;) {
       if (opts.signal?.aborted) return
@@ -452,6 +453,7 @@ async function itemSummaries(
   const targets = items.filter((i) => sourcesById.get(i.sourceId)?.summarize !== false).slice(0, opts.summaryMaxItems)
   const queue = [...targets]
   let done = 0
+  if (targets.length) opts.onItemDone?.(0, targets.length, 'summaries') // 入口即报：total 非零 ETA 才可算（progressEta 对 total=0 返回空）
   const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency ?? 2) }, async () => {
     for (;;) {
       const item = queue.shift()
@@ -482,7 +484,7 @@ async function itemSummaries(
         item.aiSummaryError = e instanceof Error ? e.message : String(e)
       }
       done += 1
-      opts.onItemDone?.(done, targets.length)
+      opts.onItemDone?.(done, targets.length, 'summaries')
     }
   })
   await Promise.all(workers)
@@ -517,13 +519,19 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   let merged = (opts.dedupeStories ?? true) ? dedupeStories(allScored) : allScored
   if ((opts.dedupeStories ?? true) && opts.llmEnabled && opts.llmClient) {
     // LLM 语义聚类（措辞不同的同事件）；失败仅 Jaccard
+    opts.onItemDone?.(0, 1, 'cluster') // 单次调用阶段：以 1 为 total，ETA 走 cluster 桶 EMA
     await llmClusterItems(merged, opts.llmClient, opts, log)
     merged = merged.filter((i) => !i.dupOf)
+    opts.onItemDone?.(1, 1, 'cluster')
   }
   // P3 补评兜底：无分候选（存量/评分失败批次）补评一次，写回持久化
   if ((opts.rescoreMissing ?? true) && opts.llmEnabled && opts.llmClient && (opts.llmScoreCandidates ?? 40) > 0) {
     const unscored = merged.filter((i) => i.llmScore == null && (i.score ?? 0) > -0.5)
-    if (unscored.length) await llmScoreItems(unscored, opts.llmClient, opts, log)
+    if (unscored.length) {
+      opts.onItemDone?.(0, 1, 'score')
+      await llmScoreItems(unscored, opts.llmClient, opts, log)
+      opts.onItemDone?.(1, 1, 'score')
+    }
   }
   const picked = pickFinal(merged, opts)
 

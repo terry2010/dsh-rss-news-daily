@@ -20,7 +20,7 @@ import { loopDetectStatus } from './dsh-llm.js'
 import { backupDirOf, runBackupZip, stageRestore } from './backup.js'
 import { zonedDayKey } from './core/time.js'
 import { parseTune, learnFromFeedback } from './core/tune.js'
-import { normalizeTopicParams, listTopics, deleteTopic, exportTopic, topicsDirOf } from './topic-pipeline.js'
+import { normalizeTopicParams, listTopics, deleteTopic, exportTopic, topicsDirOf, type TopicParams } from './topic-pipeline.js'
 
 const BASE = '/dsh-rss-news-daily'
 
@@ -358,10 +358,17 @@ function apiTopics(deps: ApiDeps) {
     const metas = await listTopics(deps.digestsDir, await activeIds())
     const meta = metas.find((m) => m.id === id)
     if (!meta) return sendJson(res, 404, { ok: false, error: 'not found' })
-    if (act === 'regen') { // 覆盖重生成：忽略 body，沿用 meta 参数；generating/queued 行禁用
+    if (act === 'regen') { // 覆盖重生成：body 带 keywords=修改专题按新参数重跑，空 body=沿用 meta 参数；generating/queued 行禁用
       if (meta.status === 'generating' || meta.status === 'queued') return sendJson(res, 409, { ok: false, error: '生成中/排队中不可重生成' })
       if (!deps.svc.regenTopic) return sendJson(res, 501, { ok: false, error: 'topic service unavailable' })
-      const r = await deps.svc.regenTopic(id)
+      const body = await readBody(req).catch(() => ({})) as Record<string, unknown>
+      let params: TopicParams | undefined
+      if (Array.isArray(body.keywords)) { // 修改专题提交：整包新参数归一化后落 meta 重跑
+        const n = normalizeTopicParams(body)
+        if (!n.ok) return sendJson(res, 400, { ok: false, error: n.error })
+        params = n.params
+      }
+      const r = await deps.svc.regenTopic(id, params)
       return sendJson(res, r.ok ? 200 : 409, r)
     }
     if (act === 'delete') { // 前端二次确认已到才到；generating 行禁用；queued 先摘内存队列再删档

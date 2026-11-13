@@ -39,7 +39,7 @@ export declare function parseFeedDocument(body: string): ParsedFeed;
 /** HTML/XML sanitization helper: strip tags and collapse whitespace. */
 export declare function stripHtml(html: string): string;
 export declare function stripLeadStub(text: string): string;
-/** "短正文"判定：汉字数 < zh 且 英文单词数 < en ——两种口径都短才算可疑（默认 15 字 / 10 词） */
+/** "短正文"判定：汉字数 ≤ zh 且 英文单词数 ≤ en ——两种口径都短才算可疑（默认 10 字 / 6 词） */
 export declare function isShortLead(text: string, zh?: number, en?: number): boolean;
 /** 无效名单匹配键：去全部空白/标点/符号 + 小写——"点击，查看原文" 与 "点击查看原文" 同键 */
 export declare function leadKey(text: string): string;

@@ -36,6 +36,8 @@ export interface StoreMeta {
     totalOut: number
     days: Record<string, { in: number; out: number; digest: number; score: number; translate: number; topic: number }>
   }
+  /** LLM 调用耗时 EMA（global 全局均值 + byPurpose 分桶）——重启后首轮即可给 ETA；随 save() 落盘 */
+  llmDurEma?: { global?: number; byPurpose?: Record<string, number> }
 }
 
 export interface StoreData {

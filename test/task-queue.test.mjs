@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 const T = '../lib/task-queue.js'
 const silentLog = { warn() {} }
 const deferred = () => { let resolve, reject; const p = new Promise((res, rej) => { resolve = res; reject = rej }); return { p, resolve, reject } }
-const tick = () => new Promise((r) => setImmediate(r)) // 让 pump 的 Promise.resolve().then(start) 微任务落地
+const tick = () => new Promise((r) => setImmediate(r)) // 任务启动经 setImmediate 排水（让 pending I/O 先服务）——settle→下一个 start 需两拍
 
 test('并发=1：第二个任务排队等位，第一个 settle 后按序接棒', async () => {
   const { createTaskQueue } = await import(T)
@@ -16,7 +16,7 @@ test('并发=1：第二个任务排队等位，第一个 settle 后按序接棒'
   assert.equal(t1, 'started'); assert.equal(t2, 'queued')
   await tick(); assert.deepEqual(order, ['a-start'])
   assert.equal(q.isRunning('a'), true); assert.equal(q.isQueued('b'), true); assert.equal(q.waitingCount(), 1)
-  g1.resolve(); await tick()
+  g1.resolve(); await tick(); await tick() // 收尾排水→b.start 是下一个 check 阶段的事
   assert.deepEqual(order, ['a-start', 'a-end', 'b-start'])
   g2.resolve(); await tick()
   assert.deepEqual(order, ['a-start', 'a-end', 'b-start', 'b-end'])

@@ -36,6 +36,11 @@ export interface StoreMeta {
             topic: number;
         }>;
     };
+    /** LLM 调用耗时 EMA（global 全局均值 + byPurpose 分桶）——重启后首轮即可给 ETA；随 save() 落盘 */
+    llmDurEma?: {
+        global?: number;
+        byPurpose?: Record<string, number>;
+    };
 }
 export interface StoreData {
     schema: number;

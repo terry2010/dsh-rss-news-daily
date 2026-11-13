@@ -364,11 +364,11 @@ export function stripLeadStub(text: string): string {
   return text.replace(LEAD_STUB_RE, '').replace(/\s{2,}/g, ' ').trim()
 }
 
-/** "短正文"判定：汉字数 < zh 且 英文单词数 < en ——两种口径都短才算可疑（默认 15 字 / 10 词） */
-export function isShortLead(text: string, zh = 15, en = 10): boolean {
+/** "短正文"判定：汉字数 ≤ zh 且 英文单词数 ≤ en ——两种口径都短才算可疑（默认 10 字 / 6 词） */
+export function isShortLead(text: string, zh = 10, en = 6): boolean {
   const zhN = (text.match(/[一-鿿㐀-䶿]/g) || []).length
   const enN = (text.match(/[A-Za-z][A-Za-z'’-]*/g) || []).length
-  return zhN < zh && enN < en
+  return zhN <= zh && enN <= en
 }
 
 /** 无效名单匹配键：去全部空白/标点/符号 + 小写——"点击，查看原文" 与 "点击查看原文" 同键 */

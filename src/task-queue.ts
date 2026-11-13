@@ -35,7 +35,9 @@ export function createTaskQueue(opts: { limit: () => number; log?: { warn: (s: s
       const t = waiting.splice(i, 1)[0]
       kinds.add(t.kind)
       running.set(t.id, t)
-      Promise.resolve()
+      // setImmediate 排水：任务启动推迟到 check 阶段——poll 阶段先到一步的 HTTP 请求先被服务；
+      // 若走 microtask，任务同步前缀（如专题候选查询）会把门口请求堵住数秒（表现为页面白屏转圈）
+      new Promise<void>((res) => setImmediate(res))
         .then(() => t.start())
         .then((v) => t.settle?.resolve(v))
         .catch((e) => { t.settle?.reject(e); opts.log?.warn(`task ${t.id} failed: ${e instanceof Error ? e.message : String(e)}`) })

@@ -82,6 +82,9 @@ export interface TopicCandidates {
     items: FeedItem[];
 }
 export declare function queryTopicCandidates(store: TopicItemStore, params: TopicParams, timezone?: string): TopicCandidates;
+/** 异步版候选查询：关键词慢查之间/去重前 setImmediate 让渡——同步段不再连堵事件循环
+ * （任务启动时挂起的 HTTP 请求可插进间隙被服务，页面不白屏数秒） */
+export declare function queryTopicCandidatesA(store: TopicItemStore, params: TopicParams, timezone?: string): Promise<TopicCandidates>;
 /** 正文中 [N] 解析：合法→紧凑编号链接 [N](url) 并入 usedSet（参考区同编号对应）；越界/畸形→整个标记丢弃（不猜）。
  * 注意不替换成 [标题](url)：一句多引时正文会被长标题+长链接砸烂——编号即引用，参考区才是完整清单。 */
 export declare function parseTopicCitations(text: string, items: FeedItem[]): {

@@ -58,8 +58,8 @@ export interface NewsService {
   previewTopic?(params: TopicParams, page?: number, filterSourceId?: string): Promise<{ hitCount: number; dedupCount: number; capCount: number; filterCount: number; page: number; pageCount: number; sources: Array<Record<string, unknown>>; items: Array<Record<string, unknown>> }>
   /** AI 专题：启动生成（落 queued 元数据进全局任务队列；拿到槽位才翻 generating 发射） */
   runTopic?(params: TopicParams): Promise<{ ok: boolean; id?: string; queued?: boolean; error?: string }>
-  /** AI 专题：同参覆盖重生成（仅 done/error；generating/queued 行禁用；统一排队） */
-  regenTopic?(id: string): Promise<{ ok: boolean; id?: string; queued?: boolean; error?: string }>
+  /** AI 专题：覆盖重生成（仅 done/error；generating/queued 行禁用；统一排队）；传 params=修改专题后按新设置重跑 */
+  regenTopic?(id: string, params?: TopicParams): Promise<{ ok: boolean; id?: string; queued?: boolean; error?: string }>
   /** AI 专题生成进度（{running,done,total,stage,id,etaMs?,queue?,queuedIds?,taskWaiting?}），供 UI 轮询与懒修复排除 */
   topicProgress?(): Promise<{ running: boolean; done: number; total: number; stage?: string; id?: string; etaMs?: number; queue?: LlmQueueInfo; queuedIds?: string[]; taskWaiting?: number }>
   /** 中止专题：id 命中排队项→撤队落 error；命中在跑（或不带 id）→abort 在飞调用 */

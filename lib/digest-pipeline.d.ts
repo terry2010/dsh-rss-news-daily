@@ -34,7 +34,7 @@ export interface DigestPipelineOptions {
     rescoreMissing?: boolean;
     /** 翻译用 LLM client（translateLlm 路由）；存在时对英文条目生成中英对照译文 */
     translateClient?: LlmClient;
-    /** 每完成一条回调（done, total, stage）——stage: summaries/translate/finishing，进度上报用 */
+    /** 每完成一条回调（done, total, stage）——stage: cluster/score/summaries/translate/finishing，进度上报用；阶段入口先发 (0,N,stage) 让 ETA 立即可算 */
     onItemDone?: (done: number, total: number, stage?: string) => void;
     /** LLM maxTokens（config 透传，不再用 summarizer 内算值） */
     llmMaxTokens: number;

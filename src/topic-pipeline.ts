@@ -126,21 +126,16 @@ export interface TopicCandidates {
   items: FeedItem[]
 }
 
-export function queryTopicCandidates(store: TopicItemStore, params: TopicParams, timezone?: string): TopicCandidates {
-  const cap = Math.max(1, params.maxItems || 100)
-  const bFrom = params.from ? zonedDayBounds(params.from, timezone).after : undefined
-  const bTo = params.to ? zonedDayBounds(params.to, timezone).before : undefined
-  const sources = params.sourceIds.length ? params.sourceIds : undefined
-  const minScore = params.minScore > 0 ? params.minScore : undefined
-  const byId = new Map<string, FeedItem>()
-  for (const kw of params.keywords) {
-    const r = store.queryItems({
-      q: kw, sources, publishedAfter: bFrom, publishedBefore: bTo, minScore,
-      sort: 'published', pageSize: cap,
-    })
-    for (const it of r.items) if (!byId.has(it.id)) byId.set(it.id, it)
-  }
-  const hitCount = byId.size
+const topicQueryArgs = (params: TopicParams, timezone?: string) => ({
+  cap: Math.max(1, params.maxItems || 100),
+  publishedAfter: params.from ? zonedDayBounds(params.from, timezone).after : undefined,
+  publishedBefore: params.to ? zonedDayBounds(params.to, timezone).before : undefined,
+  sources: params.sourceIds.length ? params.sourceIds : undefined,
+  minScore: params.minScore > 0 ? params.minScore : undefined,
+})
+
+/** 两级去重（标题同题→内容同文）——同步 CPU 段，供 sync/async 两版候选查询共用 */
+function dedupeTopicItems(byId: Map<string, FeedItem>, cap: number): { dedupCount: number; items: FeedItem[] } {
   // 去重①标题同题：dedupeStories 按数组序合并到靠前主条目——先按评分降序排，保最高分为主条目
   const titleDeduped = dedupeStories([...byId.values()].sort((a, b) => topicKeyOf(b) - topicKeyOf(a)))
     .filter((i) => !i.dupOf)
@@ -166,7 +161,36 @@ export function queryTopicCandidates(store: TopicItemStore, params: TopicParams,
     kept.push(it)
   }
   kept.sort((a, b) => topicKeyOf(b) - topicKeyOf(a))
-  return { hitCount, dedupCount: kept.length, items: kept.slice(0, cap) }
+  return { dedupCount: kept.length, items: kept.slice(0, cap) }
+}
+
+const queryKw = (store: TopicItemStore, kw: string, a: ReturnType<typeof topicQueryArgs>, byId: Map<string, FeedItem>) => {
+  const r = store.queryItems({
+    q: kw, sources: a.sources, publishedAfter: a.publishedAfter, publishedBefore: a.publishedBefore, minScore: a.minScore,
+    sort: 'published', pageSize: a.cap,
+  })
+  for (const it of r.items) if (!byId.has(it.id)) byId.set(it.id, it)
+}
+
+const tick = () => new Promise<void>((r) => setImmediate(r))
+
+export function queryTopicCandidates(store: TopicItemStore, params: TopicParams, timezone?: string): TopicCandidates {
+  const a = topicQueryArgs(params, timezone)
+  const byId = new Map<string, FeedItem>()
+  for (const kw of params.keywords) queryKw(store, kw, a, byId)
+  const hitCount = byId.size
+  return { hitCount, ...dedupeTopicItems(byId, a.cap) }
+}
+
+/** 异步版候选查询：关键词慢查之间/去重前 setImmediate 让渡——同步段不再连堵事件循环
+ * （任务启动时挂起的 HTTP 请求可插进间隙被服务，页面不白屏数秒） */
+export async function queryTopicCandidatesA(store: TopicItemStore, params: TopicParams, timezone?: string): Promise<TopicCandidates> {
+  const a = topicQueryArgs(params, timezone)
+  const byId = new Map<string, FeedItem>()
+  for (const kw of params.keywords) { await tick(); queryKw(store, kw, a, byId) }
+  const hitCount = byId.size
+  await tick() // 去重段是 CPU 活，也让一拍
+  return { hitCount, ...dedupeTopicItems(byId, a.cap) }
 }
 
 // ---------------------------------------------------------------- [N] 引用协议与渲染
@@ -466,7 +490,7 @@ export async function runTopicPipeline(opts: TopicPipelineOptions): Promise<Topi
   const signal = opts.signal
   const abortErr = () => Object.assign(new Error('手动停止'), { aborted: true })
 
-  const { hitCount, dedupCount, items } = queryTopicCandidates(opts.store, params, opts.timezone)
+  const { hitCount, dedupCount, items } = await queryTopicCandidatesA(opts.store, params, opts.timezone)
   meta.hitCount = hitCount
   meta.dedupCount = dedupCount
   meta.itemCount = items.length

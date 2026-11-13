@@ -158,8 +158,8 @@ export interface NewsService {
         queued?: boolean;
         error?: string;
     }>;
-    /** AI 专题：同参覆盖重生成（仅 done/error；generating/queued 行禁用；统一排队） */
-    regenTopic?(id: string): Promise<{
+    /** AI 专题：覆盖重生成（仅 done/error；generating/queued 行禁用；统一排队）；传 params=修改专题后按新设置重跑 */
+    regenTopic?(id: string, params?: TopicParams): Promise<{
         ok: boolean;
         id?: string;
         queued?: boolean;

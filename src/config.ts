@@ -178,7 +178,7 @@ const SummarySectionSchema = Schema.object({
 }).description('逐条一句话摘要。')
 
 const DigestSectionSchema = Schema.object({
-  digestItems: Schema.natural().min(1).max(200).default(20),
+  digestItems: Schema.natural().min(1).max(200).default(100),
   perTopicLimit: Schema.natural().min(0).default(4),
   maxLength: Schema.natural().min(50).max(3000).default(800),
   llmScoreCandidates: Schema.natural().min(0).max(200).default(40).description('LLM 评分候选池；0=关闭 LLM 评分。'),
