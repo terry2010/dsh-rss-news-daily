@@ -11,7 +11,7 @@
 <meta property="og:description" content="自动抓取订阅源，AI 评分整理出一份精选日报。">
 <meta property="og:type" content="website">
 <title>RSS 每日精选 · dsh-rss-news-daily</title>
-<link rel="stylesheet" href="web/style.css?v=8dd43a8064">
+<link rel="stylesheet" href="web/style.css?v=c723dfdbe8">
 </head>
 <body>
 <header>
@@ -72,7 +72,7 @@
       <button id="btnTopicNew" class="primary" hidden title="按关键词从新闻库生成专题报告">＋ 新建专题</button>
       <button id="btnDigestRun" class="primary" title="立即生成今日日报">▶ 生成日报</button>
       <button id="btnDigestStop" hidden title="中止当前生成">⏹ 停止</button>
-      <span id="digestBusy" class="busybar" hidden>⏳ 日报生成中…</span>
+      <span id="busyWrap" class="busywrap"><span id="digestBusy" class="busybar" hidden>⏳ 日报生成中…</span><span id="taskPop" class="taskpop"></span></span>
     </div>
     <article id="digestView" class="digest"></article>
     <div id="topicModal" class="obOverlay" hidden>
@@ -381,9 +381,9 @@
             <input type="number" id="dConc" min="1" max="8" placeholder="默认 3">
             <small>越大处理越快，但模型服务负担也更高。</small>
           </label>
-          <label class="setting-control">AI 调用并发数
+          <label class="setting-control">AI 任务并发数
             <input type="number" id="dLlmConc" min="1" max="8" placeholder="默认 1">
-            <small>全部模型调用共用的并发上限：1=全串行（本地弱模型建议）；调大后专题/翻译/评分/日报可并行——生成中的任务会排队手动翻译等调用。</small>
+            <small>同时在跑的任务数（抓取+评分/日报/专题各算一个任务）：1=全串行——一个任务跑完下一个才开始（本地弱模型建议）；调大后任务可并行，悬停进度条可见全部在跑/排队任务并逐个取消。</small>
           </label>
         </div>
         <div class="settings-checks">
@@ -467,6 +467,6 @@
 
 <script src="web/changelog.js?v=3179f5abcf"></script>
 <script src="web/onboarding.js?v=200fbb46a2"></script>
-<script src="web/app.js?v=903190854c"></script>
+<script src="web/app.js?v=c88f84a7a1"></script>
 </body>
 </html>

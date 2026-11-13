@@ -56,7 +56,7 @@ export interface NewsService {
         source?: string;
         category?: string;
     }): Promise<FetchCycleResult>;
-    /** 抓取进度（{running,done,total,cancelled,etaMs?,queue?}），供 UI 轮询 */
+    /** 抓取进度（{running,done,total,cancelled,etaMs?,queue?,queued?,taskWaiting?}），供 UI 轮询 */
     fetchProgress?(): Promise<{
         running: boolean;
         done: number;
@@ -64,6 +64,8 @@ export interface NewsService {
         cancelled?: boolean;
         etaMs?: number;
         queue?: LlmQueueInfo;
+        queued?: boolean;
+        taskWaiting?: number;
     }>;
     /** 中止进行中的抓取 */
     cancelFetch?(): Promise<unknown>;
@@ -73,7 +75,7 @@ export interface NewsService {
         translation?: string;
         error?: string;
     }>;
-    /** 日报生成进度（{running,done,total,cancelled,etaMs?,queue?}），供 UI 轮询 */
+    /** 日报生成进度（{running,done,total,cancelled,etaMs?,queue?,queued?,taskWaiting?}），供 UI 轮询 */
     digestProgress?(): Promise<{
         running: boolean;
         done: number;
@@ -81,6 +83,8 @@ export interface NewsService {
         cancelled?: boolean;
         etaMs?: number;
         queue?: LlmQueueInfo;
+        queued?: boolean;
+        taskWaiting?: number;
     }>;
     /** 连通性测试：真实 fetcher 路径抓 url，返回 status/body 片段（验证出口/代理） */
     testFetch?(url: string, proxy?: string | boolean): Promise<{
@@ -147,21 +151,21 @@ export interface NewsService {
         sources: Array<Record<string, unknown>>;
         items: Array<Record<string, unknown>>;
     }>;
-    /** AI 专题：启动生成（同步落 generating 元数据后 fire-and-forget；topicBusy 时落 queued 排队） */
+    /** AI 专题：启动生成（落 queued 元数据进全局任务队列；拿到槽位才翻 generating 发射） */
     runTopic?(params: TopicParams): Promise<{
         ok: boolean;
         id?: string;
         queued?: boolean;
         error?: string;
     }>;
-    /** AI 专题：同参覆盖重生成（仅 done/error；generating/queued 行禁用；busy 时排队） */
+    /** AI 专题：同参覆盖重生成（仅 done/error；generating/queued 行禁用；统一排队） */
     regenTopic?(id: string): Promise<{
         ok: boolean;
         id?: string;
         queued?: boolean;
         error?: string;
     }>;
-    /** AI 专题生成进度（{running,done,total,stage,id,etaMs?,queue?,queuedIds?}），供 UI 轮询与懒修复排除 */
+    /** AI 专题生成进度（{running,done,total,stage,id,etaMs?,queue?,queuedIds?,taskWaiting?}），供 UI 轮询与懒修复排除 */
     topicProgress?(): Promise<{
         running: boolean;
         done: number;
@@ -171,11 +175,36 @@ export interface NewsService {
         etaMs?: number;
         queue?: LlmQueueInfo;
         queuedIds?: string[];
+        taskWaiting?: number;
     }>;
     /** 中止专题：id 命中排队项→撤队落 error；命中在跑（或不带 id）→abort 在飞调用 */
     stopTopic?(id?: string): Promise<unknown>;
     /** 把排队中的专题从内存队列摘除（删除接口用——不动 meta） */
     dequeueTopic?(id: string): boolean;
+    /** 全局任务队列快照：{limit,running[],waiting[]}——悬停提示渲染全部任务+逐项取消 */
+    taskList?(): Promise<{
+        limit: number;
+        running: Array<{
+            id: string;
+            kind: string;
+            label: string;
+            stage?: string;
+            done?: number;
+            total?: number;
+            etaMs?: number;
+        }>;
+        waiting: Array<{
+            id: string;
+            kind: string;
+            label: string;
+            position: number;
+        }>;
+    }>;
+    /** 按任务 id 取消：'fetch'/'digest'/'topic:{metaId}'——waiting 撤队，running abort */
+    cancelTask?(id: string): Promise<{
+        ok: boolean;
+        cancelled?: 'waiting' | 'running';
+    }>;
 }
 /** 注册全部 news_* 工具；返回 disposer。 */
 export declare function registerTools(ctx: Context, svc: NewsService): () => void;

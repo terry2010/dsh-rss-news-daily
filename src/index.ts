@@ -30,7 +30,7 @@ import type { NewsService } from './tools.js'
 import { runDailyDigest, scoreNewItems, appendHourlyBrief, textLooksForeign, zhTitleOf } from './digest-pipeline.js'
 import { DshLlmClient, llmCallAvgMs, llmQueueSnapshot, setDevLogDir, setDevLogEnabled, setLlmConcurrency, setLlmDiagFile, setLoopGuardEnabled } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
-import type { FeedItem } from './core/types.js'
+import type { FeedItem, FetchCycleResult } from './core/types.js'
 import { inBlocklist, isShortLead, leadKey, truncateCodePoints } from './core/parser.js'
 import { listTopics, newTopicId, queryTopicCandidates, runTopicPipeline, topicKeyOf, upsertTopicMeta } from './topic-pipeline.js'
 import type { TopicMeta, TopicParams } from './topic-pipeline.js'
@@ -46,6 +46,7 @@ import { learnFromFeedback } from './core/tune.js'
 import { zonedDayKey, zonedDayBounds } from './core/time.js'
 import { probeSqlite, SqliteStore } from './core/sqlite-store.js'
 import { addTokenStats } from './core/token-stats.js'
+import { createTaskQueue } from './task-queue.js'
 
 export { Config }
 
@@ -89,13 +90,20 @@ export function apply(ctx: Context, config: ConfigType) {
   if (!probe.ok) throw new Error('node:sqlite unavailable in this host (requires Node >=22.5)')
   if (!probe.fts) log.warn('SQLite FTS5/trigram unavailable in this host; search falls back to LIKE')
   applyPendingRestore(dataDir, log) // 上次请求过恢复：开库前整体覆盖写回
+  const uiActive = { apiAt: 0, gestureAt: 0 } // 双戳：apiAt=页面开着的心跳（statusbar 2s 轮询）；gestureAt=真实手势——开页面挂机≠在用
   const store = new SqliteStore({
     path: join(dataDir, 'store.db'), maxItems: () => prefs.get().digestOpts?.storeMaxItems ?? config.fetch.maxStoredItems, log,
     retentionDays: () => prefs.get().digestOpts?.retentionDays ?? 90,
     pruneLowQuality: () => prefs.get().digestOpts?.pruneLowQuality ?? true,
     fts: probe.fts,
+    // 每日 integrity_check 只在真·空闲时跑：任务队列全空，且（页面已关 >15s 无请求，或页面挂机 >15min 无手势）——闭包惰性读 taskQ/uiActive
+    isIdle: () => taskQ.runningList().length === 0 && taskQ.waitingCount() === 0
+      && (Date.now() - uiActive.apiAt > 15_000 || Date.now() - uiActive.gestureAt > 15 * 60_000),
   })
   const prefs = new PrefsStore(join(dataDir, 'prefs.json'), log)
+  // 全局任务队列：抓取/日报/专题按「任务」排队，同时在跑的任务数 = llmConcurrency；
+  // 满了进 FIFO 等位——不再让各管线的单次 LLM 调用在调用级信号量里互相交错
+  const taskQ = createTaskQueue({ limit: () => prefs.get().llmConcurrency ?? 1, log })
   const fetcher = createFetcher({
     proxyUrl: () => (prefs.get() as { proxyUrl?: string }).proxyUrl || config.fetch.proxyUrl,
     timeoutMs: config.fetch.requestTimeoutMs,
@@ -340,7 +348,23 @@ export function apply(ctx: Context, config: ConfigType) {
     const days = b.period === 'week' ? 7 : b.period === 'month' ? 30 : 1
     if (Date.now() - last >= days * 86_400_000) await runBackup().catch((e) => log.warn(`backup failed: ${e}`))
   }
-  const runFetchPool = (pool: ReturnType<typeof effectiveSources>, force = false) => {
+  // 抓取管线经全局任务队列：id 'fetch' 同类去重（定时器/手动/源重试撞车合并成一个任务）；
+  // 返回的 Promise 在任务真正跑完才兑现——调度器的周期锁语义与改造前一致
+  const runFetchPool = (pool: ReturnType<typeof effectiveSources>, force = false): Promise<FetchCycleResult> => {
+    let settle!: { resolve: (v: unknown) => void; reject: (e: unknown) => void }
+    const doneP = new Promise<FetchCycleResult>((res, rej) => { settle = { resolve: res as (v: unknown) => void, reject: rej } })
+    const r = taskQ.enqueue({
+      id: 'fetch', kind: 'fetch', label: '抓取+评分+快报', queuedAt: Date.now(),
+      start: () => runFetchWork(pool, force),
+      cancel: () => { if (fetchAbort) { fetchAbort.abort(); fetchCancelled = true } },
+      settle,
+    })
+    // dup（已有抓取在跑/在排）→ 立即兑现空结果：调用方语义=「本轮已有等效任务」，
+    // 不能让 doneP 悬着——调度器 mkCycle 的 running 锁靠它释放
+    if (r === 'dup') { const now = new Date().toISOString(); return Promise.resolve({ startedAt: now, finishedAt: now, sources: [], totalFetched: 0, totalAdded: 0, errors: 0 }) }
+    return doneP
+  }
+  const runFetchWork = (pool: ReturnType<typeof effectiveSources>, force = false) => {
     const cycleStart = new Date().toISOString()
     store.meta.lastFetchStartedAt = cycleStart // 本轮起点:「本次」实时计数以此为界
     const controller = new AbortController()
@@ -435,7 +459,7 @@ export function apply(ctx: Context, config: ConfigType) {
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),
     runFetch: runFetchForce,
-    fetchProgress: async () => ({ ...fetchProg, cancelled: fetchCancelled, etaMs: fetchEta(), queue: llmQueueSnapshot(FETCH_QUEUE_TAGS) }),
+    fetchProgress: async () => ({ ...fetchProg, cancelled: fetchCancelled, etaMs: fetchEta(), queue: llmQueueSnapshot(FETCH_QUEUE_TAGS), queued: taskQ.isQueued('fetch'), taskWaiting: taskQ.waitingCount() }),
     translateItem: async (id) => {
       const item = store.items.find((i) => i.id === id)
       if (!item) return { ok: false, error: 'item not found' }
@@ -444,7 +468,7 @@ export function apply(ctx: Context, config: ConfigType) {
       await store.save()
       return { ok: true, translation: item.state.translation }
     },
-    digestProgress: async () => ({ ...digestProg, cancelled: digestCancelled, etaMs: digestEta(), queue: llmQueueSnapshot(DIGEST_QUEUE_TAGS) }),
+    digestProgress: async () => ({ ...digestProg, cancelled: digestCancelled, etaMs: digestEta(), queue: llmQueueSnapshot(DIGEST_QUEUE_TAGS), queued: taskQ.isQueued('digest'), taskWaiting: taskQ.waitingCount() }),
     rescanStubContent: async () => { // 名单改了就回扫：命中且短正文的存量条目立刻隐藏（单向——删词条不解隐）
       const p = prefs.get()
       const list = p.contentBlocklist ?? []
@@ -463,7 +487,7 @@ export function apply(ctx: Context, config: ConfigType) {
       const d = await fetcher(url, undefined, { proxy })
       return 'error' in d ? { error: d.error } : { status: d.status, body: d.body.slice(0, 600) }
     },
-    cancelFetch: async () => { if (fetchAbort) { fetchAbort.abort(); fetchCancelled = true } return true },
+    cancelFetch: async () => { const r = taskQ.cancel('fetch'); if (r !== 'running' && fetchAbort) { fetchAbort.abort(); fetchCancelled = true } return true },
     tune: async (text) => {
       const r = parseTune(text, prefs.get())
       if (!r.ok) return { ok: false, actions: [], error: r.error }
@@ -528,7 +552,7 @@ export function apply(ctx: Context, config: ConfigType) {
       void runFetchFor([src]).catch((e) => log.warn(`retry fetch failed for ${src.id}: ${String(e)}`))
       return true
     },
-    stopDigest: async () => { if (digestAbort) { digestAbort.abort(); digestCancelled = true } return true },
+    stopDigest: async () => { const r = taskQ.cancel('digest'); if (r !== 'running' && digestAbort) { digestAbort.abort(); digestCancelled = true } return true },
     // ---- AI 专题 ----
     previewTopic: async (params: TopicParams, page = 1, filterSourceId?: string) => { // 只读候选预览：同生成管线的查询路径，不调 LLM；15 条/页；filterSourceId 仅过滤展示用，源统计仍按全入文集
       const r = queryTopicCandidates(store, params, config.timezone || undefined)
@@ -552,58 +576,69 @@ export function apply(ctx: Context, config: ConfigType) {
       }
     },
     runTopic: async (params: TopicParams) => {
-      const queued = topicBusy // 在跑一个时新专题进内存队列（落 queued 元数据——列表可见+可取消，重启懒修复成 error）
-      if (queued && topicQueue.length >= TOPIC_QUEUE_MAX) return { ok: false, error: `排队已满（${TOPIC_QUEUE_MAX}）` }
+      if (taskQ.waitingCount() >= TASK_WAIT_MAX) return { ok: false, error: `排队已满（${TASK_WAIT_MAX}）` }
       const now = new Date().toISOString()
-      const meta: TopicMeta = { // generating/queued 条目先落盘——列表立即可见，重启后懒修复
+      const meta: TopicMeta = { // queued 条目先落盘——列表立即可见，轮到它时 start() 翻 generating；重启后懒修复
         id: newTopicId(), title: truncateCodePoints(params.keywords.join('·'), 40) || '专题',
         keywords: params.keywords, from: params.from, to: params.to,
         sourceIds: params.sourceIds, focus: params.focus,
         minScore: params.minScore, maxItems: params.maxItems,
         createdAt: now, updatedAt: now,
         hitCount: 0, dedupCount: 0, itemCount: 0, usedCount: 0,
-        durationMs: 0, degraded: false, excerpt: '', status: queued ? 'queued' : 'generating',
+        durationMs: 0, degraded: false, excerpt: '', status: 'queued',
       }
       await upsertTopicMeta(join(dataDir, 'digests'), meta)
-      if (queued) topicQueue.push(meta); else launchTopic(meta)
-      return { ok: true, id: meta.id, queued }
+      const r = enqueueTopicTask(meta)
+      return { ok: true, id: meta.id, queued: r !== 'started' }
     },
-    regenTopic: async (id: string) => { // 覆盖重生成：沿用 meta 参数，同 id 重写正文；busy 时排队
-      const old = (await listTopics(join(dataDir, 'digests'), { queuedIds: topicQueue.map((m) => m.id) })).find((m) => m.id === id)
+    regenTopic: async (id: string) => { // 覆盖重生成：沿用 meta 参数，同 id 重写正文；统一进全局任务队列
+      const old = (await listTopics(join(dataDir, 'digests'), { queuedIds: taskQ.waitingIds('topic').map((t) => t.slice(6)) })).find((m) => m.id === id)
       if (!old) return { ok: false, error: 'not found' }
       if (old.status === 'generating' || old.status === 'queued') return { ok: false, error: '生成中/排队中不可重生成' }
-      const queued = topicBusy
-      if (queued && topicQueue.length >= TOPIC_QUEUE_MAX) return { ok: false, error: `排队已满（${TOPIC_QUEUE_MAX}）` }
+      if (taskQ.waitingCount() >= TASK_WAIT_MAX) return { ok: false, error: `排队已满（${TASK_WAIT_MAX}）` }
       const meta: TopicMeta = {
-        ...old, status: queued ? 'queued' : 'generating', error: undefined,
+        ...old, status: 'queued', error: undefined,
         hitCount: 0, dedupCount: 0, itemCount: 0, usedCount: 0,
         durationMs: 0, degraded: false, updatedAt: new Date().toISOString(),
       }
       await upsertTopicMeta(join(dataDir, 'digests'), meta)
-      if (queued) topicQueue.push(meta); else launchTopic(meta)
-      return { ok: true, id: meta.id, queued }
+      const r = enqueueTopicTask(meta)
+      return { ok: true, id: meta.id, queued: r !== 'started' }
     },
-    topicProgress: async () => ({ ...topicProg, etaMs: topicEta(), queue: llmQueueSnapshot(TOPIC_QUEUE_TAGS), queuedIds: topicQueue.map((m) => m.id) }),
+    topicProgress: async () => ({ ...topicProg, etaMs: topicEta(), queue: llmQueueSnapshot(TOPIC_QUEUE_TAGS), queuedIds: taskQ.waitingIds('topic').map((t) => t.slice(6)), taskWaiting: taskQ.waitingCount() }),
     stopTopic: async (id?: string) => {
-      const qi = id ? topicQueue.findIndex((m) => m.id === id) : -1
-      if (qi >= 0) { // 排队中取消：撤队+落 error（与"手动停止"的在跑取消同构——都是用户主动终止）
-        const meta = topicQueue.splice(qi, 1)[0]
-        meta.status = 'error'; meta.error = '排队中已取消'; meta.updatedAt = new Date().toISOString()
-        await upsertTopicMeta(join(dataDir, 'digests'), meta).catch(() => {})
-        return { ok: true, cancelled: 'queued' }
+      const tid = id ? `topic:${id}` : (topicProg.id ? `topic:${topicProg.id}` : '')
+      if (tid) {
+        const r = taskQ.cancel(tid) // waiting→onCancelQueued 落 error；running→abort
+        if (r !== 'none') return { ok: true, cancelled: r }
       }
-      if (topicAbort && (!id || id === topicProg.id)) { topicAbort.abort(); return true }
       if (topicProg.running) { // 无控制器却在"跑"＝发射台同步抛错残留：就地修复，否则该行永远挂 generating
         await listTopics(join(dataDir, 'digests')).catch(() => []) // 懒修复把非活跃 generating 落 error（含本条）
         topicProg = { running: false, done: 0, total: 0, stage: '', id: '' }
-        topicBusy = false
       }
       return true
     },
-    dequeueTopic: (id: string) => { // 删除排队项前的摘队——只动内存队列，meta 由 deleteTopic 处理
-      const qi = topicQueue.findIndex((m) => m.id === id)
-      if (qi >= 0) { topicQueue.splice(qi, 1); return true }
-      return false
+    dequeueTopic: (id: string) => taskQ.removeQueued(`topic:${id}`), // 删除排队项前的摘队——只动内存队列，meta 由 deleteTopic 处理
+    /** 全局任务队列快照：悬停提示渲染全部在跑/排队任务（前端按 id 发 /api/task-cancel） */
+    taskList: async () => {
+      const progOf = (kind: string) => kind === 'fetch'
+        ? { stage: fetchProg.stage, done: fetchProg.done, total: fetchProg.total, etaMs: fetchEta() }
+        : kind === 'digest'
+          ? { stage: digestProg.stage, done: digestProg.done, total: digestProg.total, etaMs: digestEta() }
+          : { stage: topicProg.stage, done: topicProg.done, total: topicProg.total, etaMs: topicEta() }
+      return {
+        limit: taskQ.limit(),
+        running: taskQ.runningList().map((t) => ({ id: t.id, kind: t.kind, label: t.label, ...progOf(t.kind) })),
+        waiting: taskQ.waitingList().map((t, i) => ({ id: t.id, kind: t.kind, label: t.label, position: i + 1 })),
+      }
+    },
+    cancelTask: async (id: string) => {
+      const r = taskQ.cancel(id)
+      if (r === 'none' && id.startsWith('topic:') && topicProg.running) { // 残留兜底同 stopTopic
+        await listTopics(join(dataDir, 'digests')).catch(() => [])
+        topicProg = { running: false, done: 0, total: 0, stage: '', id: '' }
+      }
+      return { ok: r !== 'none', cancelled: r === 'none' ? undefined : r }
     },
     status: () => {
       const list = effectiveSources(config.sources, store)
@@ -649,31 +684,34 @@ export function apply(ctx: Context, config: ConfigType) {
     if (t?.provider && t?.model) return t // 翻译模型覆盖 > 日报模型 > config
     return pickRoute()
   }
-  let digestBusy = false // 服务端防重入：调度与手动 /api/digest-run 并发会竞态落盘
   let digestAbort: AbortController | undefined // 「停止生成」：中止在飞的 LLM 调用（流逐条失败→降级收尾，不落半文件）
-  let topicBusy = false // 同时只跑一个专题；busy 时新建/重生成进内存队列，跑完自动排水
   let topicAbort: AbortController | undefined
-  const topicQueue: TopicMeta[] = [] // 排队中的专题（内存态；meta 已落 queued——重启后懒修复成 error）
-  const TOPIC_QUEUE_MAX = 8
-  /** 在跑专题结束后排水：下一单 queued → generating 并发射（同步——.finally 与进度轮询间无窗口） */
-  const drainTopicQueue = () => {
-    const meta = topicQueue.shift()
-    if (!meta) return
-    meta.status = 'generating'
-    meta.updatedAt = new Date().toISOString()
-    void upsertTopicMeta(join(dataDir, 'digests'), meta).catch(() => {})
-    launchTopic(meta)
-  }
-  /** 专题 fire-and-forget 发射台：meta 已是 generating 落盘态；成功写 done，失败写 error 原因 */
-  const launchTopic = (meta: TopicMeta) => {
+  const TASK_WAIT_MAX = 16 // 全局等待队列上限（topicQueue 原有 8 条上限升级为统一闸门）
+  /** 专题入队：meta 已是 queued 落盘态；start() 在拿到任务槽后翻 generating 再发射；
+   *  waiting 态取消落 error「排队中已取消」（与用户手动停止的在跑取消同构——都是主动终止） */
+  const enqueueTopicTask = (meta: TopicMeta) => taskQ.enqueue({
+    id: `topic:${meta.id}`, kind: 'topic', label: `专题·${meta.title || meta.id}`, queuedAt: Date.now(),
+    start: () => {
+      meta.status = 'generating'
+      meta.updatedAt = new Date().toISOString()
+      void upsertTopicMeta(join(dataDir, 'digests'), meta).catch(() => {})
+      return launchTopic(meta)
+    },
+    cancel: () => { if (topicProg.id === meta.id) topicAbort?.abort() },
+    onCancelQueued: () => {
+      meta.status = 'error'; meta.error = '排队中已取消'; meta.updatedAt = new Date().toISOString()
+      void upsertTopicMeta(join(dataDir, 'digests'), meta).catch(() => {})
+    },
+  })
+  /** 专题发射台：返回管线 Promise——任务队列靠它知道任务何时真正结束再排水下一个 */
+  const launchTopic = (meta: TopicMeta): Promise<unknown> => {
     const digestsDir = join(dataDir, 'digests')
     const controller = new AbortController()
-    topicBusy = true
     topicAbort = controller
     topicProg = { running: true, done: 0, total: 0, stage: 'candidates', id: meta.id }
     try {
       const topicClient = llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log, 'topic') : undefined
-      void runTopicPipeline({
+      return runTopicPipeline({
         store,
         params: { keywords: meta.keywords, from: meta.from, to: meta.to, sourceIds: meta.sourceIds, focus: meta.focus, minScore: meta.minScore, maxItems: meta.maxItems },
         meta,
@@ -697,28 +735,36 @@ export function apply(ctx: Context, config: ConfigType) {
         void upsertTopicMeta(digestsDir, meta).catch(() => {})
         log.warn(`topic ${meta.id} failed: ${reason}`)
       }).finally(() => {
-        topicBusy = false
         topicAbort = undefined
         topicProg = { running: false, done: 0, total: 0, stage: '', id: '' }
-        drainTopicQueue() // 排水：排队的下一个立即接棒（同 tick 重占 busy，进度轮询看不到空窗）
       })
-    } catch (e) { // 同步抛出（pickRoute 配置错等）：不留 generating 死档/假活进度——懒修复豁免 activeId，丢了就没法救
-      topicBusy = false; topicAbort = undefined
+    } catch (e) { // 同步抛出（pickRoute 配置错等）：不留 generating 死档/假活进度——懒修复豁免在跑任务，丢了就没法救
+      topicAbort = undefined
       topicProg = { running: false, done: 0, total: 0, stage: '', id: '' }
       meta.status = 'error'; meta.error = e instanceof Error ? e.message : String(e); meta.updatedAt = new Date().toISOString()
       void upsertTopicMeta(digestsDir, meta).catch(() => {})
-      drainTopicQueue() // 发射失败也要排水——队列不该被哑弹卡死
-      throw e
+      throw e // 上抛给任务队列——发射失败也要排水，队列不该被哑弹卡死
     }
   }
+  // 日报经全局任务队列：dup 时返回兼容的降级 doc；返回的 Promise 在任务跑完才兑现（regenDigest 语义不变）
   const digestNow = (force = false, day?: string) => {
-    if (digestBusy) return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'extractive' as const, degraded: true, note: 'digest already running' })
-    digestBusy = true
+    let settle!: { resolve: (v: unknown) => void; reject: (e: unknown) => void }
+    const doneP = new Promise<Awaited<ReturnType<typeof digestRun>>>((res, rej) => { settle = { resolve: res as (v: unknown) => void, reject: rej } })
+    const r = taskQ.enqueue({
+      id: 'digest', kind: 'digest', label: '日报生成', queuedAt: Date.now(),
+      start: () => runDigestWork(force, day),
+      cancel: () => { if (digestAbort) { digestAbort.abort(); digestCancelled = true } },
+      settle,
+    })
+    if (r === 'dup') return Promise.resolve({ title: '', date: '', language: 'zh' as const, markdown: '', itemCount: 0, itemIds: [], summarySource: 'extractive' as const, degraded: true, note: 'digest already running' } as unknown as Awaited<ReturnType<typeof digestRun>>)
+    return doneP
+  }
+  const runDigestWork = (force = false, day?: string) => {
     digestAbort = new AbortController()
     digestCancelled = false // 新一轮清除上轮取消标记
     digestProg = { running: true, done: 0, total: 0, stage: '' }
     return digestRun(force, day).then((doc) => { addTokens('digest', doc.tokens); return doc })
-      .finally(() => { digestBusy = false; digestAbort = undefined; digestProg = { running: false, done: 0, total: 0, stage: '' } })
+      .finally(() => { digestAbort = undefined; digestProg = { running: false, done: 0, total: 0, stage: '' } })
   }
   const digestRun = (force: boolean, day?: string) => runDailyDigest({
     store,
@@ -837,6 +883,8 @@ export function apply(ctx: Context, config: ConfigType) {
           fetchTimes: config.schedule.fetchTimes,
         },
         devlogDir,
+        onApiHit: () => { uiActive.apiAt = Date.now() },
+        onGesture: () => { uiActive.gestureAt = Date.now() },
       }))
       log.info('reader mounted at /dsh-rss-news-daily/')
     }

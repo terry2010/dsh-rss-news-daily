@@ -214,7 +214,21 @@ label[for=testUrl].f { max-width: 345px; }
 .daynav { border: none; box-shadow: none; background: transparent; color: var(--acc); font-size: .62em; vertical-align: middle; padding: 2px 6px; height: auto; border-radius: 6px; }
 .daynav:hover { color: var(--fg); }
 .daynav.off { color: var(--dim); opacity: .4; cursor: default; }
-.busybar { display: inline-flex; align-items: center; align-self: end; height: var(--ctl-h); background: color-mix(in srgb, var(--acc) 14%, transparent); color: var(--acc); font-weight: 500; padding: 0 14px; border-radius: var(--r-md); }
+.busywrap { position: relative; display: inline-flex; align-self: end; }
+.busybar { display: inline-flex; align-items: center; height: var(--ctl-h); background: color-mix(in srgb, var(--acc) 14%, transparent); color: var(--acc); font-weight: 500; padding: 0 14px; border-radius: var(--r-md); }
+/* 任务队列悬停面板：在跑/排队全部任务 + 逐项取消（waiting 撤队 / running 停止） */
+.taskpop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; min-width: 300px; max-width: 440px; background: var(--card); border: 1px solid var(--line-input); border-radius: var(--r-md); box-shadow: var(--shadow); padding: 6px; font-size: 12.5px; font-weight: 400; visibility: hidden; opacity: 0; transition: opacity .1s ease, visibility 0s .6s; } /* 0.6s 余量：移到 ✕ 上点取消不掉 hover */
+.taskpop::before { content: ''; position: absolute; left: -8px; right: -8px; top: -8px; height: 8px; }
+.busywrap:hover .taskpop { visibility: visible; opacity: 1; transition: opacity .1s ease; }
+.tq-head { font-size: 11.5px; color: var(--dim); padding: 2px 6px 6px; }
+.tq-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; color: var(--lead); }
+.tq-row:hover { background: var(--hover); }
+.tq-dot { flex: none; width: 14px; text-align: center; font-size: 11px; }
+.tq-dot.run { color: var(--ok); }
+.tq-dot.wait { color: var(--dim); }
+.tq-lab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tq-x { flex: none; border: none; background: none; box-shadow: none; height: 20px; padding: 0 6px; font-size: 11px; color: var(--dim); border-radius: 4px; cursor: pointer; }
+.tq-x:hover { color: var(--err); background: var(--err-hover); }
 
 /* ---- AI 专题：列表 / 详情工具条 / 新建弹层 ---- */
 .digest[data-kind="topics"] { font-size: calc(14px * var(--fz-topics, 1)); }
@@ -223,6 +237,8 @@ label[for=testUrl].f { max-width: 345px; }
 .trow-when .fz-ctl { margin-left: 0; } /* A−A＋ 挪到 meta 行生成日期左面 */
 .tp-clear { color: var(--acc); cursor: pointer; }
 .tp-clear:hover { text-decoration: underline; }
+.topic-stalenote { background: color-mix(in srgb, var(--acc) 10%, transparent); color: var(--lead); border-radius: var(--r-md); padding: 6px 12px; font-size: .9em; margin: 0 0 10px; } /* 重生成/排队/失败期间旧版内容上方的状态条 */
+.topic-stalenote.err { background: color-mix(in srgb, #d33 10%, transparent); color: var(--fg); }
 /* ---- 专题引用脚注：内联 * 上标 + 悬停弹层 + 参考区编号徽标 ---- */
 sup.cite { position: relative; font-style: normal; line-height: 0; font-size: .72em; }
 .cite-star { color: var(--acc); font-weight: 700; text-decoration: none; padding: 0 1px; cursor: pointer; }

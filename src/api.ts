@@ -97,6 +97,10 @@ export interface ApiDeps {
   configSchedule?: { digestTimes: string[]; fetchTimes: string[] }
   /** 开发日志目录（prefs.devLog 开启时 LLM 全量对话 JSONL 落这里） */
   devlogDir?: string
+  /** 页面活跃心跳：每个 API/静态请求都打一下——无心跳=页面已关（statusbar 2s 轮询天然是心跳） */
+  onApiHit?: () => void
+  /** 用户真实手势信号：前端只在最近 60s 内有鼠标/键盘/滚动/触屏交互时在 status 轮询上带 act=1——区分"页面挂机"和"人在用" */
+  onGesture?: () => void
 }
 
 // === API 端点 ===
@@ -345,10 +349,8 @@ function apiTopics(deps: ApiDeps) {
     if (method === 'GET' && !act) {
       const meta = (await listTopics(deps.digestsDir, await activeIds())).find((m) => m.id === id)
       if (!meta) return sendJson(res, 404, { ok: false, error: 'not found' })
-      let markdown: string | undefined
-      if (meta.status === 'done') {
-        markdown = await readFile(join(topicsDirOf(deps.digestsDir), `${id}.md`), 'utf8').catch(() => undefined)
-      }
+      // markdown 只要落过盘就返回——重生成/排队/失败期间旧版仍可读，前端按 meta.status 叠状态条
+      const markdown = await readFile(join(topicsDirOf(deps.digestsDir), `${id}.md`), 'utf8').catch(() => undefined)
       return sendJson(res, 200, { ok: true, meta, ...(markdown !== undefined ? { markdown } : {}) })
     }
     if (method !== 'POST') return sendJson(res, 405, { ok: false, error: `unsupported ${method}` })
@@ -488,6 +490,7 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   const disposers: Array<() => void> = []
   const guard = (fn: (req: Req, res: Res) => void | Promise<void>) => (req: Req, res: Res): Promise<void> => {
     if (!sameSite(req)) { res.statusCode = 403; res.end('forbidden'); return Promise.resolve() }
+    deps.onApiHit?.() // 任何请求都算页面活跃——空闲判定（integrity_check 避让）据此
     return Promise.resolve(fn(req, res)).catch((e) => sendJson(res, 500, { ok: false, error: String(e) }))
   }
 
@@ -710,6 +713,14 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.fetchProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-progress`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.digestProgress?.() ?? { running: false, done: 0, total: 0 }) })) }))
+  // 全局任务队列：悬停提示渲染全部在跑/排队任务；task-cancel 按 id 取消（waiting 撤队 / running abort）
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/tasks`, handler: guard(async (_q, r) => sendJson(r, 200, { ok: true, ...(await deps.svc.taskList?.() ?? { limit: 1, running: [], waiting: [] }) })) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/task-cancel`, handler: guard(async (q, r) => {
+    if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
+    const body = await readBody(q) as { id?: string }
+    if (!body?.id) return sendJson(r, 400, { ok: false, error: 'missing id' })
+    sendJson(r, 200, { ok: true, result: await deps.svc.cancelTask?.(body.id) ?? { ok: false } })
+  }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-test`, handler: guard(async (q, r) => {
     const u = new URL(q.url || '/', 'http://x').searchParams
     const url = u.get('url') || ''
@@ -750,7 +761,10 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     const counts = await st.importNdjson(body.path, deps.digestsDir)
     sendJson(r, 200, { ok: true, ...counts })
   }) }))
-  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/status`, handler: guard((_q, r) => sendJson(r, 200, { ok: true, ...deps.svc.status() })) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/status`, handler: guard((q, r) => {
+    if (new URL(q.url || '', 'http://x').searchParams.get('act') === '1') deps.onGesture?.()
+    sendJson(r, 200, { ok: true, ...deps.svc.status() })
+  }) }))
 
   return () => disposers.forEach((d) => d())
 }

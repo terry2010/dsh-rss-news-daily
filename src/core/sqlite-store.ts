@@ -78,6 +78,7 @@ export interface SqliteStoreOptions {
   retentionDays?: () => number
   pruneLowQuality?: () => boolean
   fts?: boolean           // FTS5 可用（P1 探测结果）
+  isIdle?: () => boolean  // 全系统空闲判定（任务队列无在跑/等待）——每日 integrity_check 只在空闲跑
   log?: LogSink
 }
 // === SECTION 1 END ===
@@ -105,6 +106,7 @@ export class SqliteStore {
   private readonly retentionDays: () => number
   private readonly pruneLowQuality: () => boolean
   private readonly ftsEnabled: boolean
+  private readonly isIdleFn: () => boolean
   private db!: DatabaseSync
   private metaObj: StoreMeta & { health?: Record<string, FeedSource['health']> } = { lastFetchAt: '', lastDigestAt: '', lastDigestDay: '' } as StoreMeta & { health?: Record<string, FeedSource['health']> }
   private srcList: FeedSource[] = []
@@ -146,6 +148,7 @@ export class SqliteStore {
     this.retentionDays = options.retentionDays ?? (() => 0)
     this.pruneLowQuality = options.pruneLowQuality ?? (() => false)
     this.ftsEnabled = options.fts ?? true
+    this.isIdleFn = options.isIdle ?? (() => true)
     this.log = options.log ?? noopLog
   }
 
@@ -162,19 +165,24 @@ export class SqliteStore {
       renameSync(legacy, `${legacy}.migrated`)
       this.log.info('legacy store.json archived to .migrated (items/meta not migrated)')
     }
-    // 打开 + 完整性检查（P6：损坏→改名隔离+全新空库）
-    try {
+    // 打开 + 轻量健全性探针：读系统目录首页——任何库都有此行，"文件不是库/页1损坏"立即抛；
+    // SCHEMA 建表同包在探测里（坏库在建表阶段抛一样走隔离）。
+    // 完整 integrity_check 不在启动路径跑：它同步全页扫描随库线性增长（314MB≈1.4s），
+    // 同步执行会堵死事件循环——API 请求全部排队等它，表现为"进插件等几秒才出新闻"。
+    // 完整校验推迟到 load() 后的空闲窗口（见 scheduleIntegrityCheck）。
+    const openDb = () => {
       this.db = new DatabaseSync(this.path)
-      const ic = this.db.prepare('PRAGMA integrity_check').get() as { integrity_check: string } | undefined
-      if (ic && ic.integrity_check !== 'ok') throw new Error(`integrity: ${ic.integrity_check}`)
-    } catch (e) {
-      this.log.warn(`db open/integrity failed (${e instanceof Error ? e.message : e}); isolating and starting fresh`)
-      try { this.db?.close() } catch { /* 未打开 */ }
-      if (existsSync(this.path)) renameSync(this.path, `${this.path}.corrupt-${Date.now()}`)
-      this.db = new DatabaseSync(this.path)
+      this.db.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get()
+      this.db.exec('PRAGMA journal_mode=WAL')
+      this.db.exec(SCHEMA)
     }
-    this.db.exec('PRAGMA journal_mode=WAL')
-    this.db.exec(SCHEMA)
+    try {
+      openDb()
+    } catch (e) {
+      this.log.warn(`db open/sanity failed (${e instanceof Error ? e.message : e}); isolating and starting fresh`)
+      this.isolateCorrupt()
+      openDb() // 新空库建表不会再坏——再坏是环境级问题，抛给 load() 外层处理
+    }
     if (this.ftsEnabled) { try { this.db.exec(FTS) } catch (e) { this.log.warn(`fts schema failed: ${e instanceof Error ? e.message : e}`) } }
     // meta kv → 内存对象
     this.metaObj = { lastFetchAt: '', lastDigestAt: '', lastDigestDay: '' } as StoreMeta & { health?: Record<string, FeedSource['health']> }
@@ -187,6 +195,41 @@ export class SqliteStore {
     for (const ls of legacySources) if (!this.srcList.find((s) => s.url === ls.url)) this.addSource(ls)
     this.refreshWindow()
     this.prune()
+    this.scheduleIntegrityCheck()
+  }
+
+  /** 坏库隔离：关句柄→改名存档→开全新空库（调用方随后重跑 load 建 schema+回填内存） */
+  private isolateCorrupt(): void {
+    try { this.db?.close() } catch { /* 未打开 */ }
+    if (existsSync(this.path)) renameSync(this.path, `${this.path}.corrupt-${Date.now()}`)
+    this.db = new DatabaseSync(this.path)
+  }
+
+  private icTimer: ReturnType<typeof setInterval> | undefined
+  private lastIntegrityAt = 0
+  /** integrity_check 节奏：每 30min 探一次——距上次 >24h 且全系统空闲（任务队列空 + 无页面心跳）
+      才真正执行（全页扫随库线性增长，忙时/用户在用时跑会卡 API）。
+      命中损坏走与启动探针同一隔离路径+重跑 load。 */
+  private scheduleIntegrityCheck(): void {
+    if (this.icTimer) clearInterval(this.icTimer) // restoreFrom/隔离重建都会再过 load()——只保留最新一个钟
+    this.icTimer = setInterval(() => this.integrityTick(), 30 * 60_000)
+    this.icTimer.unref?.()
+  }
+  private integrityTick(): void {
+    const DAY = 24 * 3600_000
+    if (Date.now() - this.lastIntegrityAt < DAY) return
+    if (!this.isIdleFn()) return // 有任务在跑/排队——下次再探
+    this.lastIntegrityAt = Date.now() // 先记账——即便失败也不每分钟重扫大库
+    try {
+      const ic = this.db.prepare('PRAGMA integrity_check').get() as { integrity_check: string } | undefined
+      if (ic && ic.integrity_check !== 'ok') {
+        this.log.error(`sqlite integrity_check failed: ${ic.integrity_check} — isolating corrupt db`)
+        this.isolateCorrupt()
+        void this.load().catch((e) => this.log.error(`reload after corrupt-isolate failed: ${e instanceof Error ? e.message : e}`))
+      } else {
+        this.log.info('sqlite integrity_check: ok')
+      }
+    } catch (e) { this.log.warn(`deferred integrity_check failed: ${e instanceof Error ? e.message : e}`) }
   }
 
   /** 热恢复：关库 → file 覆盖 store.db → 重新 load（meta/sources/窗口全部重建）。
@@ -449,8 +492,10 @@ export class SqliteStore {
     return counts
   }
 
-  /** .db 快照（VACUUM INTO）——全量灾备 */
+  /** .db 快照（VACUUM INTO）——全量灾备；先跑 integrity_check 预检：坏库不备份（备份坏库=留存坏档） */
   snapshot(file: string): void {
+    const ic = this.db.prepare('PRAGMA integrity_check').get() as { integrity_check: string } | undefined
+    if (ic && ic.integrity_check !== 'ok') throw new Error(`integrity_check failed: ${ic.integrity_check} — snapshot aborted`)
     mkdirSync(dirname(file), { recursive: true })
     this.db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`)
   }

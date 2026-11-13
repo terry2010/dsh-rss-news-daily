@@ -8,6 +8,7 @@ export interface SqliteStoreOptions {
     retentionDays?: () => number;
     pruneLowQuality?: () => boolean;
     fts?: boolean;
+    isIdle?: () => boolean;
     log?: LogSink;
 }
 /** node:sqlite + FTS5 探测（P1）：不可用/无 FTS5 返回 false → 调用方报错不降级 */
@@ -23,6 +24,7 @@ export declare class SqliteStore {
     private readonly retentionDays;
     private readonly pruneLowQuality;
     private readonly ftsEnabled;
+    private readonly isIdleFn;
     private db;
     private metaObj;
     private srcList;
@@ -35,6 +37,15 @@ export declare class SqliteStore {
     private wrapItem;
     constructor(options: SqliteStoreOptions);
     load(): Promise<void>;
+    /** 坏库隔离：关句柄→改名存档→开全新空库（调用方随后重跑 load 建 schema+回填内存） */
+    private isolateCorrupt;
+    private icTimer;
+    private lastIntegrityAt;
+    /** integrity_check 节奏：每 30min 探一次——距上次 >24h 且全系统空闲（任务队列空 + 无页面心跳）
+        才真正执行（全页扫随库线性增长，忙时/用户在用时跑会卡 API）。
+        命中损坏走与启动探针同一隔离路径+重跑 load。 */
+    private scheduleIntegrityCheck;
+    private integrityTick;
     /** 热恢复：关库 → file 覆盖 store.db → 重新 load（meta/sources/窗口全部重建）。
         调用方须先停抓取/生成；脏窗口清空避免旧数据写回恢复库。 */
     restoreFrom(file: string): Promise<void>;
@@ -95,7 +106,7 @@ export declare class SqliteStore {
         sources: number;
         digests: number;
     }>;
-    /** .db 快照（VACUUM INTO）——全量灾备 */
+    /** .db 快照（VACUUM INTO）——全量灾备；先跑 integrity_check 预检：坏库不备份（备份坏库=留存坏档） */
     snapshot(file: string): void;
     close(): void;
 }

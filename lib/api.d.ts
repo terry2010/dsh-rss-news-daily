@@ -65,6 +65,10 @@ export interface ApiDeps {
     };
     /** 开发日志目录（prefs.devLog 开启时 LLM 全量对话 JSONL 落这里） */
     devlogDir?: string;
+    /** 页面活跃心跳：每个 API/静态请求都打一下——无心跳=页面已关（statusbar 2s 轮询天然是心跳） */
+    onApiHit?: () => void;
+    /** 用户真实手势信号：前端只在最近 60s 内有鼠标/键盘/滚动/触屏交互时在 status 轮询上带 act=1——区分"页面挂机"和"人在用" */
+    onGesture?: () => void;
 }
 /** 注册阅读器全部路由；返回 disposer。MOUNT 于 ctx.inject(['webServer']) 内调用。 */
 export declare function mountApi(ws: WebServerLike, deps: ApiDeps): () => void;
