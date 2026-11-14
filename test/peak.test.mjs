@@ -112,6 +112,20 @@ test('scheduler: shouldDeferDigest 命中→跳过日报+回调,不卡 scheduled
   assert.equal(deferred, 2); assert.equal(digests, 0)
 })
 
+test('slotBriefWindow: 槽=最近抓取批次→[lastFetch, now]；无抓取/太旧/未来时槽=此刻', async () => {
+  const { slotBriefWindow } = await import('../lib/core/peak.js')
+  const now = '2026-11-14T12:15:00.000Z'
+  // 12:04 抓的、12:15 排队 → 槽=那批
+  assert.deepEqual(slotBriefWindow('2026-11-14T12:04:09.198Z', now), { start: '2026-11-14T12:04:09.198Z', end: now })
+  // 91min 前抓的→太旧不当"当前这批"，槽=此刻（快报自然空）
+  assert.deepEqual(slotBriefWindow('2026-11-14T10:44:00.000Z', now), { start: now, end: now })
+  // 从未抓过/坏值 → 槽=此刻
+  assert.deepEqual(slotBriefWindow(undefined, now), { start: now, end: now })
+  assert.deepEqual(slotBriefWindow('not-a-date', now), { start: now, end: now })
+  // lastFetch 在未来（时钟漂移）→ 槽=此刻，不产生负窗口
+  assert.deepEqual(slotBriefWindow('2026-11-14T13:00:00.000Z', now), { start: now, end: now })
+})
+
 test('scheduler: 出峰后 shouldDeferDigest=false → 日报正常跑', async () => {
   const { startScheduler } = await import('../lib/scheduler.js')
   const { zonedDayKey } = await import('../lib/core/time.js')

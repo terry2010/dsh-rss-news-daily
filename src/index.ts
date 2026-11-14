@@ -47,7 +47,7 @@ import { zonedDayKey, zonedDayBounds } from './core/time.js'
 import { probeSqlite, SqliteStore } from './core/sqlite-store.js'
 import { addTokenStats } from './core/token-stats.js'
 import { createTaskQueue } from './task-queue.js'
-import { isPeak, nextPeakTransition, peakRangeValid } from './core/peak.js'
+import { isPeak, nextPeakTransition, peakRangeValid, slotBriefWindow } from './core/peak.js'
 
 export { Config }
 
@@ -226,18 +226,21 @@ export function apply(ctx: Context, config: ConfigType) {
     }
     desktopNotify(`📰 ${hm} 时段快报`, brief.replace(/\s+/g, ' ').slice(0, 500), click)
   }
-  // briefNow opts.noTranslate/heuristicScores：高峰快报用——不翻译（低峰不补）+未评条目启发式兜底
-  const briefNow = async (fresh: FeedItem[], signal?: AbortSignal, opts?: { noTranslate?: boolean; heuristicScores?: boolean }) => {
+  const hmOf = (d: Date) => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: config.timezone || undefined }).format(d)
+  // briefNow opts.noTranslate/heuristicScores：高峰快报用——零 AI 调用（概括走抽取式兜底、翻译跳过不补）+未评条目启发式兜底
+  // opts.day/time：槽位快报用——写回槽位那天的 hourly 文件、用槽位时刻作节标题（同刻覆盖峰内启发式节）
+  const briefNow = async (fresh: FeedItem[], signal?: AbortSignal, opts?: { noTranslate?: boolean; heuristicScores?: boolean; day?: string; time?: string }) => {
     const now = new Date()
-    const day = zonedDayKey(now, config.timezone || undefined)
-    const hm = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: config.timezone || undefined }).format(now)
+    const day = opts?.day ?? zonedDayKey(now, config.timezone || undefined)
+    const hm = opts?.time ?? hmOf(now)
     await appendHourlyBrief({
       items: fresh,
       sourcesById: new Map(effectiveSources(config.sources, store).map((src) => [src.id, { title: src.title }])),
       day, time: hm,
       minScore: config.fetch.hourlyMinScore,
       digestsDir: join(dataDir, 'digests'), log,
-      llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log, 'brief') : undefined,
+      // 高峰（noTranslate）：llmClient 也不传——「只抓不调 AI」是一次都不能调，概括段走抽取式兜底
+      llmClient: llmRuntime && !opts?.noTranslate ? new DshLlmClient(llmRuntime, pickRoute(), log, 'brief') : undefined,
       translateClient: llmRuntime && !opts?.noTranslate ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'brief-translate') : undefined,
       noTranslate: opts?.noTranslate,
       heuristicScores: opts?.heuristicScores,
@@ -247,6 +250,33 @@ export function apply(ctx: Context, config: ConfigType) {
       llmMaxTokens: config.llm.maxTokens,
       onBrief: (brief) => notifyBrief(hm, brief),
     })
+  }
+  // 评分本体抽出共用：正常抓取管线与槽位快报都按同一份 LLM 配置评一组条目（scoringInFlight 防重入）
+  // doScore 守卫收进本体——scoreAndBrief 之外的调用方（槽位快报）直调也遵守偏好/不碰空 runtime
+  const scoreItems = async (fresh: FeedItem[], signal?: AbortSignal) => {
+    const dopts = prefs.get().digestOpts
+    if (!(dopts?.scoreOnFetch ?? config.fetch.scoreOnFetch) || !config.llm.enabled || !llmRuntime) return 0
+    scoringInFlight = true
+    try {
+      if (!signal?.aborted) fetchProg = { ...fetchProg, running: true, done: 0, total: fresh.length, stage: 'score', current: '' }
+      const scoreClient = new DshLlmClient(llmRuntime!, pickRoute(), log, 'score')
+      let lastWarn = ''
+      const slog = Object.create(log)
+      slog.warn = (m: string) => { lastWarn = m; log.warn(m) }
+      const scored = await scoreNewItems(fresh, scoreClient, {
+        llmTimeoutMs: config.llm.timeoutMs,
+        llmScoreCandidates: prefs.get().digestOpts?.llmScoreCandidates ?? config.digest.llmScoreCandidates,
+        llmMaxTokens: config.llm.maxTokens,
+        prefs: prefs.get(),
+        signal,
+        onScoreProgress: (done, total) => { fetchProg.done = done; fetchProg.total = total },
+      }, slog)
+      dbgScore('scored', { scored, lastWarn })
+      addTokens('score', scoreClient.usage)
+      if (scored) await store.save()
+      return scored
+    } catch (e) { dbgScore('error', { error: e instanceof Error ? e.message : String(e) }); log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`); return 0 }
+    finally { scoringInFlight = false }
   }
   // runBrief=false：低峰补跑只补评分不重写快报（被跳的时段不补——时段快报是时点快照）
   const scoreAndBrief = async (cycleStart: string, signal?: AbortSignal, runBrief = true) => {
@@ -260,36 +290,18 @@ export function apply(ctx: Context, config: ConfigType) {
       return
     }
     if (!doScore) return
-    scoringInFlight = true
-    try {
-      if (!signal?.aborted) fetchProg = { ...fetchProg, running: true, done: 0, total: fresh.length, stage: 'score', current: '' }
-      const scoreClient = new DshLlmClient(llmRuntime!, pickRoute(), log, 'score')
-      let lastWarn = ''
-      const slog = Object.create(log)
-      slog.warn = (m: string) => { lastWarn = m; log.warn(m) }
-      const scored = await scoreNewItems(fresh, scoreClient, {
-        llmTimeoutMs: config.llm.timeoutMs,
-        llmScoreCandidates: dopts?.llmScoreCandidates ?? config.digest.llmScoreCandidates,
-        llmMaxTokens: config.llm.maxTokens,
-        prefs: prefs.get(),
-        signal,
-        onScoreProgress: (done, total) => { fetchProg.done = done; fetchProg.total = total },
-      }, slog)
-      dbgScore('scored', { scored, lastWarn })
-      addTokens('score', scoreClient.usage)
-      if (scored) await store.save()
-      if (!signal?.aborted && runBrief && briefEnabled(dopts)) await briefNow(fresh, signal) // 取消后不再补写快报
-      dbgScore('done', { scored })
-    } catch (e) { dbgScore('error', { error: e instanceof Error ? e.message : String(e) }); log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }
-    finally { scoringInFlight = false }
+    const scored = await scoreItems(fresh, signal)
+    if (!signal?.aborted && runBrief && briefEnabled(dopts)) await briefNow(fresh, signal) // 取消后不再补写快报
+    dbgScore('done', { scored })
   }
   // 无效正文过滤：短正文（缺省 ≤10汉字/≤6英文词，阈值 prefs.stubLimits 可调）先查 prefs.contentBlocklist
   // ——命中整条 hidden；未命中走一次翻译模型的 YES/NO 判定，无效则 stubLead（列表只显标题）并把正文追加进名单
-  const judgeStubs = async (cycleStart: string, signal?: AbortSignal) => {
+  // opts.until=槽位快报用：只判 [cycleStart, until] 窗口内的批次（峰内排队槽位不替别的槽干活）
+  const judgeStubs = async (cycleStart: string, signal?: AbortSignal, opts?: { until?: string }) => {
     const p = prefs.get()
     const zh = p.stubLimits?.zh ?? 10, en = p.stubLimits?.en ?? 6
     const list = [...(p.contentBlocklist ?? [])]
-    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.hidden)
+    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && (!opts?.until || i.fetchedAt <= opts.until) && !i.state.hidden)
     const pending: FeedItem[] = []
     let dirty = false, added = false
     for (const it of fresh) {
@@ -338,12 +350,13 @@ export function apply(ctx: Context, config: ConfigType) {
     if (dirty) await store.save()
   }
   // autoTranslate：本轮新入库外文条目逐条翻译（手动+定时两路径共用）
-  const translateFresh = async (cycleStart: string, signal?: AbortSignal) => {
+  // opts.until/backlog=槽位快报用：只译 [cycleStart, until] 槽内批次、不捎带历史积压（那是抓取周期/补跑的活）
+  const translateFresh = async (cycleStart: string, signal?: AbortSignal, opts?: { until?: string; backlog?: boolean }) => {
     if (!prefs.get().autoTranslate || !llmRuntime) return
-    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && !i.state.hidden && !i.state.translation && !i.aiSummary && isForeign(i))
+    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && (!opts?.until || i.fetchedAt <= opts.until) && !i.state.hidden && !i.state.translation && !i.aiSummary && isForeign(i))
     // 历史失败重试：translationError 且未超次数的旧条目每轮捎带一批；限量防长尾占满抓取周期
     // 外文未翻全部进重试（早退轮次不打 error 标记的条目也会搁浅——不能只挑有 error 的）
-    const backlog = store.items
+    const backlog = opts?.backlog === false ? [] : store.items
       .filter((i) => i.fetchedAt < cycleStart && !i.state.hidden && !i.state.translation && !i.aiSummary
         && (i.state.translationRetries ?? 0) < 3 && isForeign(i))
       .slice(0, 50)
@@ -391,15 +404,58 @@ export function apply(ctx: Context, config: ConfigType) {
     if (extra?.briefSkipped) d.briefSkipped = (d.briefSkipped ?? 0) + 1
     void store.save()
   }
+  /** 「排入低峰队列」快报：槽位任务——不重新抓取，出峰只补「入队时那一批」的 AI + 快报节。
+   *  槽=入队时最近一次抓取的批次（lastFetchStartedAt）：12 点排的队，写出来的就是 12:XX 那批新闻的快报，
+   *  节标题用槽位时刻——同刻覆盖峰内已写的启发式节。id 带槽位键：同时段重复排去重、不同时段各排各的。
+   *  waiting 态只能经任务弹层逐条撤——cancelFetch 按约定不碰 fetch-hold:*（停止键不误伤排低峰的快报）。 */
+  const enqueueSlotBrief = (): Promise<FetchCycleResult> => {
+    let settle!: { resolve: (v: unknown) => void; reject: (e: unknown) => void }
+    const doneP = new Promise<FetchCycleResult>((res, rej) => { settle = { resolve: res as (v: unknown) => void, reject: rej } })
+    const slot = slotBriefWindow(store.meta.lastFetchStartedAt, new Date().toISOString())
+    const slotDate = new Date(slot.start)
+    const slotDay = zonedDayKey(slotDate, config.timezone || undefined)
+    const slotTime = hmOf(slotDate)
+    const r = taskQ.enqueue({
+      id: `fetch-hold:${slot.start}`, kind: 'fetch', label: `快报·${slotTime}（排低峰）`, queuedAt: Date.now(),
+      holdInPeak: true, // 峰内挂起等出峰（理论上只有峰内能走到这——弹层只在 active 时给「排低峰」选项；峰外直入即跑当兜底）
+      start: async () => {
+        const controller = new AbortController()
+        fetchAbort = controller
+        fetchCancelled = false
+        fetchProg = { running: true, done: 0, total: 0, stage: 'slotbrief', current: '' }
+        try {
+          await judgeStubs(slot.start, controller.signal, { until: slot.end })
+          await translateFresh(slot.start, controller.signal, { until: slot.end, backlog: false })
+          // 槽内容=入队时已入库的那批：[槽起点, 入队时刻]——之后峰内抓的归各自的槽，不进本节；隐藏条不进评分
+          const slotItems = store.items.filter((i) => i.fetchedAt >= slot.start && i.fetchedAt <= slot.end && !i.state.hidden)
+          // 与 scoreAndBrief 同款门槛：评分关/无 runtime 时连快报节也不写（评分关的槽位快报语义上不存在）
+          const dopts = prefs.get().digestOpts
+          const doScore = (dopts?.scoreOnFetch ?? config.fetch.scoreOnFetch) && config.llm.enabled && llmRuntime
+          if (!controller.signal.aborted && doScore) await scoreItems(slotItems, controller.signal)
+          if (!controller.signal.aborted && doScore && briefEnabled(dopts)) await briefNow(slotItems, controller.signal, { day: slotDay, time: slotTime })
+          return { startedAt: slot.start, finishedAt: new Date().toISOString(), sources: [], totalFetched: 0, totalAdded: 0, errors: 0 }
+        } finally {
+          if (fetchAbort === controller) {
+            fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }
+            fetchAbort = undefined
+          }
+        }
+      },
+      cancel: () => { if (fetchAbort) { fetchAbort.abort(); fetchCancelled = true } },
+      settle,
+    })
+    if (r === 'dup') { const now = new Date().toISOString(); return Promise.resolve({ startedAt: now, finishedAt: now, sources: [], totalFetched: 0, totalAdded: 0, errors: 0 }) }
+    return doneP
+  }
   // 抓取管线经全局任务队列：id 'fetch' 同类去重（定时器/手动/源重试撞车合并成一个任务）；
   // 返回的 Promise 在任务真正跑完才兑现——调度器的周期锁语义与改造前一致。
-  // opts.holdInPeak=「排入低峰队列」整个任务等出峰；opts.peakBrief=高峰内仍产快报（手动「仍执行」路径）
-  const runFetchPool = (pool: ReturnType<typeof effectiveSources>, force = false, opts?: { holdInPeak?: boolean; peakBrief?: boolean }): Promise<FetchCycleResult> => {
+  // opts.peakBrief=高峰内仍产快报（手动「仍执行」路径）；「排入低峰队列」走 enqueueSlotBrief 不经这里
+  const runFetchPool = (pool: ReturnType<typeof effectiveSources>, force = false, opts?: { peakBrief?: boolean }): Promise<FetchCycleResult> => {
     let settle!: { resolve: (v: unknown) => void; reject: (e: unknown) => void }
     const doneP = new Promise<FetchCycleResult>((res, rej) => { settle = { resolve: res as (v: unknown) => void, reject: rej } })
     const r = taskQ.enqueue({
-      id: 'fetch', kind: 'fetch', label: peakNow() ? '抓取（高峰：AI 推迟）' : '抓取+评分+快报', queuedAt: Date.now(),
-      holdInPeak: opts?.holdInPeak,
+      id: 'fetch', kind: 'fetch',
+      label: peakNow() ? '抓取（高峰：AI 推迟）' : '抓取+评分+快报', queuedAt: Date.now(),
       start: () => runFetchWork(pool, force, opts),
       cancel: () => { if (fetchAbort) { fetchAbort.abort(); fetchCancelled = true } },
       settle,
@@ -532,6 +588,7 @@ export function apply(ctx: Context, config: ConfigType) {
   }
 
   const runFetchForce = (force = false, onlyFailed = false, filter?: { source?: string; category?: string }, opts?: { holdInPeak?: boolean; peakBrief?: boolean }) => {
+    if (opts?.holdInPeak) return enqueueSlotBrief() // 「排低峰队列」→ 槽位快报任务：不抓取，出峰补入队那批的 AI+快报节
     // onlyFailed：只重试失败/冷却中的启用源（「重试全部失败源」按钮）；否则默认全量
     let pool = effectiveSources(config.sources, store)
     if (onlyFailed) pool = pool.filter((s) => s.enabled && (s.health.lastError || (s.health.cooldownUntil && new Date(s.health.cooldownUntil).getTime() > Date.now())))
@@ -563,7 +620,7 @@ export function apply(ctx: Context, config: ConfigType) {
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),
     runFetch: runFetchForce,
-    fetchProgress: async () => ({ ...fetchProg, running: fetchProg.running || taskQ.isRunning('fetch'), cancelled: fetchCancelled, etaMs: fetchEta(), queue: llmQueueSnapshot(FETCH_QUEUE_TAGS), queued: taskQ.isQueued('fetch'), held: taskQ.waitingList().some((t) => t.id === 'fetch' && taskHeld(t)) || undefined, taskWaiting: taskQ.waitingCount() }), // isRunning 补位：任务进 running-map 到 start() 之间有一拍盲区（setImmediate 排水），此间 progress 仍应报忙
+    fetchProgress: async () => ({ ...fetchProg, running: fetchProg.running || taskQ.isKindRunning('fetch'), cancelled: fetchCancelled, etaMs: fetchEta(), queue: llmQueueSnapshot(FETCH_QUEUE_TAGS), queued: taskQ.waitingList().some((t) => t.kind === 'fetch'), held: taskQ.waitingList().some((t) => t.kind === 'fetch' && taskHeld(t)) || undefined, taskWaiting: taskQ.waitingCount() }), // isKindRunning 补位：任务进 running-map 到 start() 之间有一拍盲区（setImmediate 排水），此间 progress 仍应报忙；queued/held 按 kind 算覆盖 fetch-hold/peak-backfill
     translateItem: async (id) => {
       const item = store.items.find((i) => i.id === id)
       if (!item) return { ok: false, error: 'item not found' }
@@ -591,7 +648,14 @@ export function apply(ctx: Context, config: ConfigType) {
       const d = await fetcher(url, undefined, { proxy })
       return 'error' in d ? { error: d.error } : { status: d.status, body: d.body.slice(0, 600) }
     },
-    cancelFetch: async () => { const r = taskQ.cancel('fetch'); if (r !== 'running' && fetchAbort) { fetchAbort.abort(); fetchCancelled = true } return true },
+    cancelFetch: async () => { // 停止键打整个 fetch 类：'fetch' + 'peak-backfill' + 在跑的槽位——waiting 撤队/running abort
+      let hit = false
+      // waiting 态跳过 fetch-hold:* 槽位任务——「只能从队列列表里取消」，停止键不误伤排低峰的快报
+      for (const t of taskQ.waitingList()) if (t.kind === 'fetch' && !t.id.startsWith('fetch-hold:')) { taskQ.cancel(t.id); hit = true }
+      for (const t of taskQ.runningList()) if (t.kind === 'fetch') { taskQ.cancel(t.id); hit = true } // 在跑的槽位照常可停（真在干活）
+      if (fetchAbort) { fetchAbort.abort(); fetchCancelled = true } // running 任务的 abort 钩子无论如何补一刀（cancel 返回非 running 时原逻辑同款兜底）
+      return hit || fetchCancelled
+    },
     tune: async (text) => {
       const r = parseTune(text, prefs.get())
       if (!r.ok) return { ok: false, actions: [], error: r.error }

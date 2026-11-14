@@ -144,6 +144,43 @@ test('sof: appendHourlyBrief 按节追加+同刻覆盖幂等', async () => {
   assert.equal((md.match(/## 09:00/g) || []).length, 1)
 })
 
+test('sof: 高峰快报——不传 llmClient 走零 AI 路径：未评条目启发式入选+抽取式兜底+未评未译标', async () => {
+  const { appendHourlyBrief } = await import('../lib/digest-pipeline.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-hb-peak-'))
+  // 未评分条目（无 llmScore）：heuristicScores 用 score×8 兜底——0.9→7.2 入选，0.4→3.2 落选
+  const items = [mkItem(1, { score: 0.9, title: 'big story' }), mkItem(2, { score: 0.4, title: 'small story' })]
+  const base = { items, sourcesById: new Map([['src1', { title: 'Src1' }]]), day: '2026-10-28', time: '11:00', minScore: 6, digestsDir: dir, log: noopLog }
+  const n = await appendHourlyBrief({ ...base, noTranslate: true, heuristicScores: true }) // 峰内不传任何 client——有 client 就说明接线漏了
+  assert.equal(n, 1)
+  const md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
+  assert.match(md, /## 11:00 时段快报（高峰·未评未译）/)
+  assert.match(md, /本时段 1 条入选（科技），要点：「big story」。/) // 概括走抽取式兜底而非 LLM
+  assert.match(md, /big story/)
+  assert.doesNotMatch(md, /small story/) // 启发式分不足落选
+  // 不开 heuristicScores：未评条目 keyOf=0 全落选 → 空时段
+  const dir2 = mkdtempSync(join(tmpdir(), 'rnd-hb-peak2-'))
+  const n2 = await appendHourlyBrief({ ...base, items: [mkItem(3, { score: 0.9 })], digestsDir: dir2, noTranslate: true })
+  assert.equal(n2, 0)
+})
+
+test('sof: 槽位快报同刻覆盖——出峰重写「高峰·未评未译」节为正式节', async () => {
+  const { appendHourlyBrief } = await import('../lib/digest-pipeline.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-hb-slot-'))
+  const items = [mkItem(1, { score: 0.9, title: 'big story' }), mkItem(2, { score: 0.4 })]
+  const base = { items, sourcesById: new Map([['src1', { title: 'Src1' }]]), day: '2026-10-28', time: '12:04', minScore: 6, digestsDir: dir, log: noopLog }
+  // 峰内先写启发式节（未评未译标）
+  await appendHourlyBrief({ ...base, noTranslate: true, heuristicScores: true })
+  let md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
+  assert.match(md, /## 12:04 时段快报（高峰·未评未译）/)
+  // 出峰槽位任务同刻重写：llmScore 评上后正式节原位替换——marker 前缀匹配吃掉带后缀的旧节
+  const scored = [mkItem(1, { llmScore: 8, title: 'big story', llmReason: '重要' }), mkItem(2, { llmScore: 3 })]
+  await appendHourlyBrief({ ...base, items: scored, llmClient: mkClient(() => 'AI 要点概括。') })
+  md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
+  assert.equal((md.match(/## 12:04 时段快报/g) || []).length, 1) // 同刻只剩一节
+  assert.doesNotMatch(md, /高峰·未评未译/)                        // 后缀随旧节被吃掉
+  assert.match(md, /AI 要点概括。/)                              // 正式 LLM 概括进节
+})
+
 test('sof: 快报输出总结/领域速览/重要新闻三段，并在 LLM 失败时回退', async () => {
   const { appendHourlyBrief } = await import('../lib/digest-pipeline.js')
   const dir = mkdtempSync(join(tmpdir(), 'rnd-hb-format-'))

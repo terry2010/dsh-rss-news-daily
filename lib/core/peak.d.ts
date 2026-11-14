@@ -16,4 +16,11 @@ export declare function isPeak(now: Date, range: PeakRange | undefined, timezone
 /** 下一次窗口边界（进峰或出峰）的 UTC 时刻；无效窗口返回 undefined。
  *  进峰/出峰两类边界合并取近者：start 与 end 各自的下一次出现时刻取 min。 */
 export declare function nextPeakTransition(now: Date, range: PeakRange | undefined, timezone?: string): Date | undefined;
+/** 「排低峰队列」快报的槽位窗口：start=入队时最近一轮抓取起点（槽内容=那批条目）；
+ *  超 staleMs 无抓取说明没有"当前这批"——槽=此刻（快报自然为空时段）。end=入队时刻：
+ *  之后峰内抓的批次归各自的槽，不进本节。 */
+export declare function slotBriefWindow(lastFetchIso: string | undefined, nowIso: string, staleMs?: number): {
+    start: string;
+    end: string;
+};
 //# sourceMappingURL=peak.d.ts.map

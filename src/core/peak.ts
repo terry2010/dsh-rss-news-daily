@@ -53,3 +53,12 @@ export function nextPeakTransition(now: Date, range: PeakRange | undefined, time
     return a.secondsUntil <= b.secondsUntil ? a.next : b.next
   } catch { return undefined }
 }
+
+/** 「排低峰队列」快报的槽位窗口：start=入队时最近一轮抓取起点（槽内容=那批条目）；
+ *  超 staleMs 无抓取说明没有"当前这批"——槽=此刻（快报自然为空时段）。end=入队时刻：
+ *  之后峰内抓的批次归各自的槽，不进本节。 */
+export function slotBriefWindow(lastFetchIso: string | undefined, nowIso: string, staleMs = 90 * 60 * 1000): { start: string; end: string } {
+  const t = Date.parse(lastFetchIso ?? '')
+  const fresh = Number.isFinite(t) && Date.parse(nowIso) - t >= 0 && Date.parse(nowIso) - t <= staleMs
+  return { start: fresh ? lastFetchIso! : nowIso, end: nowIso }
+}
