@@ -963,7 +963,7 @@ $('#taskPop').addEventListener('click', async (e) => {
 })
 // 槽位/抓取 watcher：任一 fetch 任务在跑或在排就保持忙条（高峰挂起显示等低峰），全空收尾——排低峰/恢复探测共用
 let slotWatch = 0
-const startSlotWatch = () => {
+const startSlotWatch = (doneToast = '时段快报已生成') => {
   if (slotWatch) return
   let seenRun = false
   slotWatch = setInterval(async () => {
@@ -972,7 +972,7 @@ const startSlotWatch = () => {
       if (p.running) { seenRun = true; busyShow('fetch', fetchProgText(p)); return } // 无前缀：槽位/普通抓取/补跑共享——文案走 stageZh（slotbrief→时段快报生成中）
       if (p.queued) { busyShow('fetch', p.held ? `⌛ 高峰暂停中·出峰自动执行…${taskSfx(p.taskWaiting)}` : `⌛ 快报排队中…${taskSfx(p.taskWaiting)}`); return }
       clearInterval(slotWatch); slotWatch = 0; busyDone('fetch')
-      if (seenRun) { toast('时段快报已生成'); loadDigest() }
+      if (seenRun) { toast(doneToast); loadDigest() }
     } catch { /* 进度不可达不阻塞 */ }
   }, 1500)
 }
@@ -1216,7 +1216,7 @@ async function resumeDigestIfRunning() {
     if (f?.running || f?.queued) { // 在跑或在全局队列等位都算活着——排队中也要显示状态
       $('#btnDigestStop').hidden = false
       busyShow('fetch', f.queued && !f.running ? (f.held ? '⌛ 高峰暂停中·出峰自动执行…' : '⌛ 抓取+评分排队中…') : fetchProgText(f))
-      startSlotWatch() // 统一走共享 watcher：running/queued/held 三态全覆盖（在跑时 busyShow 内部按优先级挡掉，不与 digest/topic 互踩）
+      startSlotWatch('抓取已完成') // 统一走共享 watcher：running/queued/held 三态全覆盖（在跑时 busyShow 内部按优先级挡掉，不与 digest/topic 互踩）
     }
     const p = await api('/digest-progress')
     if (!p.running && !p.queued) return

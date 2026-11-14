@@ -226,7 +226,13 @@ export function apply(ctx: Context, config: ConfigType) {
     }
     desktopNotify(`📰 ${hm} 时段快报`, brief.replace(/\s+/g, ' ').slice(0, 500), click)
   }
-  const hmOf = (d: Date) => new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: config.timezone || undefined }).format(d)
+  // en-GB + hour12:false 的 ICU 怪癖：子夜时段可能产 '24:04'（time.ts 的 readParts/minutesOfDay 均已 %24 防御）。
+  // 这里用 formatToParts 重建并取模——'24:04' 落成 '00:04'，否则节标题/槽位标签/同刻覆盖全错位。
+  const hmOf = (d: Date) => {
+    const parts = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: config.timezone || undefined }).formatToParts(d)
+    const h = String(Number(parts.find((p) => p.type === 'hour')?.value ?? 0) % 24).padStart(2, '0')
+    return `${h}:${parts.find((p) => p.type === 'minute')?.value ?? '00'}`
+  }
   // briefNow opts.noTranslate/heuristicScores：高峰快报用——零 AI 调用（概括走抽取式兜底、翻译跳过不补）+未评条目启发式兜底
   // opts.day/time：槽位快报用——写回槽位那天的 hourly 文件、用槽位时刻作节标题（同刻覆盖峰内启发式节）
   const briefNow = async (fresh: FeedItem[], signal?: AbortSignal, opts?: { noTranslate?: boolean; heuristicScores?: boolean; day?: string; time?: string }) => {
@@ -673,7 +679,8 @@ export function apply(ctx: Context, config: ConfigType) {
     },
     regenDigest: async (force) => {
       if (peakNow()) { // 高峰中：排低峰队列立即返回——doneP 要等任务跑完，tools 调用会挂住数小时
-        void digestNow(force)
+        // doneP 必须接 catch：任务失败时 settle.reject 无人接住 = unhandledRejection 崩宿主
+        void digestNow(force).catch((e) => log.warn(`peak-queued digest failed: ${String(e)}`))
         return { ok: true, queued: true, error: undefined }
       }
       const doc = await digestNow(force)
@@ -1048,6 +1055,7 @@ export function apply(ctx: Context, config: ConfigType) {
         log,
       }))
       armPeak() // 高峰边界定时器首次挂钟
+      disposers.push(() => { peakTimer?.(); peakTimer = undefined }) // 插件重载必须清钟：孤儿定时器会拿旧闭包再跑一遍 pump/补跑
       if (store.meta.peakDefer && !peakNow()) peakBackfill() // 重启落在峰外且有欠账：直接补跑
       log.info('tools registered, scheduler armed')
     })
