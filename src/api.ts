@@ -17,7 +17,7 @@ import type { PrefsStore } from './core/prefs.js'
 import type { NewsService } from './tools.js'
 import { effectiveSources } from './service.js'
 import { loopDetectStatus } from './dsh-llm.js'
-import { backupDirOf, runBackupZip, stageRestore } from './backup.js'
+import { backupDirOf, runBackupZip, stageRestore, type BackupStore } from './backup.js'
 import { zonedDayKey } from './core/time.js'
 import { parseTune, learnFromFeedback } from './core/tune.js'
 import { normalizeTopicParams, listTopics, deleteTopic, exportTopic, topicsDirOf, type TopicParams } from './topic-pipeline.js'
@@ -541,7 +541,7 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     const b = deps.prefs.get().backup
     if (!b?.dir) { sendJson(r, 400, { ok: false, error: '先在设置里填备份文件夹' }); return }
     try {
-      const file = await runBackupZip(dirname(deps.store.path), deps.store as { snapshot?: (f: string) => void }, backupDirOf(b.dir), b.keep ?? 7)
+      const file = await runBackupZip(dirname(deps.store.path), deps.store as BackupStore, backupDirOf(b.dir), b.keep ?? 7)
       sendJson(r, 200, { ok: true, file })
     } catch (e) { sendJson(r, 500, { ok: false, error: String((e as Error)?.message || e) }) }
   }) }))

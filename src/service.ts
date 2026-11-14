@@ -200,9 +200,18 @@ function toItem(source: FeedSource, p: ReturnType<typeof parseFeedDocument>['ite
   }
 }
 
+/** 每周期去重上下文：三份窗口派生物只在周期开始时建一次（此前逐源重建=O(源数×窗口)）。
+    fetchOne 间共享且可变——本周期已收录的标题/hash 对后续源同样生效。 */
+interface DedupeCtx {
+  seen: Set<string>
+  seenHash: Set<string>
+  known: { title: string; hash: string }[]
+}
+
 async function fetchOne(
   src: FeedSource,
   opts: FetchCycleOptions,
+  dedupe: DedupeCtx,
   now: Date,
 ): Promise<SourceFetchResult> {
   const t0 = performance.now()
@@ -211,13 +220,7 @@ async function fetchOne(
     const doc = await opts.fetch(src.url, opts.signal, { proxy: src.proxy })
     if ('error' in doc) throw new Error(doc.error)
     const feed = parseFeedDocument(doc.body)
-    const seen = new Set(opts.store.items.map((i) => i.id))
-    const seenHash = new Set(opts.store.items.map((i) => i.hash)) // exact-hash 全量，不随窗口
-    const windowMs = (opts.dedupeWindowDays ?? 0) * 86400e3
-    const cutoff = windowMs > 0 ? now.getTime() - windowMs : 0
-    const known = opts.store.items
-      .filter((i) => !cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
-      .map((i) => ({ title: i.title, hash: '' })) // 窗口内只做标题 Jaccard，exact 由 seenHash 管
+    const { seen, seenHash, known } = dedupe // 每周期共享——跨源同周期近似重复也被拦（比逐源重建更强）
     const fresh: FeedItem[] = []
     for (const p of feed.items.slice(0, opts.maxItemsPerSource)) {
       const item = toItem(src, p, now, opts.storeContentChars)
@@ -515,13 +518,25 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
 
   const queue = [...active]
   const nowFn = opts.now || (() => new Date())
+  // 去重集合每周期建一次：窗口读取+三次全量派生此前逐源重复（70 源≈70 倍废功）；
+  // 共享后还顺带跨源拦截同周期近似重复。单线程下 dedupe 循环在 await 之后是同步段，无并发竞争。
+  const windowItems = opts.store.items
+  const windowMs = (opts.dedupeWindowDays ?? 0) * 86400e3
+  const cutoff = windowMs > 0 ? now.getTime() - windowMs : 0
+  const dedupe: DedupeCtx = {
+    seen: new Set(windowItems.map((i) => i.id)),
+    seenHash: new Set(windowItems.map((i) => i.hash)), // exact-hash 全量，不随窗口
+    known: windowItems
+      .filter((i) => !cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
+      .map((i) => ({ title: i.title, hash: '' })), // 窗口内只做标题 Jaccard，exact 由 seenHash 管
+  }
   const workers = Array.from({ length: Math.max(1, opts.concurrency) }, async () => {
     for (;;) {
       if (opts.signal?.aborted) return
       const src = queue.shift()
       if (!src) return
       opts.onSourceStart?.(src)
-      const r = await fetchOne(src, opts, now)
+      const r = await fetchOne(src, opts, dedupe, now)
       result.sources.push(r)
       result.totalFetched += r.fetched
       result.totalAdded += r.added

@@ -31,6 +31,7 @@ export declare class SqliteStore {
     private window;
     private windowReady;
     private windowGen;
+    private countsReady;
     private dirtyItems;
     private proxyCache;
     /** 条目脏检测：窗口对象套 Proxy，任意层级写入（含 state.* 嵌套）都把根条目记入 dirtyItems——
@@ -62,6 +63,8 @@ export declare class SqliteStore {
     get items(): FeedItem[];
     get health(): Record<string, import("./types.js").SourceHealth>;
     count(): number;
+    /** 可见总数（总数-屏蔽）——queryItems 无筛选时用它替代 json_extract 全扫 COUNT */
+    private visibleCount;
     setHealth(id: string, health: FeedSource['health']): void;
     getHealth(id: string): import("./types.js").SourceHealth;
     addSource(source: FeedSource): void;
@@ -75,10 +78,14 @@ export declare class SqliteStore {
     save(): Promise<void>;
     /** 清空全部条目（含 FTS 联动+内存窗口）；返回删除数 */
     clearItems(): number;
-    /** 年库归档：清退前把将删行按 fetchedAt 年份写进同目录 archive-YYYY.db（同构 schema+FTS 触发器自动建索引）。
+    /** 年库归档：把给定 id 集的行按 fetchedAt 年份写进同目录 archive-YYYY.db（同构 schema+FTS 触发器自动建索引）。
         导出失败跳过删除——宁涨不丢数据。返回是否已导出（true=可删）。 */
-    private exportToArchive;
-    /** 清退：先过期后配额（低质优先 or 最老优先），SQL DELETE；删除前统一走年库归档 */
+    private archiveIds;
+    /** 分块清退：索引批取 id（LIMIT 有界）→ 归档 → 删除 → 让渡。
+        单语句全量 DELETE 随行数线性冻结事件循环——大库下必须摊成无感后台批。
+        selectIds 必须是索引驱动的取 id 语句（不含 LIMIT——由循环按批追加）。 */
+    private pruneByIds;
+    /** 清退：先过期后配额（低质优先 or 最老优先）——分块归档+删除，块间让渡 */
     private prune;
     /** 跨窗口查询（/items 下推 + 专题候选）：filter+sort+FTS+分页全在 SQL */
     queryItems(opts: {
@@ -114,7 +121,13 @@ export declare class SqliteStore {
         sources: number;
         digests: number;
     }>;
-    /** .db 快照（VACUUM INTO）——全量灾备；先跑 integrity_check 预检：坏库不备份（备份坏库=留存坏档） */
+    /** 库文件字节数——备份/完整性检查的大小门控依据 */
+    dbFileSize(): number;
+    get dbPath(): string;
+    /** WAL 合并入主文件并截断——此后 .db 文件自身就是一致快照点（直接拷贝即有效备份，免 VACUUM 全量重写） */
+    checkpointWal(): void;
+    /** .db 快照（VACUUM INTO）——全量灾备；先跑 quick_check 预检：坏库不备份（备份坏库=留存坏档）。
+        仅小库走此路径（VACUUM INTO 全量重写随库线性——大库备份走 checkpointWal+文件拷贝）。 */
     snapshot(file: string): void;
     close(): void;
 }
