@@ -37,7 +37,7 @@ test('sql: 删除订阅源时删除其全部历史新闻并同步 FTS/内存窗�
   const source = { id: 'https://x/feed', url: 'https://x/feed', title: 'X', enabled: true, addedAt: '', category: 'AI', tier: 1, lang: 'en', method: 'direct', builtin: false, weight: 1, summarize: true, proxy: null, health: {} }
   st.addSource(source)
   st.addItems([mkItem('a', { sourceId: source.id, title: '删除源新闻测试' }), mkItem('b', { sourceId: 'other' })])
-  assert.equal(st.removeSource(source.id), true)
+  assert.equal(await st.removeSource(source.id), true)
   assert.equal(st.count(), 1)
   assert.equal(st.items.length, 1)
   assert.equal(st.items[0].id, 'b')

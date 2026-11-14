@@ -56,6 +56,7 @@ export interface PrefsFile extends Prefs {
         minLlmScore?: number;
         candidateHours?: number;
         llmScoreCandidates?: number;
+        candidateMax?: number;
         summaryMaxItems?: number;
         summaryConcurrency?: number;
         digestMaxLength?: number;

@@ -61,6 +61,9 @@ export interface DigestPipelineOptions {
   penaltyWindowDays?: number
   /** force 重跑：纳入当日已推条目重算（news_regen /api/digest-run force 语义） */
   force?: boolean
+  /** 候选池上限（SQL 直取，默认 50000）：窗口不再是数据边界——高摄入下全天未消化条目
+      都该进评分视野；超上限按 fetchedAt 倒序取最新（旧条目饿死与旧窗口语义一致） */
+  candidateMax?: number
   /** P1 抓取后评分进度回调（done,total=已处理块覆盖/待评条数）——fetch-progress 的 score 段用 */
   onScoreProgress?: (done: number, total: number) => void
   /** v2：LLM 评分候选池上限（启发式粗排后取前 N）；0=关闭用纯启发式 */
@@ -517,11 +520,24 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   // 候选池：今日未推过 + 未隐藏；candidateHours>0 时限近 N 小时
   const cutoff = (opts.candidateHours ?? 0) > 0 ? now.getTime() - opts.candidateHours! * 3600e3 : 0
   const subs = opts.subscribedTopics
-  const candidates = opts.store.items.filter((i) =>
-    (opts.force || i.digestedDay !== day) && !i.state.hidden
-    && (!cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
-    && (!subs?.length || subs.includes(i.topic || '综合')), // P5 订阅分类：未订阅不进池
-  )
+  // SQLite 路径候选走 SQL——store.items 只是内存工作集窗口（≤windowSize 条）：
+  // 高摄入下当天条目远超窗口，窗口过滤会让日报漏掉大半天（静默残缺）。
+  // 条件与旧内存过滤同口径：未消化(hidden 由 queryItems 内建排除)+时间界+订阅分类。
+  const qi = (opts.store as { queryItems?: (o: { fetchedAfter?: string; excludeDigestedDay?: string; topics?: string[]; limit?: number; sort?: 'fetched'; skipTotal?: boolean }) => { items: FeedItem[] } }).queryItems
+  const candidates: FeedItem[] = qi
+    ? qi.call(opts.store, {
+      fetchedAfter: cutoff ? new Date(cutoff).toISOString() : undefined,
+      excludeDigestedDay: opts.force ? undefined : day,
+      topics: subs?.length ? [...subs] : undefined,
+      limit: opts.candidateMax ?? 50_000,
+      sort: 'fetched',
+      skipTotal: true,
+    }).items
+    : opts.store.items.filter((i) =>
+      (opts.force || i.digestedDay !== day) && !i.state.hidden
+      && (!cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
+      && (!subs?.length || subs.includes(i.topic || '综合')), // P5 订阅分类：未订阅不进池
+    )
   // v2：启发式全量粗排 → 同题合并 → LLM 评分（可关/失败回退）→ 阈值+perTopic 挑选
   for (const i of candidates) { i.dupCount = undefined; i.dupOf = undefined; i.aiBlocks = undefined } // 清上轮产物；llmScore/tags 是 ingest 一次性属性不清
   const allScored = scoreAndSelect(candidates, sourcesById, Math.max(candidates.length, 1), {
@@ -540,11 +556,13 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     opts.onItemDone?.(1, 1, 'cluster')
   }
   // P3 补评兜底：无分候选（存量/评分失败批次）补评一次，写回持久化
+  let rescored: FeedItem[] = []
   if ((opts.rescoreMissing ?? true) && opts.llmEnabled && opts.llmClient && (opts.llmScoreCandidates ?? 40) > 0) {
     const unscored = merged.filter((i) => i.llmScore == null && (i.score ?? 0) > -0.5)
     if (unscored.length) {
       opts.onItemDone?.(0, 1, 'score')
       await llmScoreItems(unscored, opts.llmClient, opts, log)
+      rescored = unscored.filter((i) => i.llmScore != null)
       opts.onItemDone?.(1, 1, 'score')
     }
   }
@@ -558,6 +576,9 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   if (opts.llmEnabled && opts.translateClient) {
     await translateItems(picked, opts.translateClient, opts)
   }
+  // queryItems 候选是普通对象（非窗口代理）——管线写入的评分/摘要/译文不会自动标脏，
+  // 小集合（补评成功+入选）手动标脏借 save() UPDATE 通道回写；dupOf/dupCount 是临时注解不回写
+  ;(opts.store as { persistItems?: (i: FeedItem[]) => void }).persistItems?.([...rescored, ...picked])
 
   // 持续热点检测：读当日 hourly.md，统计每条在几个 ## HH:mm 节出现（≥2=持续发酵）
   try {

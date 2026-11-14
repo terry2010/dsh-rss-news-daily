@@ -3,7 +3,7 @@
  * 恢复不热替换（sqlite 连接开着）——解压到 .restore-pending/，下次启动开库前覆盖写回。
  */
 
-import { copyFileSync, cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { cp, mkdir, readdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
@@ -91,10 +91,11 @@ export function applyPendingRestore(dataDir: string, log?: { info: (m: string) =
     if (existsSync(pdb)) {
       // 连带 WAL/SHM 清掉，避免旧日志混进恢复的库
       for (const ext of ['', '-wal', '-shm']) rmSync(join(dataDir, `store.db${ext}`), { force: true })
-      copyFileSync(pdb, join(dataDir, 'store.db'))
+      // rename 同分区 O(1) 原子换名——copyFileSync 在 GB 级旁车库上是同步分钟级冻结
+      renameSync(pdb, join(dataDir, 'store.db'))
     }
     const pp = join(pending, 'prefs.json')
-    if (existsSync(pp)) copyFileSync(pp, join(dataDir, 'prefs.json'))
+    if (existsSync(pp)) renameSync(pp, join(dataDir, 'prefs.json'))
     const pd = join(pending, 'digests')
     if (existsSync(pd)) {
       rmSync(join(dataDir, 'digests'), { recursive: true, force: true })

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 import type { FeedItem, FeedSource, FetchCycleResult, LogSink, SourceFetchResult } from './core/types.js'
 import { noopLog, isStaleItem } from './core/types.js'
 import { parseFeedDocument, stripHtml, stripLeadStub, truncateCodePoints } from './core/parser.js'
-import { findDuplicate, itemHash } from './core/dedupe.js'
+import { itemHash, tokenizeTitle, tokenSetSimilarity } from './core/dedupe.js'
 import type { StoreLike } from './core/store.js'
 import type { createFetcher } from './core/fetcher.js'
 
@@ -201,11 +201,14 @@ function toItem(source: FeedSource, p: ReturnType<typeof parseFeedDocument>['ite
 }
 
 /** 每周期去重上下文：三份窗口派生物只在周期开始时建一次（此前逐源重建=O(源数×窗口)）。
-    fetchOne 间共享且可变——本周期已收录的标题/hash 对后续源同样生效。 */
+    fetchOne 间共享且可变——本周期已收录的标题/hash 对后续源同样生效。
+    known 存预分词词集 + inverted 倒排：候选只跟共享 token 的条目比 Jaccard，
+    比较次数从 O(窗口) 降到实际共享 token 的极少数——高摄入下这是去重路径的生死线。 */
 interface DedupeCtx {
   seen: Set<string>
   seenHash: Set<string>
-  known: { title: string; hash: string }[]
+  known: Set<string>[]
+  inverted: Map<string, number[]>
 }
 
 async function fetchOne(
@@ -220,15 +223,24 @@ async function fetchOne(
     const doc = await opts.fetch(src.url, opts.signal, { proxy: src.proxy })
     if ('error' in doc) throw new Error(doc.error)
     const feed = parseFeedDocument(doc.body)
-    const { seen, seenHash, known } = dedupe // 每周期共享——跨源同周期近似重复也被拦（比逐源重建更强）
+    const { seen, seenHash, known, inverted } = dedupe // 每周期共享——跨源同周期近似重复也被拦（比逐源重建更强）
+    const threshold = Math.max(0, Math.min(1, opts.dedupeThreshold))
     const fresh: FeedItem[] = []
     for (const p of feed.items.slice(0, opts.maxItemsPerSource)) {
       const item = toItem(src, p, now, opts.storeContentChars)
-      if (seen.has(item.id) || seenHash.has(item.hash)
-        || findDuplicate({ title: item.title, hash: '__never__' }, known, {
-          threshold: opts.dedupeThreshold, compareContent: false,
-        })) { res.duplicated += 1; continue }
-      seen.add(item.id); seenHash.add(item.hash); known.push({ title: item.title, hash: '' })
+      const candT = tokenizeTitle(item.title)
+      let isDup = seen.has(item.id) || seenHash.has(item.hash)
+      if (!isDup && candT.size) {
+        // 倒排收敛候选：只跟共享 ≥1 token 的 known 比 Jaccard——绝大多数比较直接被跳过
+        const idxs = new Set<number>()
+        for (const t of candT) { const l = inverted.get(t); if (l) for (const i of l) idxs.add(i) }
+        for (const i of idxs) { if (tokenSetSimilarity(candT, known[i]) >= threshold) { isDup = true; break } }
+      }
+      if (isDup) { res.duplicated += 1; continue }
+      seen.add(item.id); seenHash.add(item.hash)
+      const ni = known.length
+      known.push(candT)
+      for (const t of candT) { const l = inverted.get(t); if (l) l.push(ni); else inverted.set(t, [ni]) }
       fresh.push(item)
     }
     res.fetched = feed.items.length
@@ -349,7 +361,7 @@ export async function restoreBuiltinSource(store: StoreLike, url: string): Promi
 
 export async function removeSource(store: StoreLike, urlOrId: string, isBuiltin = false): Promise<boolean> {
   if (isBuiltin) { // 内置源→墓碑:不从 store 删,记 deletedBuiltin 让 effectiveSources 跳过
-    store.removeItemsBySource(normalizeUrl(urlOrId))
+    await store.removeItemsBySource(normalizeUrl(urlOrId))
     const list = store.meta.deletedBuiltin || (store.meta.deletedBuiltin = [])
     if (!list.includes(normalizeUrl(urlOrId))) list.push(normalizeUrl(urlOrId))
     // 顺带清掉该源的覆盖层(改名/状态),恢复时回到出厂设置
@@ -359,7 +371,7 @@ export async function removeSource(store: StoreLike, urlOrId: string, isBuiltin 
     return true
   }
   const id = normalizeUrl(urlOrId)
-  const removed = store.removeSource(id) || store.removeSource(urlOrId)
+  const removed = (await store.removeSource(id)) || (await store.removeSource(urlOrId))
   if (removed) await store.save()
   return removed
 }
@@ -523,12 +535,16 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
   const windowItems = opts.store.items
   const windowMs = (opts.dedupeWindowDays ?? 0) * 86400e3
   const cutoff = windowMs > 0 ? now.getTime() - windowMs : 0
+  const known = windowItems
+    .filter((i) => !cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
+    .map((i) => tokenizeTitle(i.title)) // 窗口内只做标题 Jaccard，exact 由 seenHash 管；词集一次算好
+  const inverted = new Map<string, number[]>()
+  known.forEach((toks, i) => { for (const t of toks) { const l = inverted.get(t); if (l) l.push(i); else inverted.set(t, [i]) } })
   const dedupe: DedupeCtx = {
     seen: new Set(windowItems.map((i) => i.id)),
     seenHash: new Set(windowItems.map((i) => i.hash)), // exact-hash 全量，不随窗口
-    known: windowItems
-      .filter((i) => !cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
-      .map((i) => ({ title: i.title, hash: '' })), // 窗口内只做标题 Jaccard，exact 由 seenHash 管
+    known,
+    inverted,
   }
   const workers = Array.from({ length: Math.max(1, opts.concurrency) }, async () => {
     for (;;) {

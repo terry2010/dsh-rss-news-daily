@@ -53,6 +53,9 @@ export interface DigestPipelineOptions {
     penaltyWindowDays?: number;
     /** force 重跑：纳入当日已推条目重算（news_regen /api/digest-run force 语义） */
     force?: boolean;
+    /** 候选池上限（SQL 直取，默认 50000）：窗口不再是数据边界——高摄入下全天未消化条目
+        都该进评分视野；超上限按 fetchedAt 倒序取最新（旧条目饿死与旧窗口语义一致） */
+    candidateMax?: number;
     /** P1 抓取后评分进度回调（done,total=已处理块覆盖/待评条数）——fetch-progress 的 score 段用 */
     onScoreProgress?: (done: number, total: number) => void;
     /** v2：LLM 评分候选池上限（启发式粗排后取前 N）；0=关闭用纯启发式 */

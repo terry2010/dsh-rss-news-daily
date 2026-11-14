@@ -20,6 +20,10 @@ export declare function normalizeText(text: string): string;
 export declare function hashText(text: string): string;
 /** Jaccard similarity between two token sets: |A ∩ B| / |A ∪ B| ∈ [0, 1]. */
 export declare function tokenSimilarity(left: string, right: string): number;
+/** 预分词版 Jaccard——抓取热路径每周期对同批 known 比对数十万次：
+    词集预算后候选/known 各自只分词一次（旧实现逐比较把两侧标题重分词，O(新×known) 次分词）。 */
+export declare function tokenizeTitle(text: string): Set<string>;
+export declare function tokenSetSimilarity(a: Set<string>, b: Set<string>): number;
 /**
  * Compute the exact-match dedup hash for one item. Title dominates; when the
  * title is empty or the caller opts into content comparison, the body text is

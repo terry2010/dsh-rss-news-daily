@@ -4,7 +4,7 @@
  * 所有条目变更写穿透；meta/sources/health 内存镜像 + save 落盘。
  */
 import { DatabaseSync } from 'node:sqlite'
-import { existsSync, mkdirSync, renameSync, copyFileSync, rmSync, createWriteStream, createReadStream, statSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, createWriteStream, createReadStream, statSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { FeedItem, FeedSource } from './types.js'
@@ -62,6 +62,32 @@ CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE ON items BEGIN
   INSERT INTO items_fts(rowid, title, summary) VALUES (new.rowid, new.title, new.summary); END;
 `
 
+/** 状态 JSON 实列化：VIRTUAL 生成列=纯元数据操作（不重写表、任何库瞬时完成），
+    让 unread/hidden 筛选从 json_extract 逐行评估变等值索引查找（=0 走索引，IS NOT 不走）。 */
+const STATE_COL_HIDDEN = "ALTER TABLE items ADD COLUMN state_hidden INTEGER GENERATED ALWAYS AS (COALESCE(json_extract(state,'$.hidden'),0)) VIRTUAL"
+const STATE_COL_READ = "ALTER TABLE items ADD COLUMN state_read INTEGER GENERATED ALWAYS AS (COALESCE(json_extract(state,'$.read'),0)) VIRTUAL"
+/** 状态复合索引：(hidden, read, 默认排序表达式)——unread/可见筛选的 WHERE 与 ORDER BY 同索引直出，
+    LIMIT 早退；2 列版只解决过滤、排序仍要 TEMP B-TREE 全量重排（大库下每请求 O(n log n) 死）。
+    更名 v2：旧 idx_items_state 若存在由 DDL 段顺手 DROP（DROP INDEX 是纯元数据 O(1)）。 */
+const IDX_ITEMS_STATE = 'CREATE INDEX IF NOT EXISTS idx_items_state2 ON items(state_hidden, state_read, COALESCE(NULLIF(publishedAt,\'\'),fetchedAt))'
+const DROP_IDX_ITEMS_STATE_V1 = 'DROP INDEX IF EXISTS idx_items_state'
+const IDX_ITEMS_PUBSORT = "CREATE INDEX IF NOT EXISTS idx_items_pubsort ON items(COALESCE(NULLIF(publishedAt,''),fetchedAt))"
+const IDX_ITEMS_QUALITY = 'CREATE INDEX IF NOT EXISTS idx_items_quality ON items(COALESCE(llmScore,5), fetchedAt)'
+const COUNTER_SEED_SQL = `INSERT OR REPLACE INTO counters (key,n) VALUES
+  ('total',(SELECT COUNT(*) FROM items)),
+  ('hidden',(SELECT COUNT(*) FROM items WHERE COALESCE(json_extract(state,'$.hidden'),0)=1))`
+
+function tableCols(db: DatabaseSync, table: string): Set<string> {
+  // table_xinfo 不用 table_info：VIRTUAL 生成列对后者不可见——会误判缺失反复 ALTER，stateColsReady 永远到不了 true
+  return new Set((db.prepare(`PRAGMA table_xinfo(${table})`).all() as Row[]).map((r) => String(r.name)))
+}
+function indexExists(db: DatabaseSync, name: string): boolean {
+  return !!db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name=?").get(name)
+}
+function counterSeeded(db: DatabaseSync): boolean {
+  return !!db.prepare("SELECT n FROM counters WHERE key='total'").get()
+}
+
 /** 同步 schema 纪元：结构性变更（加列/改表/数据回填）时 +1，并在 openDb 迁移段挂对应步骤。
     记录于 PRAGMA user_version——SQLite 内建槽位，不占 meta kv；跳版本升级按序连跑幂等收敛。 */
 const SCHEMA_VERSION = 1
@@ -99,6 +125,9 @@ export interface SqliteStoreOptions {
   path: string            // .db 路径
   /** 数量上限：数字或实时读取函数（偏好覆盖走后者，改设置即生效） */
   maxItems?: number | (() => number)
+  /** 内存窗口上限（默认 30000）——与 maxItems(库配额) 解耦：高摄入用户把配额调到
+      百万/十亿级后窗口仍只物化最近 N 条，不调即 OOM；窗口=工作集不是数据边界 */
+  windowItems?: number
   retentionDays?: () => number
   pruneLowQuality?: () => boolean
   fts?: boolean           // FTS5 可用（P1 探测结果）
@@ -126,6 +155,7 @@ export class SqliteStore {
   readonly path: string
   private readonly maxItemsFn: () => number
   get maxItems(): number { return this.maxItemsFn() }
+  private readonly windowSize: number
   private readonly log: LogSink
   private readonly retentionDays: () => number
   private readonly pruneLowQuality: () => boolean
@@ -134,10 +164,16 @@ export class SqliteStore {
   private db!: DatabaseSync
   private metaObj: StoreMeta & { health?: Record<string, FeedSource['health']> } = { lastFetchAt: '', lastDigestAt: '', lastDigestDay: '' } as StoreMeta & { health?: Record<string, FeedSource['health']> }
   private srcList: FeedSource[] = []
-  private window: FeedItem[] = [] // items getter 的有界窗口（最近 maxItems 条）
+  private window: FeedItem[] = [] // items getter 的有界窗口（最近 winCap 条）——内存工作集，与库配额解耦
   private windowReady = false // 窗口是否已建——load() 后由 warmWindow 分块填充，就绪前 getter 走惰性同步兜底
   private windowGen = 0 // 窗口代际：refreshWindow/addItems/clearItems 自增——warmWindow 半成品据此判脏
   private countsReady = false // counters 触发器+种子就绪——此前 count() 等回落真实 COUNT（随库线性增长，故尽快播种）
+  private countsDeferred = false // 大库计数器种子排进空闲 DDL 队列——就绪前 count() 返回 -1（未知），queryItems 走 totalPending
+  private stateColsReady = false // state_hidden/state_read 生成列就绪——此前 WHERE 用 json_extract 等价兜底
+  private ddlQueue: string[] = [] // 大库推迟 DDL（种子/索引单语句随库线性）——摊进空闲 tick 逐条跑
+  private ensuredArchives = new Set<string>() // 本进程已做同构 schema 的年库——archiveIds 批间不重复建
+  private archiveTodo: string[] = [] // 年库巡检队列：每日扫档入列、每个空闲 tick 收敛一个
+  private lastArchiveMaintAt = 0
   private dirtyItems = new Map<string, FeedItem>() // 自上次 save 以来被改过的条目（窗口 Proxy 脏标记）
   private proxyCache = new WeakMap<object, object>()
 
@@ -172,12 +208,16 @@ export class SqliteStore {
     this.path = options.path
     const mi = options.maxItems
     this.maxItemsFn = typeof mi === 'function' ? mi : () => mi ?? 1000
+    this.windowSize = options.windowItems ?? 30_000
     this.retentionDays = options.retentionDays ?? (() => 0)
     this.pruneLowQuality = options.pruneLowQuality ?? (() => false)
     this.ftsEnabled = options.fts ?? true
     this.isIdleFn = options.isIdle ?? (() => true)
     this.log = options.log ?? noopLog
   }
+
+  /** 窗口实际容量：min(窗口上限, 库配额)——配额比窗口小的库窗口仍是全量，行为与旧版一致 */
+  private winCap(): number { return Math.min(this.windowSize, this.maxItems) }
 
   async load(): Promise<void> {
     mkdirSync(dirname(this.path), { recursive: true })
@@ -236,6 +276,9 @@ export class SqliteStore {
     this.windowReady = false
     this.windowGen++ // 同时作废可能在飞的上一轮 warmWindow 半成品
     this.countsReady = false // restoreFrom/隔离重建会再过 load——计数器等 warmWindow 重播种子自愈
+    this.countsDeferred = false
+    this.stateColsReady = false
+    this.ddlQueue = []
     // 启动不做清退（过期归档/超配额删除随 save() 生命周期走）——保库原样，大库冷启动不被二次阻塞
     void this.warmWindow()
       .catch((e) => this.log.warn(`window warm failed: ${e instanceof Error ? e.message : e}`))
@@ -260,9 +303,18 @@ export class SqliteStore {
     this.icTimer.unref?.()
   }
   private integrityTick(): void {
+    if (!this.isIdleFn()) return // 有任务在跑/排队/用户在用——下次再探
+    // 1) 推迟 DDL 最高优先：每个空闲 tick 只跑一条（单语句随库线性，摊薄到多个空闲窗口）
+    const job = this.ddlQueue.shift()
+    if (job) {
+      try { this.runDdlJob(job); this.log.info(`deferred ddl done: ${job} (剩 ${this.ddlQueue.length})`) }
+      catch (e) { this.log.warn(`deferred ddl failed (${job}): ${e instanceof Error ? e.message : e}`) }
+      return
+    }
+    // 2) 年库巡检：每日扫档入列、每 tick 收敛一个文件（旧年库缺计数器/索引/状态列——ensureArchiveSchema 补全）
+    this.archiveMaintainTick()
     const DAY = 24 * 3600_000
     if (Date.now() - this.lastIntegrityAt < DAY) return
-    if (!this.isIdleFn()) return // 有任务在跑/排队——下次再探
     this.lastIntegrityAt = Date.now() // 先记账——即便失败也不每分钟重扫大库
     // 大库门控：任何全页扫都随库线性冻结事件循环——超阈值直接跳过（备份快照路径仍做 quick_check 预检）
     if (this.dbFileSize() > SQLITE_CHECK_MAX_BYTES) { this.log.info('db >2GB：跳过定期完整性检查（全页扫会把宿主冻结分钟级）'); return }
@@ -279,12 +331,36 @@ export class SqliteStore {
     } catch (e) { this.log.warn(`deferred quick_check failed: ${e instanceof Error ? e.message : e}`) }
   }
 
+  /** 年库巡检：每日把同目录 archive-*.db 入列，每个空闲 tick 收敛一个文件做同构 schema。
+      旧年库的计数器种子是一次性 COUNT——摊到不同空闲窗口不叠加冻结。 */
+  private archiveMaintainTick(): void {
+    const DAY = 24 * 3600_000
+    if (!this.archiveTodo.length) {
+      if (Date.now() - this.lastArchiveMaintAt < DAY) return
+      this.lastArchiveMaintAt = Date.now()
+      try {
+        this.archiveTodo = readdirSync(dirname(this.path))
+          .filter((f) => /^archive-\d{4}\.db$/.test(f))
+          .map((f) => join(dirname(this.path), f))
+      } catch { return }
+    }
+    const f = this.archiveTodo.shift()
+    if (!f) return
+    try {
+      const adb = new DatabaseSync(f)
+      try { this.ensureArchiveSchema(adb, f) } finally { adb.close() }
+      this.log.info(`archive maintained: ${f}`)
+    } catch (e) { this.log.warn(`archive maintain failed (${f}): ${e instanceof Error ? e.message : e}`) }
+  }
+
   /** 热恢复：关库 → file 覆盖 store.db → 重新 load（meta/sources/窗口全部重建）。
-      调用方须先停抓取/生成；脏窗口清空避免旧数据写回恢复库。 */
+      调用方须先停抓取/生成；脏窗口清空避免旧数据写回恢复库。
+      用 renameSync 不用 copyFileSync：pending 与目标同目录同文件系统，rename 是 O(1) 原子换名——
+      大库恢复从"同步拷贝 GB 级文件（分钟级冻结）"变瞬时。 */
   async restoreFrom(file: string): Promise<void> {
     try { this.db.close() } catch { /* 幂等 */ }
     for (const ext of ['', '-wal', '-shm']) rmSync(`${this.path}${ext}`, { force: true })
-    copyFileSync(file, this.path)
+    renameSync(file, this.path)
     this.dirtyItems.clear()
     this.proxyCache = new WeakMap()
     await this.load()
@@ -292,45 +368,77 @@ export class SqliteStore {
 
   private refreshWindow(): void {
     // 不清 dirtyItems：窗口重建丢的是代理外壳，脏条目快照仍可回写（已删行 UPDATE 0 行无害，自清于下次 commit）
-    this.window = (this.db.prepare('SELECT * FROM items ORDER BY fetchedAt DESC LIMIT ?').all(this.maxItems) as Row[]).map((r) => this.wrapItem(rowToItem(r)))
+    this.window = (this.db.prepare('SELECT * FROM items ORDER BY fetchedAt DESC LIMIT ?').all(this.winCap()) as Row[]).map((r) => this.wrapItem(rowToItem(r)))
     this.windowReady = true
     this.windowGen++
   }
   /** 分块预热：LIMIT/OFFSET 分批取行+逐行包裹，块间 setImmediate 让渡——事件循环不被一坨同步工作堵死。
       预热期间有写入（addItems/refreshWindow/clearItems）→ 代际变了，半成品弃之改同步重建（正确性优先）。 */
+  /** 计数器种子+触发器：同 SAVEPOINT 原子执行——种子是绝对值重放，写入不可能穿插其间（单线程单写者）；
+      触发器在种子后创建不会漏计。幂等可重跑（restoreFrom 后自动自愈）。
+      用 SAVEPOINT 不用 BEGIN：importNdjson 的 for-await 事务可能与预热期交叠——
+      SAVEPOINT 可嵌在外层事务内（独立时自成隐式事务），不会撞"within a transaction"
+      也不会在失败时误回滚外层事务。若整个外层事务事后被回滚，种子消失→count() 缺失防御兜底。 */
+  private seedCounters(): void {
+    this.db.exec('SAVEPOINT cnt_seed')
+    this.db.exec(COUNTER_SEED_SQL)
+    this.db.exec(COUNTER_TRIGGERS)
+    this.db.exec('RELEASE cnt_seed')
+    this.countsReady = true
+    this.countsDeferred = false
+  }
+
+  /** state_hidden/state_read 生成列：VIRTUAL=纯元数据 ALTER（任何规模瞬时）——无需随大库推迟；
+      复合索引让 unread/可见筛选走等值查找。 */
+  private ensureStateCols(): void {
+    const cols = tableCols(this.db, 'items')
+    if (!cols.has('state_hidden')) this.db.exec(STATE_COL_HIDDEN)
+    if (!cols.has('state_read')) this.db.exec(STATE_COL_READ)
+    this.stateColsReady = true
+  }
+
+  /** 推迟 DDL 任务：大库上的单语句 O(库) 操作（计数器种子/索引新建）逐条摊进空闲 tick */
+  private runDdlJob(key: string): void {
+    switch (key) {
+      case 'counter_seed': this.seedCounters(); break
+      case 'idx_state': this.db.exec(`${DROP_IDX_ITEMS_STATE_V1}; ${IDX_ITEMS_STATE}`); break
+      case 'idx_pubsort': this.db.exec(IDX_ITEMS_PUBSORT); break
+      case 'idx_quality': this.db.exec(IDX_ITEMS_QUALITY); break
+    }
+  }
+
   private async warmWindow(): Promise<void> {
     await new Promise((r) => setImmediate(r)) // 先让渡一拍：async 函数在首个 await 前是同步执行——没有这句建索引会跑回 load() 临界路径
     const gen0 = this.windowGen
-    // 计数器种子+触发器：同事务原子执行——种子是绝对值重放，写入不可能穿插其间（单线程单写者）；
-    // 触发器在种子后创建不会漏计。幂等可重跑（restoreFrom 后自动自愈）。hidden 种子那一次 json 全扫
-    // 是一次性迁移成本——此后所有计数 O(1)。
-    // 用 SAVEPOINT 不用 BEGIN：importNdjson 的 for-await 事务可能与预热期交叠——
-    // SAVEPOINT 可嵌在外层事务内（独立时自成隐式事务），不会撞"within a transaction"
-    // 也不会在失败时误回滚外层事务。若整个外层事务事后被回滚，种子消失→count() 缺失防御兜底。
+    const big = this.dbFileSize() > SQLITE_CHECK_MAX_BYTES
+    // —— 计数器：触发器幂等先挂上（已种子只补触发器）；未种子的小库立即播、大库排空闲队列
     try {
-      this.db.exec('SAVEPOINT cnt_seed')
-      this.db.exec(`INSERT OR REPLACE INTO counters (key,n) VALUES
-        ('total',(SELECT COUNT(*) FROM items)),
-        ('hidden',(SELECT COUNT(*) FROM items WHERE COALESCE(json_extract(state,'$.hidden'),0)=1))`)
       this.db.exec(COUNTER_TRIGGERS)
-      this.db.exec('RELEASE cnt_seed')
-      this.countsReady = true
+      if (counterSeeded(this.db)) this.countsReady = true
+      else if (big) { this.countsDeferred = true; this.ddlQueue.push('counter_seed'); this.log.info('db >2GB：计数器种子推迟到空闲时段（两次全扫 COUNT 会冻结分钟级）') }
+      else this.seedCounters()
     } catch (e) {
       try { this.db.exec('ROLLBACK TO cnt_seed'); this.db.exec('RELEASE cnt_seed') } catch { /* 幂等 */ }
       this.log.warn(`counter seed failed: ${e instanceof Error ? e.message : e}`)
     }
-    // 表达式索引后台建：升级后首次启动建索引是一次性秒级扫表——放预热期不堵 load() 就绪点；已存在则瞬时
-    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_items_pubsort ON items(COALESCE(NULLIF(publishedAt,''),fetchedAt))") }
-    catch (e) { this.log.warn(`pubsort index failed: ${e instanceof Error ? e.message : e}`) }
-    // 低质清退排序键：COALESCE(llmScore,5) 无索引会全表排序——仅在低质清退开启时建
-    if (this.pruneLowQuality()) {
-      try { this.db.exec('CREATE INDEX IF NOT EXISTS idx_items_quality ON items(COALESCE(llmScore,5), fetchedAt)') }
-      catch (e) { this.log.warn(`quality index failed: ${e instanceof Error ? e.message : e}`) }
+    // —— 状态生成列：VIRTUAL ALTER 是元数据操作，任何规模即时
+    try { this.ensureStateCols() } catch (e) { this.log.warn(`state cols failed: ${e instanceof Error ? e.message : e}`) }
+    // —— 索引：已存在则瞬时；新建随库线性——大库排空闲队列（未建期间查询走无索引等价路径，只是慢不是错）
+    const want: Array<{ key: string; sql: string; exists: boolean }> = [
+      { key: 'idx_state', sql: `${DROP_IDX_ITEMS_STATE_V1}; ${IDX_ITEMS_STATE}`, exists: indexExists(this.db, 'idx_items_state2') },
+      { key: 'idx_pubsort', sql: IDX_ITEMS_PUBSORT, exists: indexExists(this.db, 'idx_items_pubsort') },
+      { key: 'idx_quality', sql: IDX_ITEMS_QUALITY, exists: !this.pruneLowQuality() || indexExists(this.db, 'idx_items_quality') },
+    ]
+    for (const w of want) {
+      if (w.exists) continue
+      if (big) { this.ddlQueue.push(w.key); continue }
+      try { this.db.exec(w.sql) } catch (e) { this.log.warn(`${w.key} failed: ${e instanceof Error ? e.message : e}`) }
     }
     const stmt = this.db.prepare('SELECT * FROM items ORDER BY fetchedAt DESC LIMIT ? OFFSET ?')
     const CHUNK = 1000
     const out: FeedItem[] = []
-    for (let off = 0; off < this.maxItems; off += CHUNK) {
+    const cap = this.winCap()
+    for (let off = 0; off < cap; off += CHUNK) {
       if (this.windowReady) return // 有调用方等不及走了惰性同步兜底——半成品丢
       const rows = stmt.all(CHUNK, off) as Row[]
       for (const r of rows) out.push(this.wrapItem(rowToItem(r)))
@@ -358,6 +466,7 @@ export class SqliteStore {
       if (r) return r.c
       this.countsReady = false // 种子被外层事务回滚（如导入失败）——退回真实 COUNT 直至下次 load 重播
     }
+    if (this.countsDeferred) return -1 // 大库种子排空闲队列中——-1=未知，绝不付全扫代价
     return (this.db.prepare('SELECT COUNT(*) c FROM items').get() as { c: number }).c
   }
   /** 可见总数（总数-屏蔽）——queryItems 无筛选时用它替代 json_extract 全扫 COUNT */
@@ -368,7 +477,23 @@ export class SqliteStore {
       if (t && h) return t.c - h.c
       this.countsReady = false
     }
+    if (this.countsDeferred) return -1
     return (this.db.prepare("SELECT COUNT(*) c FROM items WHERE COALESCE(json_extract(state,'$.hidden'),0) IS NOT 1").get() as { c: number }).c
+  }
+
+  /** 按 id 取条目：窗口先查（代理对象，改 state 标脏），未命中走主键点查——
+      高摄入下被挤出窗口但仍在库的条目照常可已读/屏蔽/喜欢。 */
+  getItem(id: string): FeedItem | undefined {
+    const w = this.window.find((i) => i.id === id)
+    if (w) return w
+    const r = this.db.prepare('SELECT * FROM items WHERE id=?').get(id) as Row | undefined
+    return r ? this.wrapItem(rowToItem(r)) : undefined
+  }
+
+  /** 非窗口条目标脏：queryItems 取出的普通对象经管线写入 llmScore 等字段后，
+      借 dirtyItems→save() 的既有 UPDATE 通道回写（窗口代理是另一条通道）。 */
+  persistItems(items: FeedItem[]): void {
+    for (const i of items) this.dirtyItems.set(i.id, i)
   }
 
   setHealth(id: string, health: FeedSource['health']): void { this.health[id] = health }
@@ -380,25 +505,26 @@ export class SqliteStore {
     const i = this.srcList.findIndex((s) => s.id === source.id)
     if (i >= 0) this.srcList[i] = source; else this.srcList.push(source)
   }
-  removeItemsBySource(sourceId: string): number {
-    const removed = Number(this.db.prepare('DELETE FROM items WHERE sourceId=?').run(sourceId).changes)
-    if (removed > 0) this.refreshWindow()
+  /** 按源分块删除：sourceId 索引批取 id→DELETE→让渡——单语句 DELETE 在百万级匹配时
+      是分钟级冻结+巨型 WAL（计数器/FTS 触发器逐行触发）。源删除=用户明确不要了，不归档。 */
+  async removeItemsBySource(sourceId: string): Promise<number> {
+    let removed = 0
+    for (;;) {
+      const ids = (this.db.prepare('SELECT id FROM items WHERE sourceId=? LIMIT 2000').all(sourceId) as { id: string }[]).map((r) => r.id)
+      if (!ids.length) break
+      removed += Number(this.db.prepare(`DELETE FROM items WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids).changes)
+      if (ids.length < 2000) break
+      await yieldLoop()
+    }
+    if (removed > 0) { this.dropWindowIds(new Set((this.window.filter((i) => i.sourceId === sourceId)).map((i) => i.id))) }
     return removed
   }
-  removeSource(id: string): boolean {
+  async removeSource(id: string): Promise<boolean> {
     const i = this.srcList.findIndex((s) => s.id === id)
     if (i < 0) return false
-    this.db.exec('BEGIN')
-    let removedItems = 0
-    try {
-      this.db.prepare('DELETE FROM sources WHERE id=?').run(id)
-      removedItems = Number(this.db.prepare('DELETE FROM items WHERE sourceId=?').run(id).changes)
-      this.db.exec('COMMIT')
-    } catch (e) {
-      this.db.exec('ROLLBACK')
-      throw e
-    }
-    if (removedItems > 0) this.refreshWindow()
+    this.db.prepare('DELETE FROM sources WHERE id=?').run(id)
+    const removedItems = await this.removeItemsBySource(id)
+    void removedItems
     this.srcList.splice(i, 1); return true
   }
 
@@ -414,7 +540,7 @@ export class SqliteStore {
     } catch (e) { this.db.exec('ROLLBACK'); throw e }
     // 逐条 unshift 是 O(n·k)；反转后一次前插等价（每条 unshift 会把已插入项逆序压到队首）
     this.window.splice(0, 0, ...fresh.reverse().map((i) => this.wrapItem(i)))
-    if (this.window.length > this.maxItems) this.window.length = this.maxItems
+    if (this.window.length > this.winCap()) this.window.length = this.winCap()
     this.windowGen++ // 窗口被写——warmWindow 半成品据此判脏重建
     return fresh.length
   }
@@ -430,7 +556,8 @@ export class SqliteStore {
   countUndigested(day: string): number {
     // `digestedDay != ?` 永远不吃索引（全表扫）；等价改写：总数(计数器 O(1)) − 当日已消化(索引计数)
     const digested = (this.db.prepare('SELECT COUNT(*) c FROM items WHERE digestedDay = ?').get(day) as { c: number }).c
-    return this.count() - digested
+    const total = this.count()
+    return total < 0 ? -1 : total - digested // 大库种子未就位时 -1=未知
   }
   /** save：脏条目回写 + meta/health 落 kv（写穿透已在各处做，save 兜底）。
       只 UPDATE 自上次 save 以来被改过的行——万级窗口全量重写会把事件循环堵秒级。 */
@@ -454,14 +581,66 @@ export class SqliteStore {
     await this.prune()
   }
 
-  /** 清空全部条目（含 FTS 联动+内存窗口）；返回删除数 */
-  clearItems(): number {
-    const n = this.count()
-    this.db.exec('DELETE FROM items')
+  /** 清空全部条目（含 FTS+内存窗口）；返回删除数。
+      大库走 DROP+重建：DELETE 会逐行触发计数器/FTS 触发器且 WAL 涨到库体量——
+      DROP TABLE 是摘 B-tree 根的元数据级操作，空库重建 schema 全部瞬时。 */
+  async clearItems(): Promise<number> {
+    const n = this.count() // 大库种子未就位时为 -1，如实返回
+    if (n >= 0 && n < 100_000) {
+      this.db.exec('DELETE FROM items') // 小库单语句即完，不走重建
+    } else {
+      this.db.exec('BEGIN')
+      try {
+        this.db.exec('DROP TABLE IF EXISTS items_fts') // 触发器随 items 销毁；fts 表随重建
+        this.db.exec('DROP TABLE items')
+        this.db.exec(SCHEMA)
+        if (this.ftsEnabled) this.db.exec(FTS)
+        this.db.exec(COUNTER_TRIGGERS)
+        this.db.exec("INSERT OR REPLACE INTO counters (key,n) VALUES ('total',0),('hidden',0)")
+        this.db.exec('COMMIT')
+      } catch (e) { this.db.exec('ROLLBACK'); throw e }
+      this.ensureStateCols() // VIRTUAL 列瞬时；索引在空库上瞬时
+      for (const sql of [IDX_ITEMS_STATE, IDX_ITEMS_PUBSORT]) { try { this.db.exec(sql) } catch { /* 幂等兜底 */ } }
+      if (this.pruneLowQuality()) { try { this.db.exec(IDX_ITEMS_QUALITY) } catch { /* 同上 */ } }
+      this.countsReady = true
+      this.countsDeferred = false
+      this.ddlQueue = this.ddlQueue.filter((k) => k !== 'counter_seed') // 空库种子已就位，队列里的作废
+    }
     this.window = []
+    this.windowReady = true
     this.windowGen++
     this.dirtyItems.clear()
     return n
+  }
+
+  /** 年库同构 schema：SCHEMA+纪元+FTS+计数器种子/触发器+状态列+排序索引——
+      与热库 warmWindow 同一套硬化件，否则年库永远是"落后一代"的裸库（apiArchive 全扫）。
+      每文件每进程只做一次；种子是首次写入时的一次性 COUNT（旧大年库付一次全扫）。 */
+  private ensureArchiveSchema(adb: DatabaseSync, file: string): void {
+    if (this.ensuredArchives.has(file)) return
+    adb.exec(SCHEMA)
+    adb.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
+    if (this.ftsEnabled) { try { adb.exec(FTS) } catch { /* 无 FTS 也照常归档 */ } }
+    try {
+      adb.exec(COUNTER_TRIGGERS)
+      if (!counterSeeded(adb)) {
+        adb.exec('SAVEPOINT aseed')
+        adb.exec(COUNTER_SEED_SQL)
+        adb.exec('RELEASE aseed')
+      }
+    } catch (e) {
+      try { adb.exec('ROLLBACK TO aseed'); adb.exec('RELEASE aseed') } catch { /* 幂等 */ }
+      this.log.warn(`archive counter seed failed (${file}): ${e instanceof Error ? e.message : e}`)
+    }
+    try {
+      const cols = tableCols(adb, 'items')
+      if (!cols.has('state_hidden')) adb.exec(STATE_COL_HIDDEN)
+      if (!cols.has('state_read')) adb.exec(STATE_COL_READ)
+      adb.exec(DROP_IDX_ITEMS_STATE_V1)
+      adb.exec(IDX_ITEMS_STATE)
+      adb.exec(IDX_ITEMS_PUBSORT)
+    } catch (e) { this.log.warn(`archive ddl failed (${file}): ${e instanceof Error ? e.message : e}`) }
+    this.ensuredArchives.add(file)
   }
 
   /** 年库归档：把给定 id 集的行按 fetchedAt 年份写进同目录 archive-YYYY.db（同构 schema+FTS 触发器自动建索引）。
@@ -479,9 +658,7 @@ export class SqliteStore {
         const file = join(dirname(this.path), `archive-${year}.db`)
         const adb = new DatabaseSync(file)
         try {
-          adb.exec(SCHEMA)
-          adb.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`) // 年库同样自描述纪元——按年库查询/迁移时可知它出自哪代结构
-          if (this.ftsEnabled) { try { adb.exec(FTS) } catch { /* 无 FTS 也照常归档 */ } }
+          this.ensureArchiveSchema(adb, file)
           const ins = adb.prepare(`INSERT OR IGNORE INTO items
             (id,hash,sourceId,topic,title,link,summary,content,publishedAt,fetchedAt,digestedDay,score,llmScore,llmReason,aiTitle,aiSummary,dupOf,dupCount,hotCycles,tags,reasons,state)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -498,12 +675,21 @@ export class SqliteStore {
     }
   }
 
+  /** 窗口原位剔除已删 id——不整窗 SELECT* 重建（30k 行重载≈1s 同步，高摄入下每周期都付） */
+  private dropWindowIds(ids: Set<string>): void {
+    if (!ids.size) return
+    const before = this.window.length
+    this.window = this.window.filter((i) => !ids.has(i.id))
+    if (this.window.length !== before) this.windowGen++
+  }
+
   /** 分块清退：索引批取 id（LIMIT 有界）→ 归档 → 删除 → 让渡。
       单语句全量 DELETE 随行数线性冻结事件循环——大库下必须摊成无感后台批。
       selectIds 必须是索引驱动的取 id 语句（不含 LIMIT——由循环按批追加）。 */
   private async pruneByIds(selectIds: string, args: unknown[], max: number, label: string): Promise<void> {
     const CHUNK = 2000
     let done = 0
+    const deleted = new Set<string>()
     for (;;) {
       const want = Math.min(CHUNK, max - done)
       if (want <= 0) break
@@ -511,11 +697,12 @@ export class SqliteStore {
       if (!ids.length) break
       if (!this.archiveIds(ids)) break // 归档失败跳过删除——宁涨不丢
       const del = Number(this.db.prepare(`DELETE FROM items WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids).changes)
+      for (const id of ids) deleted.add(id)
       done += del
       if (ids.length < want) break
       await yieldLoop() // 批间让渡——清退摊成后台工作，不把请求按在队列里
     }
-    if (done > 0) { this.log.info(`pruned ${done} items (${label})`); this.refreshWindow() }
+    if (done > 0) { this.log.info(`pruned ${done} items (${label})`); this.dropWindowIds(deleted) }
   }
 
   /** 清退：先过期后配额（低质优先 or 最老优先）——分块归档+删除，块间让渡 */
@@ -545,40 +732,58 @@ export class SqliteStore {
     publishedAfter?: string; publishedBefore?: string
     /** 专题：最低评分（COALESCE(llmScore, MIN(10,MAX(0,score*8)))，同 pickFinal 口径） */
     minScore?: number
+    /** 日报候选：排除已在某日消化过的条目（digestedDay 存 '' 非 NULL——IS NULL 一并兼容） */
+    excludeDigestedDay?: string
+    /** 日报候选：分类白名单；空 topic 按 '综合' 归位（与内存过滤 i.topic||'综合' 同口径） */
+    topics?: string[]
+    /** 非分页直取上限（候选池场景）：设了就不分页不计数，total=-1+totalPending */
+    limit?: number
     sort?: 'published' | 'fetched'; page?: number; pageSize?: number
     /** 冷启动首屏：窗口未就绪时跳过 COUNT 全表扫描（json_extract 逐行评估是大库瓶颈），先回页数据；total=-1+totalPending 标记让前端出列表后补查 */
     skipTotal?: boolean
   }): { total: number; totalPending?: boolean; items: FeedItem[] } {
-    const where: string[] = ["json_extract(state,'$.hidden') IS NOT 1"]
+    // 生成列就绪后用等值查找（走 idx_items_state）；否则 json_extract 等价兜底——两路同语义
+    const where: string[] = [this.stateColsReady ? 'state_hidden = 0' : "json_extract(state,'$.hidden') IS NOT 1"]
     const args: unknown[] = []
     if (opts.day || opts.fetchedAfter) { where.push('fetchedAt >= ? AND fetchedAt <= ?'); args.push(opts.fetchedAfter || `${opts.day}T00:00:00`, opts.fetchedBefore || `${opts.day}T23:59:59.999Z`) }
     if (opts.category) { where.push('topic = ?'); args.push(opts.category) }
-    if (opts.source) { where.push('sourceId LIKE ?'); args.push(`%${opts.source}%`) }
+    if (opts.source) {
+      // 已知源 id → 等值走 idx_items_source；否则保留子串模糊（%x% 全扫——调用方尽量传全 id）
+      if (this.srcList.some((s) => s.id === opts.source)) { where.push('sourceId = ?'); args.push(opts.source) }
+      else { where.push('sourceId LIKE ?'); args.push(`%${opts.source}%`) }
+    }
     if (opts.sources?.length) { where.push(`sourceId IN (${opts.sources.map(() => '?').join(',')})`); args.push(...opts.sources) }
     if (opts.publishedAfter || opts.publishedBefore) {
       where.push("COALESCE(NULLIF(publishedAt,''),fetchedAt) >= ? AND COALESCE(NULLIF(publishedAt,''),fetchedAt) <= ?")
       args.push(opts.publishedAfter || '0000-01-01', opts.publishedBefore || '9999-12-31')
     }
     if (typeof opts.minScore === 'number') { where.push('COALESCE(llmScore, MIN(10, MAX(0, score*8))) >= ?'); args.push(opts.minScore) }
-    if (opts.unread) { where.push("json_extract(state,'$.read') IS NOT 1") }
+    if (opts.excludeDigestedDay) { where.push('(digestedDay IS NULL OR digestedDay != ?)'); args.push(opts.excludeDigestedDay) }
+    if (opts.topics?.length) { where.push(`COALESCE(NULLIF(topic,''),'综合') IN (${opts.topics.map(() => '?').join(',')})`); args.push(...opts.topics) }
+    if (opts.unread) { where.push(this.stateColsReady ? 'state_read = 0' : "json_extract(state,'$.read') IS NOT 1") }
     let from = 'FROM items'
     if (opts.q) {
       if (this.ftsEnabled && opts.q.length >= 3) { from = 'FROM items_fts JOIN items ON items.rowid = items_fts.rowid'; where.push('items_fts MATCH ?'); args.push(`"${opts.q.replace(/"/g, '""')}"`) }
       else { where.push("(title LIKE ? OR summary LIKE ?)"); args.push(`%${opts.q}%`, `%${opts.q}%`) } // 短词(<trigram 最小3字符)走 LIKE
     }
     const key = opts.sort === 'fetched' ? 'fetchedAt' : "COALESCE(NULLIF(publishedAt,''),fetchedAt)"
+    // 直取模式（候选池）：不分页不计数——大库下候选集本身有界于 limit，COUNT 是浪费
+    if (opts.limit) {
+      const rows = this.db.prepare(`SELECT items.* ${from} WHERE ${where.join(' AND ')} ORDER BY ${key} DESC LIMIT ?`).all(...args as (string | number | null)[], opts.limit) as Row[]
+      return { total: -1, totalPending: true, items: rows.map(rowToItem) }
+    }
     const page = Math.max(1, opts.page ?? 1), size = opts.pageSize ?? 50
-    const skipCount = opts.skipTotal === true && !this.countsReady // 计数器种子完成后 COUNT 已 O(1)——比窗口就绪更早放行总数
+    const skipCount = (opts.skipTotal === true && !this.countsReady) || this.countsDeferred // 计数器种子完成后 COUNT 已 O(1)；大库种子排队中继续 pending
     // 无筛选（默认视图=列表 99% 请求）走计数器 O(1)——json_extract 全扫 COUNT 随库线性死亡；
-    // 有筛选走真实 COUNT（索引区间有界：topic/source/date 都是索引列）
+    // 有筛选走真实 COUNT（索引区间有界：topic/source/date/状态列都是索引列）
     const unfiltered = !opts.day && !opts.fetchedAfter && !opts.fetchedBefore && !opts.category && !opts.source
       && !opts.sources?.length && !opts.publishedAfter && !opts.publishedBefore
-      && opts.minScore === undefined && !opts.unread && !opts.q
+      && opts.minScore === undefined && !opts.excludeDigestedDay && !opts.topics?.length && !opts.unread && !opts.q
     const total = skipCount ? -1
       : unfiltered ? this.visibleCount()
       : (this.db.prepare(`SELECT COUNT(*) c ${from} WHERE ${where.join(' AND ')}`).get(...args as (string | number | null)[]) as { c: number }).c
     const rows = this.db.prepare(`SELECT items.* ${from} WHERE ${where.join(' AND ')} ORDER BY ${key} DESC LIMIT ? OFFSET ?`).all(...args as (string | number | null)[], size, (page - 1) * size) as Row[]
-    return { total, ...(skipCount ? { totalPending: true } : {}), items: rows.map(rowToItem) }
+    return { total, ...(total === -1 || skipCount ? { totalPending: true } : {}), items: rows.map(rowToItem) }
   }
 
   // ---- P7 导出/导入 ----
@@ -614,11 +819,15 @@ export class SqliteStore {
     const counts = { items: 0, sources: 0, digests: 0 }
     const { writeFileSync, existsSync: ex } = await import('node:fs')
     this.db.exec('BEGIN')
+    let inTxn = 0 // 分批提交：巨型导入单事务会让 WAL 涨到导入体量；批次断点幂等可重导
     try {
       for await (const line of rl) {
         if (!line.trim()) continue
         const o = JSON.parse(line) as { type: string; day?: string; kind?: string; data: unknown }
-        if (o.type === 'item') { if (ins.run(...itemToRow(o.data as FeedItem) as (string | number | null)[]).changes > 0) counts.items++ }
+        if (o.type === 'item') {
+          if (ins.run(...itemToRow(o.data as FeedItem) as (string | number | null)[]).changes > 0) counts.items++
+          if (++inTxn >= 10_000) { this.db.exec('COMMIT'); this.db.exec('BEGIN'); inTxn = 0 }
+        }
         else if (o.type === 'source') { const src = o.data as FeedSource; if (!this.srcList.find((x) => x.url === src.url)) { this.addSource(src); counts.sources++ } }
         else if (o.type === 'digest' && o.day) {
           mkdirSync(digestsDir, { recursive: true })

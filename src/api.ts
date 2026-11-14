@@ -5,6 +5,7 @@
 
 import { existsSync } from 'node:fs'
 import { copyFile, cp, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { DatabaseSync } from 'node:sqlite'
 import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { homedir, platform } from 'node:os'
@@ -149,21 +150,42 @@ function apiItems(deps: ApiDeps) {
   }
 }
 
-/** 年库档案：list 扫同目录 archive-YYYY.db；items 只读按年查询（FTS/LIKE+分页，与热库同字段） */
+/** 年库档案：list 扫同目录 archive-YYYY.db；items 只读按年查询（FTS/LIKE+分页，与热库同字段）。
+    连接按文件复用（旧实现每请求新建 DatabaseSync——页缓存永远冷、schema 探测每回重跑）。
+    计数器/状态列是按需探测的——新年库经 ensureArchiveSchema 同构硬化后走 O(1) 读数+索引筛选；
+    未收敛的旧年库回落 COUNT(*)/json_extract（巡检会逐个补上）。 */
 function apiArchive(deps: ApiDeps) {
   const dir = () => dirname(deps.store.path)
+  type ArchDb = { db: InstanceType<typeof DatabaseSync>; stateCols: boolean; counters: { total: number; hidden: number } | undefined }
+  const cache = new Map<string, ArchDb>()
+  const open = (p: string): ArchDb => {
+    let e = cache.get(p)
+    if (!e) {
+      const db = new DatabaseSync(p)
+      // table_xinfo 不用 table_info：VIRTUAL 生成列对后者不可见
+      const cols = new Set((db.prepare('PRAGMA table_xinfo(items)').all() as Array<{ name: string }>).map((r) => r.name))
+      let counters: ArchDb['counters']
+      try {
+        const t = db.prepare("SELECT n FROM counters WHERE key='total'").get() as { n: number } | undefined
+        const h = db.prepare("SELECT n FROM counters WHERE key='hidden'").get() as { n: number } | undefined
+        if (t && h) counters = { total: t.n, hidden: h.n }
+      } catch { /* 旧年库无 counters 表 */ }
+      e = { db, stateCols: cols.has('state_hidden'), counters }
+      cache.set(p, e)
+    }
+    return e
+  }
   return async (req: Req, res: Res) => {
     const u = new URL(req.url || '', 'http://x')
     const tail = (u.pathname.split('/api/archive/')[1] || '').replace(/\/+$/, '')
     if (tail === 'list' || tail === '') {
       const { readdir, stat } = await import('node:fs/promises')
-      const { DatabaseSync } = await import('node:sqlite')
       const files = (await readdir(dir()).catch(() => [])).filter((f) => /^archive-\d{4}\.db$/.test(f))
       const out: Array<{ file: string; year: string; items: number; sizeKB: number }> = []
       for (const f of files) {
         const p = join(dir(), f)
         let n = -1
-        try { const d = new DatabaseSync(p, { readOnly: true }); n = (d.prepare('SELECT COUNT(*) c FROM items').get() as { c: number }).c; d.close() } catch { /* 打不开给 -1 */ }
+        try { const e = open(p); n = e.counters ? e.counters.total : (e.db.prepare('SELECT COUNT(*) c FROM items').get() as { c: number }).c } catch { cache.delete(p) /* 打不开给 -1 */ }
         const st = await stat(p).catch(() => null)
         out.push({ file: f, year: f.slice(8, 12), items: n, sizeKB: st ? Math.round(st.size / 1024) : 0 })
       }
@@ -174,12 +196,12 @@ function apiArchive(deps: ApiDeps) {
       const sp = u.searchParams
       const year = sp.get('year') || ''
       if (!/^\d{4}$/.test(year)) { sendJson(res, 400, { ok: false, error: 'year 必须是 4 位数字' }); return }
-      const { DatabaseSync } = await import('node:sqlite')
-      let db: InstanceType<typeof DatabaseSync>
-      try { db = new DatabaseSync(join(dir(), `archive-${year}.db`), { readOnly: true }) }
+      let e: ArchDb
+      try { e = open(join(dir(), `archive-${year}.db`)) }
       catch { sendJson(res, 404, { ok: false, error: `无 ${year} 年档案` }); return }
       try {
-        const where: string[] = ["json_extract(state,'$.hidden') IS NOT 1"]
+        const { db, stateCols, counters } = e
+        const where: string[] = [stateCols ? 'state_hidden = 0' : "json_extract(state,'$.hidden') IS NOT 1"]
         const args: Array<string | number> = []
         const cat = sp.get('category'), src = sp.get('source'), q = (sp.get('q') || '').trim()
         if (cat) { where.push('topic = ?'); args.push(cat) }
@@ -194,12 +216,15 @@ function apiArchive(deps: ApiDeps) {
         const w = where.join(' AND ')
         const page = Math.max(1, Number(sp.get('page') || 1) | 0)
         const size = deps.readerPageSize
-        const total = (db.prepare(`SELECT COUNT(*) c ${from} WHERE ${w}`).get(...args) as { c: number }).c
+        // 无筛选且年库有计数器 → total-hidden O(1)；否则真实 COUNT（有筛选必需评估）
+        const unfiltered = !cat && !src && !q
+        const total = unfiltered && counters ? counters.total - counters.hidden
+          : (db.prepare(`SELECT COUNT(*) c ${from} WHERE ${w}`).get(...args) as { c: number }).c
         const sortKey = sp.get('sort') === 'fetched' ? 'fetchedAt' : "COALESCE(NULLIF(publishedAt,''),fetchedAt)"
         const rows = db.prepare(`SELECT items.* ${from} WHERE ${w} ORDER BY ${sortKey} DESC LIMIT ? OFFSET ?`).all(...args, size, (page - 1) * size) as Array<Record<string, unknown>>
         const items = rows.map((r) => ({ ...r, tags: r.tags ? JSON.parse(r.tags as string) : undefined, reasons: r.reasons ? JSON.parse(r.reasons as string) : [], state: r.state ? JSON.parse(r.state as string) : {} }))
         sendJson(res, 200, { ok: true, total, page, pageSize: size, items })
-      } finally { db.close() }
+      } catch (err) { sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) }) }
       return
     }
     sendJson(res, 404, { ok: false, error: 'unknown archive endpoint' })
@@ -223,7 +248,9 @@ function apiDigest(deps: ApiDeps) {
 function apiFeedback(deps: ApiDeps) {
   return async (req: Req, res: Res) => {
     const body = await readBody(req) as { id?: string; action?: string }
-    const item = deps.store.items.find((i) => i.id === body.id)
+    // getItem：窗口未命中走主键点查——高摄入下被挤出窗口的库内条目照常可操作（旧逻辑直接 404）
+    const item = (deps.store as { getItem?: (id: string) => (typeof deps.store.items)[number] | undefined }).getItem?.(body.id ?? '')
+      ?? deps.store.items.find((i) => i.id === body.id)
     if (!item) return sendJson(res, 404, { ok: false, error: 'item not found' })
     switch (body.action) {
       case 'read': item.state.read = true; break
@@ -725,7 +752,7 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/items/clear`, handler: guard(async (q, r) => {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
-    const deleted = deps.store.clearItems()
+    const deleted = await deps.store.clearItems()
     deps.store.meta.lastFetchAdded = 0 // 上轮新增计数同步归零
     await deps.store.save()
     sendJson(r, 200, { ok: true, deleted })

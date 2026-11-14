@@ -111,6 +111,7 @@ export function apply(ctx: Context, config: ConfigType) {
   const uiActive = { apiAt: 0, gestureAt: 0 } // 双戳：apiAt=页面开着的心跳（statusbar 2s 轮询）；gestureAt=真实手势——开页面挂机≠在用
   const store = new SqliteStore({
     path: join(dataDir, 'store.db'), maxItems: () => prefs.get().digestOpts?.storeMaxItems ?? config.fetch.maxStoredItems, log,
+    windowItems: 30_000, // 内存工作集硬顶——与库配额解耦：storeMaxItems 调再大，窗口也只背最近 3 万条
     retentionDays: () => prefs.get().digestOpts?.retentionDays ?? 90,
     pruneLowQuality: () => prefs.get().digestOpts?.pruneLowQuality ?? true,
     fts: probe.fts,
@@ -884,26 +885,34 @@ export function apply(ctx: Context, config: ConfigType) {
       return { ok: r !== 'none', cancelled: r === 'none' ? undefined : r }
     },
     peakChanged, // prefs.peak 保存后由 api 调用：重挂边界定时器+峰外立刻放行补跑
-    status: () => {
-      const list = effectiveSources(config.sources, store)
-      const failures = list.filter((s) => s.health.lastError).map((s) => ({ name: s.title, error: s.health.lastError! }))
-      return {
-        sources: list.length,
-        enabled: list.filter((s) => s.enabled).length,
-        items: (store as { count?: () => number }).count?.() ?? store.items.length,
-        todayAdded: (() => { // SQL COUNT（窗口外的也算,且不受手动删库幻影影响）
-          const t = new Date(); t.setHours(0, 0, 0, 0)
-          const qi = (store as { queryItems?: (o: { day?: string; fetchedAfter?: string; fetchedBefore?: string; pageSize?: number }) => { total: number } }).queryItems
-          const b = zonedDayBounds(zonedDayKey(new Date(), config.timezone || undefined), config.timezone || undefined)
-          return qi ? qi.call(store, { day: 'x', fetchedAfter: b.after, fetchedBefore: b.before, pageSize: 1 }).total
-            : store.items.filter((i) => new Date(i.fetchedAt).getTime() >= t.getTime()).length
-        })(),
-        lastAdded: (() => { // 上轮起点以来新增(实时,被删的不算,清库竞态自愈)
-          const since = store.meta.lastFetchStartedAt as string | undefined
-          const qi = (store as { queryItems?: (o: { fetchedAfter?: string; fetchedBefore?: string; pageSize?: number }) => { total: number } }).queryItems
-          if (!qi || !since) return (store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0
-          return qi.call(store, { fetchedAfter: since, fetchedBefore: '9999-12-31', pageSize: 1 }).total
-        })(),
+    status: (() => {
+      // 两项范围 COUNT 在高摄入下本身就是大区间扫描（40万/日≈200ms）——60s 缓存摊掉 2s 轮询的常驻税
+      let cntCache = { at: 0, today: 0, last: 0 }
+      const refreshCounts = () => {
+        const now = Date.now()
+        if (now - cntCache.at < 60_000) return
+        const qi = (store as { queryItems?: (o: { day?: string; fetchedAfter?: string; fetchedBefore?: string; pageSize?: number }) => { total: number } }).queryItems
+        if (!qi) return
+        const b = zonedDayBounds(zonedDayKey(new Date(), config.timezone || undefined), config.timezone || undefined)
+        const today = qi.call(store, { day: 'x', fetchedAfter: b.after, fetchedBefore: b.before, pageSize: 1 }).total
+        const since = store.meta.lastFetchStartedAt as string | undefined
+        const last = since ? qi.call(store, { fetchedAfter: since, fetchedBefore: '9999-12-31', pageSize: 1 }).total : ((store.meta as { lastFetchAdded?: number }).lastFetchAdded ?? 0)
+        cntCache = { at: now, today, last }
+      }
+      return () => {
+        refreshCounts()
+        const list = effectiveSources(config.sources, store)
+        const failures = list.filter((s) => s.health.lastError).map((s) => ({ name: s.title, error: s.health.lastError! }))
+        return {
+          sources: list.length,
+          enabled: list.filter((s) => s.enabled).length,
+          items: (store as { count?: () => number }).count?.() ?? store.items.length,
+          todayAdded: (() => { // SQL COUNT（窗口外的也算,且不受手动删库幻影影响）；60s 缓存
+            const qi = (store as { queryItems?: (o: { day?: string; fetchedAfter?: string; fetchedBefore?: string; pageSize?: number }) => { total: number } }).queryItems
+            if (!qi) { const t = new Date(); t.setHours(0, 0, 0, 0); return store.items.filter((i) => new Date(i.fetchedAt).getTime() >= t.getTime()).length }
+            return cntCache.today
+          })(),
+          lastAdded: cntCache.last,
         todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate, topic: d.topic ?? 0 } : undefined })(),
         tokenStats: store.meta.tokenStats,
         version: pkgVersion,
@@ -922,8 +931,9 @@ export function apply(ctx: Context, config: ConfigType) {
             defer: defer ? { since: defer.since, digest: defer.digest === true, briefSkipped: defer.briefSkipped ?? 0 } : undefined,
           }
         })(),
+        }
       }
-    },
+    })(),
   }
 
   let llmRuntime: ConstructorParameters<typeof DshLlmClient>[0] | undefined
@@ -1047,6 +1057,7 @@ export function apply(ctx: Context, config: ConfigType) {
     digestItems: prefs.get().digestOpts?.digestItems ?? config.digest.digestItems,
     perTopicLimit: prefs.get().digestOpts?.perTopicLimit ?? config.digest.perTopicLimit,
     llmScoreCandidates: prefs.get().digestOpts?.llmScoreCandidates ?? config.digest.llmScoreCandidates,
+    candidateMax: prefs.get().digestOpts?.candidateMax,
     subscribedTopics: prefs.get().subscribedTopics,
     rescoreMissing: !scoringInFlight && (prefs.get().digestOpts?.rescoreMissing ?? config.digest.rescoreMissing),
     minLlmScore: prefs.get().digestOpts?.minLlmScore ?? config.digest.minLlmScore,

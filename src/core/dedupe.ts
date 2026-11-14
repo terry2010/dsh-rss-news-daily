@@ -63,8 +63,13 @@ function tokenize(text: string): Set<string> {
 
 /** Jaccard similarity between two token sets: |A ∩ B| / |A ∪ B| ∈ [0, 1]. */
 export function tokenSimilarity(left: string, right: string): number {
-  const a = tokenize(left)
-  const b = tokenize(right)
+  return tokenSetSimilarity(tokenize(left), tokenize(right))
+}
+
+/** 预分词版 Jaccard——抓取热路径每周期对同批 known 比对数十万次：
+    词集预算后候选/known 各自只分词一次（旧实现逐比较把两侧标题重分词，O(新×known) 次分词）。 */
+export function tokenizeTitle(text: string): Set<string> { return tokenize(text) }
+export function tokenSetSimilarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0
   let intersection = 0
   for (const token of a) {

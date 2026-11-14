@@ -81,8 +81,8 @@ export interface StoreOptions {
  */
 /** Store 公共契约——JSON Store 与 SqliteStore 共同实现（DESIGN-SQLITE.md P2） */
 export interface StoreLike {
-    /** 清空全部条目；返回删除数 */
-    clearItems(): number;
+    /** 清空全部条目；返回删除数（SqliteStore 大库走 DROP+重建的异步路径） */
+    clearItems(): number | Promise<number>;
     readonly path: string;
     readonly maxItems: number;
     readonly meta: StoreMeta;
@@ -93,12 +93,17 @@ export interface StoreLike {
     save(): Promise<void>;
     addItems(items: FeedItem[]): number;
     addSource(source: FeedSource): void;
-    removeItemsBySource(sourceId: string): number;
-    removeSource(id: string): boolean;
+    /** SqliteStore 为分块删除+让渡是异步的 */
+    removeItemsBySource(sourceId: string): number | Promise<number>;
+    removeSource(id: string): boolean | Promise<boolean>;
     setHealth(id: string, health: FeedSource['health']): void;
     getHealth(id: string): FeedSource['health'] | undefined;
     markDigested(ids: string[], day: string): void;
     countUndigested(day: string): number;
+    /** 按 id 取条目：窗口未命中时 SqliteStore 走主键点查兜底（窗口外条目照常可操作） */
+    getItem?(id: string): FeedItem | undefined;
+    /** 把非窗口条目（如 queryItems 候选）标脏，下次 save 回写——管线产物持久化用 */
+    persistItems?(items: FeedItem[]): void;
 }
 export declare class Store {
     readonly path: string;
