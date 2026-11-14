@@ -112,6 +112,8 @@ const rowToItem = (r: Row): FeedItem => ({
   state: r.state ? JSON.parse(r.state as string) : { read: false, hidden: false, liked: 0 },
 })
 const ITEM_COLS = ['id','hash','sourceId','topic','title','link','summary','content','publishedAt','fetchedAt','digestedDay','score','llmScore','llmReason','aiTitle','aiSummary','dupOf','dupCount','hotCycles','tags','reasons','state'] as const
+/** lite 候选列：剔除 content/aiSummary 两个重文本（行体积 ~95% 在这两列）——大批量候选物化从几百 MB 降到几十 MB */
+const LITE_COLS = ITEM_COLS.filter((c) => c !== 'content' && c !== 'aiSummary')
 
 const itemToRow = (i: FeedItem): (string | number | null)[] => [
   i.id, i.hash, i.sourceId, i.topic ?? '', i.title, i.link ?? '', i.summary ?? '', i.content ?? '',
@@ -133,6 +135,29 @@ export interface SqliteStoreOptions {
   fts?: boolean           // FTS5 可用（P1 探测结果）
   isIdle?: () => boolean  // 全系统空闲判定（任务队列无在跑/等待）——每日 integrity_check 只在空闲跑
   log?: LogSink
+}
+
+/** queryItems/queryItemsChunked 共用的查询选项 */
+export interface QueryItemsOpts {
+  day?: string; fetchedAfter?: string; fetchedBefore?: string; category?: string; source?: string; unread?: boolean; q?: string
+  /** 专题：源白名单（精确 IN；空数组=不筛） */
+  sources?: string[]
+  /** 专题：发布/抓取回退时间区间（COALESCE(NULLIF(publishedAt,''),fetchedAt)） */
+  publishedAfter?: string; publishedBefore?: string
+  /** 专题：最低评分（COALESCE(llmScore, MIN(10,MAX(0,score*8)))，同 pickFinal 口径） */
+  minScore?: number
+  /** 日报候选：排除已在某日消化过的条目（digestedDay 存 '' 非 NULL——IS NULL 一并兼容） */
+  excludeDigestedDay?: string
+  /** 日报候选：分类白名单；空 topic 按 '综合' 归位（与内存过滤 i.topic||'综合' 同口径） */
+  topics?: string[]
+  /** 非分页直取上限（候选池场景）：设了就不分页不计数，total=-1+totalPending */
+  limit?: number
+  /** limit 模式下剔除 content/aiSummary 两列重文本（行体积 ~95% 在这两列）；
+      挑出小集合后用 hydrateItems() 补水。lite 行的 content/aiSummary 是缺值，persistItems 内有 __lite 标记自动兜底 */
+  lite?: boolean
+  sort?: 'published' | 'fetched'; page?: number; pageSize?: number
+  /** 冷启动首屏：窗口未就绪时跳过 COUNT 全表扫描，先回页数据；total=-1+totalPending 标记让前端出列表后补查 */
+  skipTotal?: boolean
 }
 // === SECTION 1 END ===
 
@@ -491,9 +516,32 @@ export class SqliteStore {
   }
 
   /** 非窗口条目标脏：queryItems 取出的普通对象经管线写入 llmScore 等字段后，
-      借 dirtyItems→save() 的既有 UPDATE 通道回写（窗口代理是另一条通道）。 */
+      借 dirtyItems→save() 的既有 UPDATE 通道回写（窗口代理是另一条通道）。
+      lite 行（content/aiSummary 缺值）先自动补水——否则 save() 会把缺省 '' 当真值覆盖正文字段。 */
   persistItems(items: FeedItem[]): void {
+    const lite = items.filter((i) => (i as FeedItem & { __lite?: boolean }).__lite)
+    if (lite.length) this.hydrateItems(lite)
     for (const i of items) this.dirtyItems.set(i.id, i)
+  }
+
+  /** lite 候选补水：批量点查 content/aiSummary 填回传入对象（IN 分块，单次点查微秒级）。
+      只写存在列的行——查不到的 id 保留原值（含 lite 缺省 ''）。persistItems 前置调用。 */
+  hydrateItems(items: FeedItem[]): void {
+    if (!this.db || !items.length) return
+    const CH = 500
+    for (let off = 0; off < items.length; off += CH) {
+      const slice = items.slice(off, off + CH)
+      const rows = this.db.prepare(`SELECT id, content, aiSummary FROM items WHERE id IN (${slice.map(() => '?').join(',')})`)
+        .all(...slice.map((i) => i.id)) as Row[]
+      const byId = new Map(rows.map((r) => [r.id as string, r]))
+      for (const it of slice) {
+        const r = byId.get(it.id)
+        if (r) {
+          it.content = (r.content as string) ?? ''; it.aiSummary = (r.aiSummary as string) ?? undefined
+          delete (it as FeedItem & { __lite?: boolean }).__lite // 补水完成摘标记
+        }
+      }
+    }
   }
 
   setHealth(id: string, health: FeedSource['health']): void { this.health[id] = health }
@@ -723,26 +771,9 @@ export class SqliteStore {
     }
   }
 
-  /** 跨窗口查询（/items 下推 + 专题候选）：filter+sort+FTS+分页全在 SQL */
-  queryItems(opts: {
-    day?: string; fetchedAfter?: string; fetchedBefore?: string; category?: string; source?: string; unread?: boolean; q?: string
-    /** 专题：源白名单（精确 IN；空数组=不筛） */
-    sources?: string[]
-    /** 专题：发布/抓取回退时间区间（COALESCE(NULLIF(publishedAt,''),fetchedAt)） */
-    publishedAfter?: string; publishedBefore?: string
-    /** 专题：最低评分（COALESCE(llmScore, MIN(10,MAX(0,score*8)))，同 pickFinal 口径） */
-    minScore?: number
-    /** 日报候选：排除已在某日消化过的条目（digestedDay 存 '' 非 NULL——IS NULL 一并兼容） */
-    excludeDigestedDay?: string
-    /** 日报候选：分类白名单；空 topic 按 '综合' 归位（与内存过滤 i.topic||'综合' 同口径） */
-    topics?: string[]
-    /** 非分页直取上限（候选池场景）：设了就不分页不计数，total=-1+totalPending */
-    limit?: number
-    sort?: 'published' | 'fetched'; page?: number; pageSize?: number
-    /** 冷启动首屏：窗口未就绪时跳过 COUNT 全表扫描（json_extract 逐行评估是大库瓶颈），先回页数据；total=-1+totalPending 标记让前端出列表后补查 */
-    skipTotal?: boolean
-  }): { total: number; totalPending?: boolean; items: FeedItem[] } {
-    // 生成列就绪后用等值查找（走 idx_items_state）；否则 json_extract 等价兜底——两路同语义
+  /** WHERE/FROM/排序键构建：queryItems 分页与 queryItemsChunked 直取共用同一套谓词 */
+  private itemQuery(opts: QueryItemsOpts): { from: string; where: string[]; args: unknown[]; key: string } {
+    // 生成列就绪后用等值查找（走 idx_items_state2）；否则 json_extract 等价兜底——两路同语义
     const where: string[] = [this.stateColsReady ? 'state_hidden = 0' : "json_extract(state,'$.hidden') IS NOT 1"]
     const args: unknown[] = []
     if (opts.day || opts.fetchedAfter) { where.push('fetchedAt >= ? AND fetchedAt <= ?'); args.push(opts.fetchedAfter || `${opts.day}T00:00:00`, opts.fetchedBefore || `${opts.day}T23:59:59.999Z`) }
@@ -767,10 +798,23 @@ export class SqliteStore {
       else { where.push("(title LIKE ? OR summary LIKE ?)"); args.push(`%${opts.q}%`, `%${opts.q}%`) } // 短词(<trigram 最小3字符)走 LIKE
     }
     const key = opts.sort === 'fetched' ? 'fetchedAt' : "COALESCE(NULLIF(publishedAt,''),fetchedAt)"
-    // 直取模式（候选池）：不分页不计数——大库下候选集本身有界于 limit，COUNT 是浪费
+    return { from, where, args, key }
+  }
+
+  /** 跨窗口查询（/items 下推 + 专题候选）：filter+sort+FTS+分页全在 SQL */
+  queryItems(opts: QueryItemsOpts): { total: number; totalPending?: boolean; items: FeedItem[] } {
+    const { from, where, args, key } = this.itemQuery(opts)
+    const w = where.join(' AND ')
+    // 直取模式（候选池）：不分页不计数——大库下候选集本身有界于 limit，COUNT 是浪费。
+    // lite=true 剔除 content/aiSummary 两个重文本列（行体积 ~95% 在这两列）——消费方挑出小集合后 hydrateItems() 补水。
+    // 注意：lite 行的 content=''/aiSummary=undefined 是缺值非真值——persistItems 内有 __lite 标记自动兜底补水。
     if (opts.limit) {
-      const rows = this.db.prepare(`SELECT items.* ${from} WHERE ${where.join(' AND ')} ORDER BY ${key} DESC LIMIT ?`).all(...args as (string | number | null)[], opts.limit) as Row[]
-      return { total: -1, totalPending: true, items: rows.map(rowToItem) }
+      const cols = opts.lite ? LITE_COLS.map((c) => `items.${c}`).join(',') : 'items.*'
+      const rows = this.db.prepare(`SELECT ${cols} ${from} WHERE ${w} ORDER BY ${key} DESC LIMIT ?`).all(...args as (string | number | null)[], opts.limit) as Row[]
+      return {
+        total: -1, totalPending: true,
+        items: rows.map((r) => { const it = rowToItem(r); if (opts.lite) (it as FeedItem & { __lite?: boolean }).__lite = true; return it }),
+      }
     }
     const page = Math.max(1, opts.page ?? 1), size = opts.pageSize ?? 50
     const skipCount = (opts.skipTotal === true && !this.countsReady) || this.countsDeferred // 计数器种子完成后 COUNT 已 O(1)；大库种子排队中继续 pending
@@ -781,9 +825,27 @@ export class SqliteStore {
       && opts.minScore === undefined && !opts.excludeDigestedDay && !opts.topics?.length && !opts.unread && !opts.q
     const total = skipCount ? -1
       : unfiltered ? this.visibleCount()
-      : (this.db.prepare(`SELECT COUNT(*) c ${from} WHERE ${where.join(' AND ')}`).get(...args as (string | number | null)[]) as { c: number }).c
-    const rows = this.db.prepare(`SELECT items.* ${from} WHERE ${where.join(' AND ')} ORDER BY ${key} DESC LIMIT ? OFFSET ?`).all(...args as (string | number | null)[], size, (page - 1) * size) as Row[]
+      : (this.db.prepare(`SELECT COUNT(*) c ${from} WHERE ${w}`).get(...args as (string | number | null)[]) as { c: number }).c
+    const rows = this.db.prepare(`SELECT items.* ${from} WHERE ${w} ORDER BY ${key} DESC LIMIT ? OFFSET ?`).all(...args as (string | number | null)[], size, (page - 1) * size) as Row[]
     return { total, ...(total === -1 || skipCount ? { totalPending: true } : {}), items: rows.map(rowToItem) }
+  }
+
+  /** 大候选集分块直取（异步）：单条 SELECT 物化万级行仍是数百 ms 同步段（启动补跑日报正撞首屏）——
+      切成 4k 片+片间让渡，API 请求插缝服务。列/lite 语义与 limit 模式一致。 */
+  async queryItemsChunked(opts: QueryItemsOpts & { limit: number }): Promise<FeedItem[]> {
+    const { from, where, args, key } = this.itemQuery(opts)
+    const cols = opts.lite ? LITE_COLS.map((c) => `items.${c}`).join(',') : 'items.*'
+    const CH = 4000
+    const stmt = this.db.prepare(`SELECT ${cols} ${from} WHERE ${where.join(' AND ')} ORDER BY ${key} DESC LIMIT ? OFFSET ?`)
+    const out: FeedItem[] = []
+    for (let off = 0; off < opts.limit; off += CH) {
+      const want = Math.min(CH, opts.limit - off)
+      const rows = stmt.all(...args as (string | number | null)[], want, off) as Row[]
+      for (const r of rows) { const it = rowToItem(r); if (opts.lite) (it as FeedItem & { __lite?: boolean }).__lite = true; out.push(it) }
+      if (rows.length < want) break
+      await yieldLoop()
+    }
+    return out
   }
 
   // ---- P7 导出/导入 ----

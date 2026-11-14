@@ -535,11 +535,19 @@ export async function runFetchCycle(opts: FetchCycleOptions): Promise<FetchCycle
   const windowItems = opts.store.items
   const windowMs = (opts.dedupeWindowDays ?? 0) * 86400e3
   const cutoff = windowMs > 0 ? now.getTime() - windowMs : 0
-  const known = windowItems
-    .filter((i) => !cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
-    .map((i) => tokenizeTitle(i.title)) // 窗口内只做标题 Jaccard，exact 由 seenHash 管；词集一次算好
+  // 窗口内只做标题 Jaccard，exact 由 seenHash 管；词集一次算好。
+  // 分块让渡：3 万标题分词+倒排是几百 ms 单段同步 CPU——启动抓取正撞前端首屏，
+  // 每 2k 条 yield 一次让 /api/items 等请求插进间隙被服务。
+  const known: Set<string>[] = []
   const inverted = new Map<string, number[]>()
-  known.forEach((toks, i) => { for (const t of toks) { const l = inverted.get(t); if (l) l.push(i); else inverted.set(t, [i]) } })
+  let tick = 0
+  for (const i of windowItems) {
+    if (cutoff && new Date(i.fetchedAt).getTime() < cutoff) continue
+    const toks = tokenizeTitle(i.title)
+    const me = known.push(toks) - 1
+    for (const t of toks) { const l = inverted.get(t); if (l) l.push(me); else inverted.set(t, [me]) }
+    if (++tick % 2000 === 0) await new Promise((r) => setImmediate(r))
+  }
   const dedupe: DedupeCtx = {
     seen: new Set(windowItems.map((i) => i.id)),
     seenHash: new Set(windowItems.map((i) => i.hash)), // exact-hash 全量，不随窗口

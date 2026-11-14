@@ -14,6 +14,37 @@ export interface SqliteStoreOptions {
     isIdle?: () => boolean;
     log?: LogSink;
 }
+/** queryItems/queryItemsChunked 共用的查询选项 */
+export interface QueryItemsOpts {
+    day?: string;
+    fetchedAfter?: string;
+    fetchedBefore?: string;
+    category?: string;
+    source?: string;
+    unread?: boolean;
+    q?: string;
+    /** 专题：源白名单（精确 IN；空数组=不筛） */
+    sources?: string[];
+    /** 专题：发布/抓取回退时间区间（COALESCE(NULLIF(publishedAt,''),fetchedAt)） */
+    publishedAfter?: string;
+    publishedBefore?: string;
+    /** 专题：最低评分（COALESCE(llmScore, MIN(10,MAX(0,score*8)))，同 pickFinal 口径） */
+    minScore?: number;
+    /** 日报候选：排除已在某日消化过的条目（digestedDay 存 '' 非 NULL——IS NULL 一并兼容） */
+    excludeDigestedDay?: string;
+    /** 日报候选：分类白名单；空 topic 按 '综合' 归位（与内存过滤 i.topic||'综合' 同口径） */
+    topics?: string[];
+    /** 非分页直取上限（候选池场景）：设了就不分页不计数，total=-1+totalPending */
+    limit?: number;
+    /** limit 模式下剔除 content/aiSummary 两列重文本（行体积 ~95% 在这两列）；
+        挑出小集合后用 hydrateItems() 补水。lite 行的 content/aiSummary 是缺值，persistItems 内有 __lite 标记自动兜底 */
+    lite?: boolean;
+    sort?: 'published' | 'fetched';
+    page?: number;
+    pageSize?: number;
+    /** 冷启动首屏：窗口未就绪时跳过 COUNT 全表扫描，先回页数据；total=-1+totalPending 标记让前端出列表后补查 */
+    skipTotal?: boolean;
+}
 /** node:sqlite + FTS5 探测（P1）：不可用/无 FTS5 返回 false → 调用方报错不降级 */
 export declare function probeSqlite(): {
     ok: boolean;
@@ -97,8 +128,12 @@ export declare class SqliteStore {
         高摄入下被挤出窗口但仍在库的条目照常可已读/屏蔽/喜欢。 */
     getItem(id: string): FeedItem | undefined;
     /** 非窗口条目标脏：queryItems 取出的普通对象经管线写入 llmScore 等字段后，
-        借 dirtyItems→save() 的既有 UPDATE 通道回写（窗口代理是另一条通道）。 */
+        借 dirtyItems→save() 的既有 UPDATE 通道回写（窗口代理是另一条通道）。
+        lite 行（content/aiSummary 缺值）先自动补水——否则 save() 会把缺省 '' 当真值覆盖正文字段。 */
     persistItems(items: FeedItem[]): void;
+    /** lite 候选补水：批量点查 content/aiSummary 填回传入对象（IN 分块，单次点查微秒级）。
+        只写存在列的行——查不到的 id 保留原值（含 lite 缺省 ''）。persistItems 前置调用。 */
+    hydrateItems(items: FeedItem[]): void;
     setHealth(id: string, health: FeedSource['health']): void;
     getHealth(id: string): import("./types.js").SourceHealth;
     addSource(source: FeedSource): void;
@@ -131,38 +166,19 @@ export declare class SqliteStore {
     private pruneByIds;
     /** 清退：先过期后配额（低质优先 or 最老优先）——分块归档+删除，块间让渡 */
     private prune;
+    /** WHERE/FROM/排序键构建：queryItems 分页与 queryItemsChunked 直取共用同一套谓词 */
+    private itemQuery;
     /** 跨窗口查询（/items 下推 + 专题候选）：filter+sort+FTS+分页全在 SQL */
-    queryItems(opts: {
-        day?: string;
-        fetchedAfter?: string;
-        fetchedBefore?: string;
-        category?: string;
-        source?: string;
-        unread?: boolean;
-        q?: string;
-        /** 专题：源白名单（精确 IN；空数组=不筛） */
-        sources?: string[];
-        /** 专题：发布/抓取回退时间区间（COALESCE(NULLIF(publishedAt,''),fetchedAt)） */
-        publishedAfter?: string;
-        publishedBefore?: string;
-        /** 专题：最低评分（COALESCE(llmScore, MIN(10,MAX(0,score*8)))，同 pickFinal 口径） */
-        minScore?: number;
-        /** 日报候选：排除已在某日消化过的条目（digestedDay 存 '' 非 NULL——IS NULL 一并兼容） */
-        excludeDigestedDay?: string;
-        /** 日报候选：分类白名单；空 topic 按 '综合' 归位（与内存过滤 i.topic||'综合' 同口径） */
-        topics?: string[];
-        /** 非分页直取上限（候选池场景）：设了就不分页不计数，total=-1+totalPending */
-        limit?: number;
-        sort?: 'published' | 'fetched';
-        page?: number;
-        pageSize?: number;
-        /** 冷启动首屏：窗口未就绪时跳过 COUNT 全表扫描（json_extract 逐行评估是大库瓶颈），先回页数据；total=-1+totalPending 标记让前端出列表后补查 */
-        skipTotal?: boolean;
-    }): {
+    queryItems(opts: QueryItemsOpts): {
         total: number;
         totalPending?: boolean;
         items: FeedItem[];
     };
+    /** 大候选集分块直取（异步）：单条 SELECT 物化万级行仍是数百 ms 同步段（启动补跑日报正撞首屏）——
+        切成 4k 片+片间让渡，API 请求插缝服务。列/lite 语义与 limit 模式一致。 */
+    queryItemsChunked(opts: QueryItemsOpts & {
+        limit: number;
+    }): Promise<FeedItem[]>;
     /** NDJSON 流式导出：meta头 + items + sources + digests */
     exportNdjson(file: string, digestsDir: string, scope?: 'all' | 'items' | 'digests'): Promise<number>;
     /** NDJSON 导入：逐行 parse+merge 幂等 */

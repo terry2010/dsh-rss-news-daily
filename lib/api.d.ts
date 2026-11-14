@@ -71,6 +71,8 @@ export interface ApiDeps {
     onApiHit?: () => void;
     /** 用户真实手势信号：前端只在最近 60s 内有鼠标/键盘/滚动/触屏交互时在 status 轮询上带 act=1——区分"页面挂机"和"人在用" */
     onGesture?: () => void;
+    /** 启动时间线打点（devlog/boot.log）——定位冷启动占位屏的真实空档 */
+    bootMark?: (mark: string) => void;
 }
 /** 注册阅读器全部路由；返回 disposer。MOUNT 于 ctx.inject(['webServer']) 内调用。 */
 export declare function mountApi(ws: WebServerLike, deps: ApiDeps): () => void;

@@ -10,7 +10,7 @@
  * 会话零注入：apply 只注册工具/定时器/路由，不写 systemPrompt、不发 followup。
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { copyFile, cp, mkdir, readdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
@@ -102,6 +102,28 @@ export function apply(ctx: Context, config: ConfigType) {
   setLoopGuardEnabled(() => prefs.get().loopGuard !== false) // 用户显式关才停；装了 loop-recover 默认开
   const devlogDir = join(dataDir, 'devlog')
   setDevLogDir(devlogDir) // 完整 prompt/response 只在 prefs.devLog 开启时写
+  // 启动时间线打点：定位冷启动占位屏的真实空档。默认关闭——只有 prefs.devLog 或 DSH_BOOT_DEBUG=1 时才写 devlog/boot.log，发布版客户机器不落盘
+  const bootT0 = Date.now()
+  const bootLogFile = join(devlogDir, 'boot.log')
+  const bootPending: string[] = []
+  let bootOn: boolean | undefined // undefined = prefs 未就绪，先缓存行
+  const bootMark = (mark: string) => {
+    const line = `${new Date().toISOString()} +${Date.now() - bootT0}ms ${mark}`
+    if (bootOn === undefined) { bootPending.push(line); return }
+    if (!bootOn) return
+    try { appendFileSync(bootLogFile, line + '\n') } catch { /* 目录未就绪忽略 */ }
+  }
+  const bootSetEnabled = (on: boolean) => {
+    if (on === bootOn) return
+    bootOn = on
+    if (!on) { bootPending.length = 0; return }
+    try {
+      mkdirSync(devlogDir, { recursive: true })
+      writeFileSync(bootLogFile, bootPending.join('\n') + (bootPending.length ? '\n' : ''))
+      bootPending.length = 0
+    } catch { /* ignore */ }
+  }
+  bootMark('apply enter')
   setDevLogEnabled(() => prefs.get().devLog === true)
   setLlmConcurrency(() => prefs.get().llmConcurrency ?? 1) // 全局 AI 并发：默认 1 全串行，改设置即生效
   const probe = probeSqlite()
@@ -1094,7 +1116,10 @@ export function apply(ctx: Context, config: ConfigType) {
   void store.load()
     .then(() => {
       if (disposed) return
+      bootMark('store.load resolved')
       prefs.load()
+      bootSetEnabled(prefs.get().devLog === true || process.env.DSH_BOOT_DEBUG === '1') // 开 devLog 偏好才落盘；发布版默认不写
+      bootMark('prefs.load done')
       if (pkgVersion && store.meta.pluginVersion !== pkgVersion) store.meta.pluginVersion = pkgVersion // 记录最后打开此库的插件版本——跨版本数据形状迁移/排障依据（随下次 save 落盘）
       // EMA 跨重启续命：store.load 后灌回历史耗时画像，重启后首个任务即有 ETA；落盘随 store.save()
       setLlmDurState(store.meta.llmDurEma)
@@ -1133,6 +1158,7 @@ export function apply(ctx: Context, config: ConfigType) {
       armPeak() // 高峰边界定时器首次挂钟
       disposers.push(() => { peakTimer?.(); peakTimer = undefined }) // 插件重载必须清钟：孤儿定时器会拿旧闭包再跑一遍 pump/补跑
       if (store.meta.peakDefer && !peakNow()) peakBackfill() // 重启落在峰外且有欠账：直接补跑
+      bootMark('tools+scheduler armed')
       log.info('tools registered, scheduler armed')
     })
     .catch((e) => log.error('store load failed; plugin degraded to inert', e))
@@ -1150,6 +1176,7 @@ export function apply(ctx: Context, config: ConfigType) {
     if (directoryPickerSvc) log.info(`directoryPicker service available: ${directoryPickerSvc.capability?.().kind ?? 'unknown'}`)
   })
   ctx.inject(['webServer'], (c) => {
+    bootMark('webServer service injected')
     const ws = (c as unknown as { webServer?: { getOrigin?: () => string } }).webServer
     if (ws) {
       wsGetOrigin = typeof ws.getOrigin === 'function' ? () => ws.getOrigin!() : undefined
@@ -1172,7 +1199,9 @@ export function apply(ctx: Context, config: ConfigType) {
         devlogDir,
         onApiHit: () => { uiActive.apiAt = Date.now() },
         onGesture: () => { uiActive.gestureAt = Date.now() },
+        bootMark,
       }))
+      bootMark('mountApi registered')
       log.info('reader mounted at /dsh-rss-news-daily/')
     }
   })

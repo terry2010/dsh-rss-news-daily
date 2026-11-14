@@ -102,11 +102,14 @@ export interface ApiDeps {
   onApiHit?: () => void
   /** 用户真实手势信号：前端只在最近 60s 内有鼠标/键盘/滚动/触屏交互时在 status 轮询上带 act=1——区分"页面挂机"和"人在用" */
   onGesture?: () => void
+  /** 启动时间线打点（devlog/boot.log）——定位冷启动占位屏的真实空档 */
+  bootMark?: (mark: string) => void
 }
 
 // === API 端点 ===
 
 function apiItems(deps: ApiDeps) {
+  let itemsMarked = 0
   return async (req: Req, res: Res) => {
     const u = new URL(req.url || '', 'http://x')
     const day = u.searchParams.get('day') || ''
@@ -121,8 +124,12 @@ function apiItems(deps: ApiDeps) {
     const qi = (deps.store as { queryItems?: (o: { day?: string; category?: string; source?: string; unread?: boolean; q?: string; sort?: string; page?: number; pageSize?: number; skipTotal?: boolean }) => { total: number; totalPending?: boolean; items: typeof deps.store.items } }).queryItems
     if (qi) { // SQLite 后端:filter/sort/FTS/分页全下推——先判再走，不碰内存窗口（冷启动时触碰会惰性引爆全量加载）
       const b = day ? zonedDayBounds(day, deps.timezone || undefined) : undefined
+      const t0 = Date.now()
       const r = qi.call(deps.store, { day: day || undefined, fetchedAfter: b?.after, fetchedBefore: b?.before, category: category || undefined, source: source || undefined, unread, q: q || undefined, sort: sortKey, page, pageSize: deps.readerPageSize, skipTotal: true }) // skipTotal 只在预热期生效：冷启动先回页数据，COUNT 留到窗口就绪后
-      sendJson(res, 200, { ok: true, total: r.total, ...(r.totalPending ? { totalPending: true } : {}), page, pageSize: deps.readerPageSize, items: r.items })
+      if (itemsMarked++ === 0) deps.bootMark?.(`first /api/items handler: ${Date.now() - t0}ms total=${r.total}`)
+      // 响应剥 content：列表渲染只用 summary/aiSummary/translation——全文 ~14KB/条 是纯传输税（50条≈700KB JSON）
+      const items = r.items.map(({ content: _c, ...rest }) => rest)
+      sendJson(res, 200, { ok: true, total: r.total, ...(r.totalPending ? { totalPending: true } : {}), page, pageSize: deps.readerPageSize, items })
       return
     }
     let items = deps.store.items
@@ -222,7 +229,8 @@ function apiArchive(deps: ApiDeps) {
           : (db.prepare(`SELECT COUNT(*) c ${from} WHERE ${w}`).get(...args) as { c: number }).c
         const sortKey = sp.get('sort') === 'fetched' ? 'fetchedAt' : "COALESCE(NULLIF(publishedAt,''),fetchedAt)"
         const rows = db.prepare(`SELECT items.* ${from} WHERE ${w} ORDER BY ${sortKey} DESC LIMIT ? OFFSET ?`).all(...args, size, (page - 1) * size) as Array<Record<string, unknown>>
-        const items = rows.map((r) => ({ ...r, tags: r.tags ? JSON.parse(r.tags as string) : undefined, reasons: r.reasons ? JSON.parse(r.reasons as string) : [], state: r.state ? JSON.parse(r.state as string) : {} }))
+        // 同热库列表：剥 content 省 ~700KB/页传输（档案视图复用列表渲染，同样不读 content）
+        const items = rows.map((r) => ({ ...r, content: undefined, tags: r.tags ? JSON.parse(r.tags as string) : undefined, reasons: r.reasons ? JSON.parse(r.reasons as string) : [], state: r.state ? JSON.parse(r.state as string) : {} }))
         sendJson(res, 200, { ok: true, total, page, pageSize: size, items })
       } catch (err) { sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) }) }
       return
@@ -526,14 +534,16 @@ async function serveStatic(res: Res, rel: string): Promise<void> {
 /** 注册阅读器全部路由；返回 disposer。MOUNT 于 ctx.inject(['webServer']) 内调用。 */
 export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   const disposers: Array<() => void> = []
+  let firstReqMarked = false
   const guard = (fn: (req: Req, res: Res) => void | Promise<void>) => (req: Req, res: Res): Promise<void> => {
+    if (!firstReqMarked) { firstReqMarked = true; deps.bootMark?.(`first request: ${req.url}`) }
     if (!sameSite(req)) { res.statusCode = 403; res.end('forbidden'); return Promise.resolve() }
     deps.onApiHit?.() // 任何请求都算页面活跃——空闲判定（integrity_check 避让）据此
     return Promise.resolve(fn(req, res)).catch((e) => sendJson(res, 500, { ok: false, error: String(e) }))
   }
 
   // 静态页（exact 匹配目录入口 + prefix 资源）
-  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/`, handler: guard((_q, r) => serveStatic(r, 'index.html')) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/`, handler: guard((_q, r) => { deps.bootMark?.('index.html served'); serveStatic(r, 'index.html') }) }))
   disposers.push(ws.register({ kind: 'exact', path: BASE, handler: guard((_q, r) => serveStatic(r, 'index.html')) }))
   // 宿主 prefix 语义 = 精确命中 p 或 p/<x>；注册必须不带尾斜杠（否则要求双斜杠才中）
   disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/web`, handler: guard((q, r) => serveStatic(r, (q.url || '').replace(`${BASE}/web/`, ''))) }))

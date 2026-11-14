@@ -523,23 +523,38 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   // SQLite 路径候选走 SQL——store.items 只是内存工作集窗口（≤windowSize 条）：
   // 高摄入下当天条目远超窗口，窗口过滤会让日报漏掉大半天（静默残缺）。
   // 条件与旧内存过滤同口径：未消化(hidden 由 queryItems 内建排除)+时间界+订阅分类。
-  const qi = (opts.store as { queryItems?: (o: { fetchedAfter?: string; excludeDigestedDay?: string; topics?: string[]; limit?: number; sort?: 'fetched'; skipTotal?: boolean }) => { items: FeedItem[] } }).queryItems
-  const candidates: FeedItem[] = qi
-    ? qi.call(opts.store, {
-      fetchedAfter: cutoff ? new Date(cutoff).toISOString() : undefined,
-      excludeDigestedDay: opts.force ? undefined : day,
-      topics: subs?.length ? [...subs] : undefined,
-      limit: opts.candidateMax ?? 50_000,
-      sort: 'fetched',
-      skipTotal: true,
-    }).items
+  type CandOpts = { fetchedAfter?: string; excludeDigestedDay?: string; topics?: string[]; limit?: number; lite?: boolean; sort?: 'fetched'; skipTotal?: boolean }
+  const st = opts.store as {
+    queryItems?: (o: CandOpts) => { items: FeedItem[] }
+    queryItemsChunked?: (o: CandOpts) => Promise<FeedItem[]>
+    hydrateItems?: (items: FeedItem[]) => void
+  }
+  const hydrate = (items: FeedItem[]) => st.hydrateItems?.(items)
+  // lite=true：候选物化只取轻列（无 content/aiSummary）；真正读 content 的只有
+  // unscored(补评prompt)与 picked(概括输入)，挑出后 hydrate 补水。
+  // chunked 优先：万级候选单条 SELECT 仍是数百 ms 同步段（启动补跑正撞首屏），分块+让渡保响应。
+  const candArgs: CandOpts = {
+    fetchedAfter: cutoff ? new Date(cutoff).toISOString() : undefined,
+    excludeDigestedDay: opts.force ? undefined : day,
+    topics: subs?.length ? [...subs] : undefined,
+    limit: opts.candidateMax ?? 50_000,
+    lite: true,
+    sort: 'fetched',
+    skipTotal: true,
+  }
+  const candidates: FeedItem[] = st.queryItemsChunked
+    ? await st.queryItemsChunked(candArgs)
+    : st.queryItems ? st.queryItems(candArgs).items
     : opts.store.items.filter((i) =>
       (opts.force || i.digestedDay !== day) && !i.state.hidden
       && (!cutoff || new Date(i.fetchedAt).getTime() >= cutoff)
       && (!subs?.length || subs.includes(i.topic || '综合')), // P5 订阅分类：未订阅不进池
     )
   // v2：启发式全量粗排 → 同题合并 → LLM 评分（可关/失败回退）→ 阈值+perTopic 挑选
+  // 大候选集下各同步段（粗排/合并）插让渡点——启动补跑撞首屏时请求可插缝服务
+  const tick = () => new Promise<void>((r) => setImmediate(r))
   for (const i of candidates) { i.dupCount = undefined; i.dupOf = undefined; i.aiBlocks = undefined } // 清上轮产物；llmScore/tags 是 ingest 一次性属性不清
+  await tick()
   const allScored = scoreAndSelect(candidates, sourcesById, Math.max(candidates.length, 1), {
     prefs: opts.prefs,
     digestDay: day,
@@ -547,7 +562,9 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     perTopicLimit: 0, // 上限在 pickFinal 统一应用（LLM 评分后才有意义）
     penaltyWindowDays: opts.penaltyWindowDays,
   })
+  await tick()
   let merged = (opts.dedupeStories ?? true) ? dedupeStories(allScored) : allScored
+  await tick()
   if ((opts.dedupeStories ?? true) && opts.llmEnabled && opts.llmClient) {
     // LLM 语义聚类（措辞不同的同事件）；失败仅 Jaccard
     opts.onItemDone?.(0, 1, 'cluster') // 单次调用阶段：以 1 为 total，ETA 走 cluster 桶 EMA
@@ -560,6 +577,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   if ((opts.rescoreMissing ?? true) && opts.llmEnabled && opts.llmClient && (opts.llmScoreCandidates ?? 40) > 0) {
     const unscored = merged.filter((i) => i.llmScore == null && (i.score ?? 0) > -0.5)
     if (unscored.length) {
+      hydrate(unscored) // lite 候选补 content——评分 prompt 用 summary||content 兜底
       opts.onItemDone?.(0, 1, 'score')
       await llmScoreItems(unscored, opts.llmClient, opts, log)
       rescored = unscored.filter((i) => i.llmScore != null)
@@ -567,6 +585,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     }
   }
   const picked = pickFinal(merged, opts)
+  hydrate(picked) // lite 候选补 content/aiSummary——toSummarizable 的概括输入需要正文
 
   // 逐条摘要（仅当有可用 LLM）；summarize=false 的源在 itemSummaries 内跳过
   if (opts.summaryEnabled && opts.llmEnabled && opts.llmClient) {
