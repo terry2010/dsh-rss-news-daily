@@ -40,6 +40,8 @@ export interface StoreMeta {
   llmDurEma?: { global?: number; byPurpose?: Record<string, number> }
   /** 高峰时段被推迟的 AI 工作：since=首个被跳过的抓取周期起点（补跑窗口）；digest=到点日报被推迟；briefSkipped=跳过的快报时段数（信息展示） */
   peakDefer?: { since?: string; digest?: boolean; briefSkipped?: number }
+  /** 最后打开此库的插件版本号——跨版本数据形状迁移/排障依据（区别于 PRAGMA user_version 的结构纪元） */
+  pluginVersion?: string
 }
 
 export interface StoreData {

@@ -29,6 +29,8 @@ export declare class SqliteStore {
     private metaObj;
     private srcList;
     private window;
+    private windowReady;
+    private windowGen;
     private dirtyItems;
     private proxyCache;
     /** 条目脏检测：窗口对象套 Proxy，任意层级写入（含 state.* 嵌套）都把根条目记入 dirtyItems——
@@ -50,6 +52,9 @@ export declare class SqliteStore {
         调用方须先停抓取/生成；脏窗口清空避免旧数据写回恢复库。 */
     restoreFrom(file: string): Promise<void>;
     private refreshWindow;
+    /** 分块预热：LIMIT/OFFSET 分批取行+逐行包裹，块间 setImmediate 让渡——事件循环不被一坨同步工作堵死。
+        预热期间有写入（addItems/refreshWindow/clearItems）→ 代际变了，半成品弃之改同步重建（正确性优先）。 */
+    private warmWindow;
     get meta(): StoreMeta & {
         health?: Record<string, FeedSource["health"]>;
     };
@@ -94,8 +99,11 @@ export declare class SqliteStore {
         sort?: 'published' | 'fetched';
         page?: number;
         pageSize?: number;
+        /** 冷启动首屏：窗口未就绪时跳过 COUNT 全表扫描（json_extract 逐行评估是大库瓶颈），先回页数据；total=-1+totalPending 标记让前端出列表后补查 */
+        skipTotal?: boolean;
     }): {
         total: number;
+        totalPending?: boolean;
         items: FeedItem[];
     };
     /** NDJSON 流式导出：meta头 + items + sources + digests */

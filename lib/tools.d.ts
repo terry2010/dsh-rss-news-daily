@@ -194,7 +194,7 @@ export interface NewsService {
     stopTopic?(id?: string): Promise<unknown>;
     /** 把排队中的专题从内存队列摘除（删除接口用——不动 meta） */
     dequeueTopic?(id: string): boolean;
-    /** 全局任务队列快照：{limit,peak?,running[],waiting[]}——悬停提示渲染全部任务+逐项取消；waiting.held=高峰挂起 */
+    /** 全局任务队列快照：{limit,peak?,running[],waiting[],pendingBrief?}——悬停提示渲染全部任务+逐项取消；waiting.held=高峰挂起；pendingBrief=已合并的快报意图伪条目 */
     taskList?(): Promise<{
         limit: number;
         peak?: boolean;
@@ -214,11 +214,12 @@ export interface NewsService {
             position: number;
             held?: boolean;
         }>;
+        pendingBrief?: boolean;
     }>;
-    /** 按任务 id 取消：'fetch'/'digest'/'topic:{metaId}'——waiting 撤队，running abort */
+    /** 按任务 id 取消：'fetch'/'digest'/'topic:{metaId}'/'pending:fetch-brief'——waiting 撤队，running abort，pending 清意图标记 */
     cancelTask?(id: string): Promise<{
         ok: boolean;
-        cancelled?: 'waiting' | 'running';
+        cancelled?: 'waiting' | 'running' | 'pending';
     }>;
     /** prefs.peak 保存后由 api 调用：重挂高峰边界定时器；若已出峰立刻放行挂起任务+补跑 */
     peakChanged?(): void;

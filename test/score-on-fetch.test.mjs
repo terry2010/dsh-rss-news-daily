@@ -61,6 +61,21 @@ test('sof: scoreNewItems onScoreProgress 按块回报进度', async () => {
   assert.deepEqual(prog, [[2, 3], [3, 3]]) // chunkSize=2 → 2 块：覆盖 2/3 条
 })
 
+test('sof: shouldPause 协作式让位——已评块保留，未评条目不送、幂等续评', async () => {
+  const { scoreNewItems } = await import('../lib/digest-pipeline.js')
+  const items = [mkItem(1), mkItem(2), mkItem(3), mkItem(4)]
+  let calls = 0
+  const client = mkClient((req) => { calls++; return scoreHandler(req) })
+  const n = await scoreNewItems(items, client, {
+    llmTimeoutMs: 60_000, llmScoreCandidates: 2, llmMaxTokens: 4096,
+    shouldPause: () => calls >= 1, // 第一块评完即让位（进峰）
+  }, noopLog)
+  assert.equal(calls, 1) // 第二块没送
+  assert.equal(n, 2)
+  assert.equal(items[0].llmScore, 8)
+  assert.equal(items[2].llmScore, undefined) // 未评——llmScore==null 下轮幂等续评
+})
+
 test('sof: 已评分条目幂等跳过', async () => {
   const { scoreNewItems } = await import('../lib/digest-pipeline.js')
   const items = [mkItem(1, { llmScore: 7 }), mkItem(2)]
@@ -163,7 +178,7 @@ test('sof: 高峰快报——不传 llmClient 走零 AI 路径：未评条目启
   assert.equal(n2, 0)
 })
 
-test('sof: 槽位快报同刻覆盖——出峰重写「高峰·未评未译」节为正式节', async () => {
+test('sof: appendHourlyBrief 同刻覆盖机制——marker 前缀匹配吃掉带后缀旧节（槽位调用方现传 keepExisting 不重写）', async () => {
   const { appendHourlyBrief } = await import('../lib/digest-pipeline.js')
   const dir = mkdtempSync(join(tmpdir(), 'rnd-hb-slot-'))
   const items = [mkItem(1, { score: 0.9, title: 'big story' }), mkItem(2, { score: 0.4 })]
@@ -179,6 +194,25 @@ test('sof: 槽位快报同刻覆盖——出峰重写「高峰·未评未译」�
   assert.equal((md.match(/## 12:04 时段快报/g) || []).length, 1) // 同刻只剩一节
   assert.doesNotMatch(md, /高峰·未评未译/)                        // 后缀随旧节被吃掉
   assert.match(md, /AI 要点概括。/)                              // 正式 LLM 概括进节
+})
+
+test('sof: keepExisting——峰内正式快报不被槽位重写（概括调用一并省）', async () => {
+  const { appendHourlyBrief } = await import('../lib/digest-pipeline.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-hb-keep-'))
+  const base = { sourcesById: new Map([['src1', { title: 'Src1' }]]), day: '2026-10-28', time: '12:04', minScore: 6, digestsDir: dir, log: noopLog }
+  // 峰内先写正式节（AI 评分+概括，只缺译 → 未译标）
+  let briefCalls = 0
+  const n = await appendHourlyBrief({ ...base, items: [mkItem(1, { llmScore: 8, title: 'big story' })], noTranslate: true, llmClient: mkClient(() => { briefCalls++; return 'AI 要点。' }) })
+  assert.equal(n, 1)
+  let md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
+  assert.match(md, /## 12:04 时段快报（高峰·未译）/) // 已评只缺译
+  assert.equal(briefCalls, 1)
+  // 槽位任务低峰跑来：同刻已有节 → 早退不写、概括调用也不发
+  const n2 = await appendHourlyBrief({ ...base, items: [mkItem(1, { llmScore: 9, title: 'rewritten' })], keepExisting: true, llmClient: mkClient(() => { briefCalls++; return 'x' }) })
+  assert.equal(n2, 0)
+  assert.equal(briefCalls, 1) // 概括调用被省
+  md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
+  assert.doesNotMatch(md, /rewritten/) // 原节原样保留
 })
 
 test('sof: 快报输出总结/领域速览/重要新闻三段，并在 LLM 失败时回退', async () => {

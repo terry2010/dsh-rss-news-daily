@@ -11,7 +11,7 @@
 <meta property="og:description" content="自动抓取订阅源，AI 评分整理出一份精选日报。">
 <meta property="og:type" content="website">
 <title>RSS 每日精选 · dsh-rss-news-daily</title>
-<link rel="stylesheet" href="web/style.css?v=354b0d83a0">
+<link rel="stylesheet" href="web/style.css?v=13a9fecfe8">
 </head>
 <body>
 <header>
@@ -251,9 +251,9 @@
     </details>
 
     <details class="settings-fold">
-      <summary><span>高峰时段暂停</span><small>高峰只抓新闻不调 AI，低峰自动补跑欠账</small></summary>
+      <summary><span>高峰时段暂停</span><small>高峰只抓新闻·AI 暂停（快报可照常），低峰自动补跑欠账</small></summary>
       <div class="settings-fold-body">
-        <p class="settings-help">本地模型负载高的时段可暂停 AI：窗口内只抓取新闻——正文判定、翻译、评分、日报、专题一律暂停，欠账在低峰时段自动补跑（跳过时段快报的翻译不补）。支持跨零点窗口（如 22:00–06:00），时区与「自动更新」一致。改动即刻保存。</p>
+        <p class="settings-help">本地模型负载高的时段可暂停 AI：窗口内只抓取新闻——正文判定、翻译、日报、专题一律暂停，欠账在低峰时段自动补跑。开「仍生成快报」后峰内快报照常产正式节（AI 评分+概括，只省翻译，低峰不重写）。支持跨零点窗口（如 22:00–06:00），时区与「自动更新」一致。改动即刻保存。</p>
         <div class="settings-checks">
           <label class="setting-check"><input type="checkbox" id="peakEnabled"> 启用高峰时段暂停</label>
         </div>
@@ -268,7 +268,7 @@
           </label>
         </div>
         <div class="settings-checks">
-          <label class="setting-check"><input type="checkbox" id="peakBrief"> 高峰时段仍生成时段快报（不翻译，低峰也不补译）</label>
+          <label class="setting-check"><input type="checkbox" id="peakBrief"> 高峰时段仍生成时段快报（评分+概括照常，只省翻译；低峰不重写）</label>
         </div>
         <div id="peakInfo" class="hist"></div>
       </div>
@@ -505,6 +505,6 @@
 
 <script src="web/changelog.js?v=b7d7bab42e"></script>
 <script src="web/onboarding.js?v=620ba93b6c"></script>
-<script src="web/app.js?v=b118de8dcb"></script>
+<script src="web/app.js?v=8c0bfad5bb"></script>
 </body>
 </html>

@@ -71,7 +71,9 @@ export declare function zhTitleOf(item: FeedItem): string;
  *  会被误判送翻译、模型原样回显；改按"文字脚本占比"判定，URL 不计入。 */
 export declare function textLooksForeign(text: string): boolean;
 /** P1 抓取后评分：本轮新条目本批去重 → 分块批量评分（无分跳过幂等）；返回评出条数。 */
-export declare function scoreNewItems(items: FeedItem[], client: LlmClient, opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs' | 'onScoreProgress'>, log: LogSink): Promise<number>;
+export declare function scoreNewItems(items: FeedItem[], client: LlmClient, opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs' | 'onScoreProgress'> & {
+    shouldPause?: () => boolean;
+}, log: LogSink): Promise<number>;
 /** P8 时段快报：高分条目按领域分组追加/覆盖 `## HH:mm 时段快报` 节（{day}-hourly.md）。 */
 export declare function appendHourlyBrief(opts: {
     items: FeedItem[];
@@ -95,6 +97,8 @@ export declare function appendHourlyBrief(opts: {
     noTranslate?: boolean;
     /** 高峰快报：llmScore 未评出的条目用启发式 score×8 兜底入选（高峰不跑评分，等低峰补评） */
     heuristicScores?: boolean;
+    /** 槽位任务用：同刻已有快报节（峰内生成的正式节）则不重写——连概括/翻译调用一并省掉 */
+    keepExisting?: boolean;
     log?: LogSink;
 }): Promise<number>;
 /** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。 */

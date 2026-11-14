@@ -218,7 +218,7 @@ async function llmScoreItems(
 export async function scoreNewItems(
   items: FeedItem[],
   client: LlmClient,
-  opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs' | 'onScoreProgress'>,
+  opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs' | 'onScoreProgress'> & { shouldPause?: () => boolean },
   log: LogSink,
 ): Promise<number> {
   const fresh = items.filter((i) => i.llmScore == null && !i.state.hidden)
@@ -230,6 +230,7 @@ export async function scoreNewItems(
   let scored = 0
   for (let i = 0; i < scorable.length && i / chunkSize < maxChunks; i += chunkSize) {
     if (opts.signal?.aborted) break
+    if (opts.shouldPause?.()) break // 协作式让位：进峰即停——已评块保留，未评的 llmScore==null 下轮幂等续评
     scored += await scoreChunk(scorable.slice(i, i + chunkSize), client, opts, log)
     opts.onScoreProgress?.(Math.min(i + chunkSize, scorable.length), scorable.length)
   }
@@ -258,6 +259,8 @@ export async function appendHourlyBrief(opts: {
   noTranslate?: boolean
   /** 高峰快报：llmScore 未评出的条目用启发式 score×8 兜底入选（高峰不跑评分，等低峰补评） */
   heuristicScores?: boolean
+  /** 槽位任务用：同刻已有快报节（峰内生成的正式节）则不重写——连概括/翻译调用一并省掉 */
+  keepExisting?: boolean
   log?: LogSink
 }): Promise<number> {
   const log = opts.log || noopLog
@@ -270,6 +273,11 @@ export async function appendHourlyBrief(opts: {
   let body = ''
   try { body = await readFile(file, 'utf8') } catch { /* 新文件 */ }
   if (body.startsWith(head)) body = body.slice(head.length)
+  const marker = `## ${opts.time} 时段快报`
+  if (opts.keepExisting && body.indexOf(marker) >= 0) { // 峰内快报已是 AI 正式质量——槽位任务低峰不重写（早退连概括调用都省）
+    log.info(`hourly brief ${opts.time}: 同刻已有节，keepExisting 跳过重写`)
+    return 0
+  }
   if (!scored.length) {
     // 空时段说明（`> ⏳` 单行）：全文至多一条。连续空档就地更新文案（累计数）；
     // 实段进来时说明被压到其下、留作最近空档的标记；再起新空档时清掉旧记录保证唯一。
@@ -286,7 +294,7 @@ export async function appendHourlyBrief(opts: {
   // 快报生成时补翻入选外文条目：isForeign 由 translateItems 内判（CJK≤50%），无译文才调；高峰快报不翻
   if (!opts.noTranslate && (opts.llmClient || opts.translateClient)) await translateItems(scored.filter((i) => !i.state.translation), opts.translateClient ?? opts.llmClient!, opts)
   const groups = new Map<string, FeedItem[]>()
-  for (const it of [...scored].sort((a, b) => (b.llmScore ?? 0) - (a.llmScore ?? 0))) {
+  for (const it of [...scored].sort((a, b) => keyOf(b) - keyOf(a))) {
     const t = it.topic || '综合'
     groups.set(t, [...(groups.get(t) ?? []), it])
   }
@@ -306,16 +314,18 @@ export async function appendHourlyBrief(opts: {
   }
   // LLM 不可用/空回复时的抽取式兜底：点名 Top 标题，不再是无内容的"领域有更新"
   if (!brief) {
-    const tops = [...scored].sort((a, b) => (b.llmScore ?? 0) - (a.llmScore ?? 0)).slice(0, 3).map((it) => `「${zhTitleOf(it)}」`).join('、')
+    const tops = [...scored].sort((a, b) => keyOf(b) - keyOf(a)).slice(0, 3).map((it) => `「${zhTitleOf(it)}」`).join('、')
     brief = `本时段 ${scored.length} 条入选（${[...groups.keys()].slice(0, 4).join('、')}），要点：${tops}。`
   }
 
   // 逐行 > 前缀：mdLite 把连续引用行合并成一个白色卡片（保卡片底色；碎片化 bug 已修）
-  const lines = [`## ${opts.time} 时段快报${opts.noTranslate ? '（高峰·未评未译）' : ''}`, '', brief.split('\n').map((l) => `> ${l}`).join('\n'), '']
+  // 峰内快报标按条目实况：有 LLM 评分=已评只缺译 →（高峰·未译）；纯启发式入选 →（高峰·未评未译）
+  const peakSuffix = opts.noTranslate ? (scored.some((i) => i.llmScore != null) ? '（高峰·未译）' : '（高峰·未评未译）') : ''
+  const lines = [`## ${opts.time} 时段快报${peakSuffix}`, '', brief.split('\n').map((l) => `> ${l}`).join('\n'), '']
   // 领域速览：有新闻才出——每域一行（条数+最高分）
   lines.push('### 领域速览', '')
   for (const [topic, list] of groups) {
-    const top = Math.max(...list.map((i) => i.llmScore ?? 0))
+    const top = Math.round(Math.max(...list.map(keyOf))) // 显示入选键：启发式入选的条目也显示其实分（取整），不再是 0
     // 与日报目录同款锚点：#### topic 标题 id 即领域名，点击走 fastScrollTo 快速跳
     lines.push(`- **[${topic}](#${topic})** ${list.length} 条 · 最高 ${top} 分`)
   }
@@ -334,7 +344,6 @@ export async function appendHourlyBrief(opts: {
     lines.push('')
   }
   const section = lines.join('\n').trimEnd() + '\n'
-  const marker = `## ${opts.time} 时段快报`
   // 幂等：同刻已存在则替换该节（到下一个 ## 或文件尾），否则插到最前（新快报在上）
   const idx = body.indexOf(marker)
   if (idx >= 0) {
