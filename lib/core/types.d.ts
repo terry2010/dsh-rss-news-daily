@@ -47,6 +47,8 @@ export interface ItemState {
     liked: 1 | -1 | 0;
     /** AI 判定的无效正文（占位/引导短文本）：列表只显标题 */
     stubLead?: boolean;
+    /** AI 已判过短正文（有效也落标——高峰推迟后重扫不重复送判） */
+    stubJudged?: boolean;
     /** 中文译文（翻译模型输出） */
     translation?: string;
     /** 翻译失败原因（诊断用） */
@@ -134,7 +136,14 @@ export interface DigestDocument {
     tokens?: {
         inputTokens: number;
         outputTokens: number;
+        cacheReadTokens?: number;
         estimated?: boolean;
+    };
+    /** 日报内翻译（translateClient）用量：独立于处理模型，记入翻译桶 */
+    translateTokens?: {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens?: number;
     };
 }
 export interface ParsedFeedItem {

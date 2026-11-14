@@ -22,6 +22,11 @@ export interface SchedulerOptions {
   runDailyDigest: () => Promise<unknown>
   /** 生效时间表：digestTimes 空则回落 [dailyTime]；每次 arm 时重读（UI 改动下一跳生效） */
   getSchedule?: () => { digestTimes: string[]; fetchTimes: string[] }
+  /** 高峰暂停：digest 到点时返回 true → 不跑并回调 onDigestDeferred。
+   *  （不能用任务挂起实现——runDailyDigest 的 Promise 要等任务跑完才兑现，挂住 scheduledRunning
+   *   闩锁会挡掉之后所有定时 fetch/digest；改为标记推迟、出峰由调用方补跑） */
+  shouldDeferDigest?: () => boolean
+  onDigestDeferred?: () => void
   log?: LogSink
 }
 
@@ -67,7 +72,14 @@ export function startScheduler(ctx: TimerSeam, options: SchedulerOptions): () =>
       scheduledRunning = true
       void (async () => {
         if (doFetch) await options.runFetchCycle().catch((e) => log.error('scheduled fetch failed', e))
-        if (doDigest) await options.runDailyDigest().catch((e) => log.error('scheduled digest failed', e))
+        if (doDigest) {
+          if (options.shouldDeferDigest?.()) {
+            options.onDigestDeferred?.()
+            log.info('digest deferred: peak hours')
+          } else {
+            await options.runDailyDigest().catch((e) => log.error('scheduled digest failed', e))
+          }
+        }
       })().finally(() => {
         scheduledRunning = false
         armNext()

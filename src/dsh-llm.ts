@@ -57,6 +57,8 @@ export async function resolveDshRoute(
 /** 诊断信息：reasoning 长度累计 + 截尾样本（死循环时尾巴就是复读内容）。 */
 export interface CollectDiag { reasoningChars: number; tail: string; genMs?: number; partial?: string }
 
+let rawUsageLogged = false // 一次性探针标记
+
 /** LLM 诊断日志文件（ctx.logger 不落盘——模型死循环排查需要可查的文本证据）。 */
 let diagFile: string | undefined
 export function setLlmDiagFile(path: string): void { diagFile = path }
@@ -124,7 +126,7 @@ const REASONING_GUARD_OPTS: Record<string, number> = { poolMinRepeats: 8, ngramR
 /** Accumulate a stream into plain text, surfacing terminal failures. usage 传入对象则原地累计 token 用量（流中 usage 为累计值，取最新）。loopDetect 命中即截流。 */
 export async function collectText(
   stream: AsyncIterable<StreamChunk>,
-  usage?: { inputTokens: number; outputTokens: number; _seen?: number; _seenOut?: number },
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; _seen?: number; _seenOut?: number; _seenCache?: number },
   diag?: CollectDiag & { loop?: string },
   loopDetect?: LoopDetect,
 ): Promise<string> {
@@ -137,11 +139,15 @@ export async function collectText(
     for await (const chunk of stream) {
       if (!firstAt) firstAt = Date.now()
       const u = (chunk as { usage?: { inputTokens?: number; outputTokens?: number } }).usage
+      if (u && !rawUsageLogged) { rawUsageLogged = true; diagLog(`RAW usage ${JSON.stringify(u)}`) } // 探针：确认宿主透传了哪些 usage 字段
+      const uc = (u as { cacheReadTokens?: number } | undefined)?.cacheReadTokens
       if (usage && u) {
         if (typeof u.inputTokens === 'number') usage.inputTokens += u.inputTokens - (usage._seen ?? 0) // 累计值取增量
         if (typeof u.outputTokens === 'number') usage.outputTokens += u.outputTokens - (usage._seenOut ?? 0)
+        if (typeof uc === 'number') usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + uc - (usage._seenCache ?? 0)
         if (typeof u.inputTokens === 'number') usage._seen = u.inputTokens
         if (typeof u.outputTokens === 'number') usage._seenOut = u.outputTokens
+        if (typeof uc === 'number') usage._seenCache = uc
       }
       switch (chunk.type) {
         case 'text-delta':
@@ -333,7 +339,7 @@ export class DshLlmClient implements LlmClient {
   private readonly tag: string
   private resolution?: { provider: string; model: string }
   /** 本 client 生命周期内的累计 token 用量（pipeline 每次 digest 新建实例 → 即单次日报用量） */
-  readonly usage: { inputTokens: number; outputTokens: number; _seen?: number; _seenOut?: number } = { inputTokens: 0, outputTokens: 0 }
+  readonly usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; _seen?: number; _seenOut?: number; _seenCache?: number } = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }
 
   constructor(llm: LlmRuntime, route: DshLlmRoute, log: LogSink, tag = 'llm', idleTimeoutMs = LLM_IDLE_MS) {
     this.llm = llm

@@ -68,6 +68,31 @@ test('addTokenStats: 按日+按功能累计,零用量跳过', async () => {
   assert.equal(meta.tokenStats.days['2026-10-29'].digest, 15)
 })
 
+test('addTokenStats: featureIO 按功能拆入/出，负增量钳 0 不污染桶', async () => {
+  const { addTokenStats } = await import('../lib/core/token-stats.js')
+  const meta = {}
+  addTokenStats(meta, 'digest', { inputTokens: 100, outputTokens: 50 }, '2026-11-14')
+  addTokenStats(meta, 'digest', { inputTokens: 30, outputTokens: 20, cacheReadTokens: 5 }, '2026-11-14')
+  addTokenStats(meta, 'translate', { inputTokens: -249, outputTokens: 40 }, '2026-11-14') // 累计值错位产生的负增量
+  const d = meta.tokenStats.days['2026-11-14']
+  assert.deepEqual(d.featureIO.digest, { in: 130, out: 70, cached: 5 })
+  assert.deepEqual(d.featureIO.translate, { in: 0, out: 40, cached: 0 })
+  assert.equal(d.in, 130); assert.equal(d.out, 110); assert.equal(d.cached, 5)
+  assert.equal(meta.tokenStats.totalIn, 130); assert.equal(meta.tokenStats.totalOut, 110); assert.equal(meta.tokenStats.totalCached, 5)
+  assert.equal(d.translate, 40)
+})
+
+test('normalizePrefs: tokenPrice 按模型分档，负数/非数丢弃，全空清除', async () => {
+  const { normalizePrefs } = await import('../lib/core/prefs.js')
+  const p = normalizePrefs({ tokenPrice: { digest: { in: 2, out: 8 }, translate: { in: -1, out: 'x' } } }).tokenPrice
+  assert.deepEqual(p, { digest: { in: 2, out: 8 } })
+  assert.deepEqual(normalizePrefs({ tokenPrice: { translate: { in: 0.5 } } }).tokenPrice, { translate: { in: 0.5, out: 0 } })
+  assert.deepEqual(normalizePrefs({ tokenPrice: { digest: { in: 2, out: 8, cached: 0 }, translate: { cached: 0.1 } } }).tokenPrice, { digest: { in: 2, out: 8, cached: 0 }, translate: { in: 0, out: 0, cached: 0.1 } }) // 缓价：0 是有效值（免费），仅存 cached 也成档
+  assert.deepEqual(normalizePrefs({ tokenPrice: { digest: { in: 2, out: 8, cached: -1 } } }).tokenPrice, { digest: { in: 2, out: 8 } }) // 负缓价丢弃该键
+  assert.equal(normalizePrefs({ tokenPrice: { digest: {} } }).tokenPrice, undefined)
+  assert.equal(normalizePrefs({}).tokenPrice, undefined)
+})
+
 // ---- /items sort 参数 ----
 
 const mkRes = () => ({ statusCode: 0, headers: {}, body: '', setHeader(k, v) { this.headers[k] = v }, end(b) { this.body = b ?? '' } })

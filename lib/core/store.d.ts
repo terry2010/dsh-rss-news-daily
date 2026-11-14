@@ -41,6 +41,12 @@ export interface StoreMeta {
         global?: number;
         byPurpose?: Record<string, number>;
     };
+    /** 高峰时段被推迟的 AI 工作：since=首个被跳过的抓取周期起点（补跑窗口）；digest=到点日报被推迟；briefSkipped=跳过的快报时段数（信息展示） */
+    peakDefer?: {
+        since?: string;
+        digest?: boolean;
+        briefSkipped?: number;
+    };
 }
 export interface StoreData {
     schema: number;

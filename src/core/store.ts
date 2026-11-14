@@ -38,6 +38,8 @@ export interface StoreMeta {
   }
   /** LLM 调用耗时 EMA（global 全局均值 + byPurpose 分桶）——重启后首轮即可给 ETA；随 save() 落盘 */
   llmDurEma?: { global?: number; byPurpose?: Record<string, number> }
+  /** 高峰时段被推迟的 AI 工作：since=首个被跳过的抓取周期起点（补跑窗口）；digest=到点日报被推迟；briefSkipped=跳过的快报时段数（信息展示） */
+  peakDefer?: { since?: string; digest?: boolean; briefSkipped?: number }
 }
 
 export interface StoreData {
@@ -102,6 +104,7 @@ export function normalizeStoreData(value: unknown): StoreData | null {
       lastFetchAt: typeof meta.lastFetchAt === 'string' ? meta.lastFetchAt : '',
       lastDigestAt: typeof meta.lastDigestAt === 'string' ? meta.lastDigestAt : '',
       lastDigestDay: typeof meta.lastDigestDay === 'string' ? meta.lastDigestDay : '',
+      ...(typeof meta.peakDefer === 'object' && meta.peakDefer !== null ? { peakDefer: meta.peakDefer as StoreMeta['peakDefer'] } : {}), // 高峰欠账台账：JSON 后端重启不丢
     },
     sources,
     items,

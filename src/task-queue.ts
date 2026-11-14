@@ -18,11 +18,15 @@ export interface GTask {
   onCancelQueued?: () => void
   /** 有调用方等结果时挂这里——任务真正跑完后兑现（无论等了多久） */
   settle?: { resolve: (v: unknown) => void; reject: (e: unknown) => void }
+  /** 高峰豁免：用户在弹层选「仍然执行」时带上——高峰期间 digest/topic 本会被挂起，此标放行 */
+  peakBypass?: boolean
+  /** 高峰挂起：fetch 类任务默认高峰也跑（只抓不调 AI 由管线自己跳），此标让整个任务等出峰——「排入低峰队列」用 */
+  holdInPeak?: boolean
 }
 
 export type EnqueueResult = 'started' | 'queued' | 'dup'
 
-export function createTaskQueue(opts: { limit: () => number; log?: { warn: (s: string) => void } }) {
+export function createTaskQueue(opts: { limit: () => number; canStart?: (t: GTask) => boolean; log?: { warn: (s: string) => void } }) {
   const waiting: GTask[] = []
   const running = new Map<string, GTask>()
   const limit = () => Math.max(1, Math.min(8, Math.floor(opts.limit() || 1)))
@@ -30,8 +34,9 @@ export function createTaskQueue(opts: { limit: () => number; log?: { warn: (s: s
   const pump = () => {
     const kinds = new Set([...running.values()].map((t) => t.kind))
     while (waiting.length && running.size < limit()) {
-      const i = waiting.findIndex((t) => !kinds.has(t.kind))
-      if (i < 0) break // 有空位但等待者全是在跑同类——同类互斥，等它们自己的接棒
+      // canStart=高峰挂起谓词：held 任务留在队列不占位（后面的可启动任务照常接棒——非严格 FIFO）
+      const i = waiting.findIndex((t) => !kinds.has(t.kind) && (opts.canStart?.(t) ?? true))
+      if (i < 0) break // 有空位但等待者全是在跑同类/全部被挂起——等它们自己的接棒
       const t = waiting.splice(i, 1)[0]
       kinds.add(t.kind)
       running.set(t.id, t)

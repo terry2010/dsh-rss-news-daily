@@ -20,10 +20,15 @@ export interface GTask {
         resolve: (v: unknown) => void;
         reject: (e: unknown) => void;
     };
+    /** 高峰豁免：用户在弹层选「仍然执行」时带上——高峰期间 digest/topic 本会被挂起，此标放行 */
+    peakBypass?: boolean;
+    /** 高峰挂起：fetch 类任务默认高峰也跑（只抓不调 AI 由管线自己跳），此标让整个任务等出峰——「排入低峰队列」用 */
+    holdInPeak?: boolean;
 }
 export type EnqueueResult = 'started' | 'queued' | 'dup';
 export declare function createTaskQueue(opts: {
     limit: () => number;
+    canStart?: (t: GTask) => boolean;
     log?: {
         warn: (s: string) => void;
     };

@@ -36,7 +36,9 @@ export interface ApiDeps {
     timezone: string;
     readerPageSize: number;
     digestsDir: string;
-    runDigest: (force?: boolean, day?: string) => Promise<unknown>;
+    runDigest: (force?: boolean, day?: string, opts?: {
+        peakBypass?: boolean;
+    }) => Promise<unknown>;
     /** 宿主 LLM runtime（可选能力）；用于 /api/llm 列 provider/model */
     getLlm?: () => {
         listProviders(): Array<{

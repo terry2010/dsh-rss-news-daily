@@ -254,10 +254,16 @@ export async function appendHourlyBrief(opts: {
   llmMaxTokens?: number
   /** 实段写入后回调（时段摘要, 入选数）；0 入选的空时段说明不触发 */
   onBrief?: (brief: string, count: number) => void
+  /** 高峰快报：跳过入选条目的翻译步（标题按原文进快报，低峰不补译——由 autoTranslate 积压自愈） */
+  noTranslate?: boolean
+  /** 高峰快报：llmScore 未评出的条目用启发式 score×8 兜底入选（高峰不跑评分，等低峰补评） */
+  heuristicScores?: boolean
   log?: LogSink
 }): Promise<number> {
   const log = opts.log || noopLog
-  const scored = opts.items.filter((i) => !i.dupOf && !i.state.hidden && (i.llmScore ?? 0) >= opts.minScore)
+  // 入选分键：正常只看 llmScore；高峰快报对未评条目回落启发式分（pickFinal 同款映射）
+  const keyOf = (i: FeedItem) => i.llmScore ?? (opts.heuristicScores ? Math.min(10, Math.max(0, (i.score ?? 0) * 8)) : 0)
+  const scored = opts.items.filter((i) => !i.dupOf && !i.state.hidden && keyOf(i) >= opts.minScore)
   const file = join(opts.digestsDir, `${opts.day}-hourly.md`)
   const head = `# 时段快报 · ${opts.day}\n\n`
   await mkdir(opts.digestsDir, { recursive: true })
@@ -277,8 +283,8 @@ export async function appendHourlyBrief(opts: {
     log.info(`hourly brief ${opts.time}: 0 入选，空时段说明（连续 ${streak} 个）`)
     return 0
   }
-  // 快报生成时补翻入选外文条目：isForeign 由 translateItems 内判（CJK≤50%），无译文才调
-  if (opts.llmClient || opts.translateClient) await translateItems(scored.filter((i) => !i.state.translation), opts.translateClient ?? opts.llmClient!, opts)
+  // 快报生成时补翻入选外文条目：isForeign 由 translateItems 内判（CJK≤50%），无译文才调；高峰快报不翻
+  if (!opts.noTranslate && (opts.llmClient || opts.translateClient)) await translateItems(scored.filter((i) => !i.state.translation), opts.translateClient ?? opts.llmClient!, opts)
   const groups = new Map<string, FeedItem[]>()
   for (const it of [...scored].sort((a, b) => (b.llmScore ?? 0) - (a.llmScore ?? 0))) {
     const t = it.topic || '综合'
@@ -305,7 +311,7 @@ export async function appendHourlyBrief(opts: {
   }
 
   // 逐行 > 前缀：mdLite 把连续引用行合并成一个白色卡片（保卡片底色；碎片化 bug 已修）
-  const lines = [`## ${opts.time} 时段快报`, '', brief.split('\n').map((l) => `> ${l}`).join('\n'), '']
+  const lines = [`## ${opts.time} 时段快报${opts.noTranslate ? '（高峰·未译）' : ''}`, '', brief.split('\n').map((l) => `> ${l}`).join('\n'), '']
   // 领域速览：有新闻才出——每域一行（条数+最高分）
   lines.push('### 领域速览', '')
   for (const [topic, list] of groups) {
@@ -698,6 +704,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     summarySource: sum.source,
     degraded,
     note,
-    tokens: (() => { const u = (opts.llmClient as { usage?: { inputTokens: number; outputTokens: number } } | undefined)?.usage; return u && (u.inputTokens + u.outputTokens) > 0 ? { inputTokens: u.inputTokens, outputTokens: u.outputTokens } : undefined })(),
+    tokens: (() => { const u = (opts.llmClient as { usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number } } | undefined)?.usage; return u && (u.inputTokens + u.outputTokens) > 0 ? { inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheReadTokens: u.cacheReadTokens } : undefined })(),
+    translateTokens: (() => { const u = (opts.translateClient as { usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number } } | undefined)?.usage; return u && (u.inputTokens + u.outputTokens) > 0 ? { inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheReadTokens: u.cacheReadTokens } : undefined })(),
   }
 }

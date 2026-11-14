@@ -88,6 +88,26 @@ export interface PrefsFile extends Prefs {
         zh?: number;
         en?: number;
     };
+    /** 单价（每百万 tokens，货币自定义）。digest=新闻处理模型，translate=新闻翻译模型；cached 为缓存命中输入价：缺省按入价计，填 0 = 缓存免费 */
+    tokenPrice?: {
+        digest?: {
+            in: number;
+            out: number;
+            cached?: number;
+        };
+        translate?: {
+            in: number;
+            out: number;
+            cached?: number;
+        };
+    };
+    /** 高峰时段暂停：窗口内只抓取不调 AI（start/end 为 'HH:MM' 墙钟，config.timezone 口径；支持跨零点；brief=高峰仍产快报不翻译） */
+    peak?: {
+        enabled?: boolean;
+        start?: string;
+        end?: string;
+        brief?: boolean;
+    };
 }
 /** 把未知输入消毒成 PrefsFile；畸形字段回默认，不抛错。 */
 export declare function normalizePrefs(value: unknown): PrefsFile;

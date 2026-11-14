@@ -91,6 +91,10 @@ export declare function appendHourlyBrief(opts: {
     llmMaxTokens?: number;
     /** 实段写入后回调（时段摘要, 入选数）；0 入选的空时段说明不触发 */
     onBrief?: (brief: string, count: number) => void;
+    /** 高峰快报：跳过入选条目的翻译步（标题按原文进快报，低峰不补译——由 autoTranslate 积压自愈） */
+    noTranslate?: boolean;
+    /** 高峰快报：llmScore 未评出的条目用启发式 score×8 兜底入选（高峰不跑评分，等低峰补评） */
+    heuristicScores?: boolean;
     log?: LogSink;
 }): Promise<number>;
 /** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。 */

@@ -11,7 +11,7 @@
 <meta property="og:description" content="自动抓取订阅源，AI 评分整理出一份精选日报。">
 <meta property="og:type" content="website">
 <title>RSS 每日精选 · dsh-rss-news-daily</title>
-<link rel="stylesheet" href="web/style.css?v=29f6590c53">
+<link rel="stylesheet" href="web/style.css?v=354b0d83a0">
 </head>
 <body>
 <header>
@@ -122,6 +122,16 @@
         </div>
       </div>
     </div>
+    <div id="peakModal" class="obOverlay" hidden>
+      <div class="obCard">
+        <h3>现在是高峰时段</h3>
+        <div class="obBody"><p id="peakMsg" class="settings-help">高峰时段内 AI 调用暂停。</p></div>
+        <div class="obNav">
+          <span></span>
+          <span><button id="btnPeakCancel">取消</button><button id="btnPeakQueue">排入低峰队列</button><button id="btnPeakNow" class="primary">仍然执行</button></span>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- 订阅源管理 -->
@@ -176,7 +186,7 @@
         <div id="subTopics" class="settings-topics"></div>
       </div>
       <div class="settings-subsection">
-        <h4>每日精选模型</h4>
+        <h4>新闻处理模型</h4>
         <p class="settings-help">留空时使用 dsh 的默认模型。选择即刻保存。</p>
         <div class="toolbar">
           <label class="f" for="llmProvider"><span class="f-lab">服务商</span><select id="llmProvider"><option value="">跟随 dsh 默认</option></select></label>
@@ -237,6 +247,30 @@
         <button id="btnSchedClear">恢复默认时间</button>
       </div>
       <div id="schedInfo" class="hist"></div>
+      </div>
+    </details>
+
+    <details class="settings-fold">
+      <summary><span>高峰时段暂停</span><small>高峰只抓新闻不调 AI，低峰自动补跑欠账</small></summary>
+      <div class="settings-fold-body">
+        <p class="settings-help">本地模型负载高的时段可暂停 AI：窗口内只抓取新闻——正文判定、翻译、评分、日报、专题一律暂停，欠账在低峰时段自动补跑（跳过时段快报的翻译不补）。支持跨零点窗口（如 22:00–06:00），时区与「自动更新」一致。改动即刻保存。</p>
+        <div class="settings-checks">
+          <label class="setting-check"><input type="checkbox" id="peakEnabled"> 启用高峰时段暂停</label>
+        </div>
+        <div class="setting-grid setting-grid-compact">
+          <label class="setting-control">高峰开始
+            <span class="setting-input"><input type="time" id="peakStart"></span>
+            <small>如 09:00；留空视为未启用。</small>
+          </label>
+          <label class="setting-control">高峰结束
+            <span class="setting-input"><input type="time" id="peakEnd"></span>
+            <small>如 23:00；跨零点可设 22:00–06:00。</small>
+          </label>
+        </div>
+        <div class="settings-checks">
+          <label class="setting-check"><input type="checkbox" id="peakBrief"> 高峰时段仍生成时段快报（不翻译，低峰也不补译）</label>
+        </div>
+        <div id="peakInfo" class="hist"></div>
       </div>
     </details>
 
@@ -425,6 +459,19 @@
               <option value="30">近 30 天</option>
               <option value="0">全部</option>
             </select></label>
+            <span class="stats-price" title="单价按每百万 tokens 填写，货币自定义；留空即 0，不计费用；缓存价留空按入价计，填 0 = 缓存免费">
+              <span class="f-lab">新闻处理模型</span>
+              <label class="f"><span class="f-lab">入</span><input type="number" id="priceDigestIn" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+              <label class="f"><span class="f-lab">出</span><input type="number" id="priceDigestOut" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+              <label class="f"><span class="f-lab">缓</span><input type="number" id="priceDigestCached" min="0" step="0.01" inputmode="decimal" placeholder="入价"></label>
+            </span>
+            <span class="stats-price">
+              <span class="f-lab">新闻翻译模型</span>
+              <label class="f"><span class="f-lab">入</span><input type="number" id="priceTrIn" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+              <label class="f"><span class="f-lab">出</span><input type="number" id="priceTrOut" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+              <label class="f"><span class="f-lab">缓</span><input type="number" id="priceTrCached" min="0" step="0.01" inputmode="decimal" placeholder="入价"></label>
+            </span>
+            <span class="hint">单价/百万 tokens</span>
           </div>
           <div id="statsBody" class="hist"></div>
         </div>
@@ -458,6 +505,6 @@
 
 <script src="web/changelog.js?v=b7d7bab42e"></script>
 <script src="web/onboarding.js?v=620ba93b6c"></script>
-<script src="web/app.js?v=24b6966e18"></script>
+<script src="web/app.js?v=e32e0508eb"></script>
 </body>
 </html>

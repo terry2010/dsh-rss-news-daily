@@ -413,6 +413,16 @@ sup.cite { position: relative; font-style: normal; line-height: 0; font-size: .7
 .hist-item { display: flex; justify-content: space-between; gap: var(--s4); padding: 7px 0; border-bottom: .5px solid var(--line); font-size: 12.5px; }
 .hist-item:last-child { border-bottom: none; }
 .hist-item span:last-child { font-family: var(--f-mono); color: var(--lead); }
+.stats-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.stats-table th, .stats-table td { padding: 7px 8px; border-bottom: .5px solid var(--line); text-align: right; font-family: var(--f-mono); color: var(--lead); white-space: nowrap; }
+.stats-table th { font-family: inherit; font-weight: 500; color: var(--dim); }
+.stats-table td:first-child, .stats-table th:first-child { text-align: left; font-family: inherit; color: var(--dim); }
+.stats-table tbody tr:last-child td { border-bottom: none; }
+.stats-table tfoot td { border-top: 1px solid var(--line); border-bottom: none; color: var(--lead); }
+.stats-legacy { color: var(--dim); font-size: 11px; }
+.stats-note { font-size: 11px; color: var(--dim); margin: 4px 0 0; }
+.stats-price { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.stats-price input { width: 64px; }
 .hint { font-size: 12px; color: var(--dim); }
 .field { margin: var(--s2) 0; display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
 .field > label { color: var(--lead); font-size: 13px; min-width: 5.5em; }

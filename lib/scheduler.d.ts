@@ -21,6 +21,11 @@ export interface SchedulerOptions {
         digestTimes: string[];
         fetchTimes: string[];
     };
+    /** 高峰暂停：digest 到点时返回 true → 不跑并回调 onDigestDeferred。
+     *  （不能用任务挂起实现——runDailyDigest 的 Promise 要等任务跑完才兑现，挂住 scheduledRunning
+     *   闩锁会挡掉之后所有定时 fetch/digest；改为标记推迟、出峰由调用方补跑） */
+    shouldDeferDigest?: () => boolean;
+    onDigestDeferred?: () => void;
     log?: LogSink;
 }
 /** timer 服务挂到 ctx 上的接缝（ctx.timeout/ctx.interval）——类型上 Context 不声明它，用结构类型接。 */

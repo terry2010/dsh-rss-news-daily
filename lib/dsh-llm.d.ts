@@ -44,8 +44,10 @@ export declare function loopDetectStatus(): 'untested' | 'active' | 'absent';
 export declare function collectText(stream: AsyncIterable<StreamChunk>, usage?: {
     inputTokens: number;
     outputTokens: number;
+    cacheReadTokens?: number;
     _seen?: number;
     _seenOut?: number;
+    _seenCache?: number;
 }, diag?: CollectDiag & {
     loop?: string;
 }, loopDetect?: LoopDetect): Promise<string>;
@@ -87,8 +89,10 @@ export declare class DshLlmClient implements LlmClient {
     readonly usage: {
         inputTokens: number;
         outputTokens: number;
+        cacheReadTokens?: number;
         _seen?: number;
         _seenOut?: number;
+        _seenCache?: number;
     };
     constructor(llm: LlmRuntime, route: DshLlmRoute, log: LogSink, tag?: string, idleTimeoutMs?: number);
     generateText(request: LlmTextRequest): Promise<string>;

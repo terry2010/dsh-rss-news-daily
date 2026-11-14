@@ -14,7 +14,7 @@ window.addEventListener('message', (e) => {
   document.querySelector('.tab[data-tab="digest"]')?.click()
 })
 
-const state = { page: 1, items: [], sources: [], prefs: null, tab: 'items', digestDay: '', digestKind: ({ hourly: 'hourly', topics: 'topics' })[new URLSearchParams(location.search).get('kind')] || 'digest', kindPinned: !!new URLSearchParams(location.search).get('kind'), generating: false, topicView: 'list', topicId: '', topicBusy: false, sort: 'published', total: 0, pageSize: 50, daySetOn: '', dayPicked: '', archiveYears: [], forceArchive: sessionStorage.getItem('rnd-force-archive') === '1' }
+const state = { page: 1, items: [], sources: [], prefs: null, peak: null, tab: 'items', digestDay: '', digestKind: ({ hourly: 'hourly', topics: 'topics' })[new URLSearchParams(location.search).get('kind')] || 'digest', kindPinned: !!new URLSearchParams(location.search).get('kind'), generating: false, topicView: 'list', topicId: '', topicBusy: false, sort: 'published', total: 0, pageSize: 50, daySetOn: '', dayPicked: '', archiveYears: [], forceArchive: sessionStorage.getItem('rnd-force-archive') === '1' }
 const $ = (sel) => document.querySelector(sel)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 /** 输出链接白名单：只放行 http(s)，javascript:/data: 一律清空 */
@@ -50,9 +50,31 @@ const userActive = () => !document.hidden && Date.now() - lastGestureAt < 60_000
 async function loadStatus() {
   try {
     const s = await api(`/status${userActive() ? '?act=1' : ''}`)
-    $('#statusbar').textContent = `${s.enabled}/${s.sources} 源 · 今日+${s.todayAdded ?? 0} · 本次+${s.lastAdded ?? 0} · 共${s.items} 条 · ${s.failures?.length ? `${s.failures.length} 源异常${s.cooling ? `（${s.cooling} 冷却中）` : ''}` : '健康'}`
+    state.peak = s.peak || null
+    $('#statusbar').textContent = `${s.enabled}/${s.sources} 源 · 今日+${s.todayAdded ?? 0} · 本次+${s.lastAdded ?? 0} · 共${s.items} 条 · ${s.failures?.length ? `${s.failures.length} 源异常${s.cooling ? `（${s.cooling} 冷却中）` : ''}` : '健康'}${s.peak?.active ? ' · ⏸高峰中·AI暂停' : ''}${s.peak?.defer ? ' · 欠账待补' : ''}`
+    renderPeakInfo()
   } catch { $('#statusbar').textContent = '状态不可用' }
 }
+// 设置页「高峰时段暂停」状态行：当前峰/谷 + 窗口 + 欠账
+function renderPeakInfo() {
+  const el = $('#peakInfo'); if (!el) return
+  const p = state.peak
+  el.textContent = !p?.enabled ? '' : p.active
+    ? `当前：高峰中（窗口 ${p.start ?? ''}–${p.end ?? ''}）· 只抓取不调 AI${p.defer ? ' · 有欠账待补' : ''}`
+    : `当前：低峰中（高峰窗口 ${p.start ?? ''}–${p.end ?? ''}）`
+}
+// 高峰三选弹层：「仍然执行」→now（peakBypass 立即跑）；「排入低峰队列」→queue（任务挂起出峰自动跑）；「取消」→不发请求。非高峰直接 now
+const askPeak = (what) => new Promise((resolve) => {
+  if (!state.peak?.active) return resolve('now')
+  const m = $('#peakModal')
+  $('#peakMsg').textContent = `现在是高峰时段（${state.peak.start ?? ''}–${state.peak.end ?? ''}），AI 调用暂停、只抓取新闻。${what}可以仍然执行，也可以排入队列等低峰自动执行。`
+  m.hidden = false
+  const binds = []
+  const done = (v) => { m.hidden = true; for (const [el, fn] of binds) el.removeEventListener('click', fn); resolve(v) }
+  for (const [sel, v] of [['#btnPeakNow', 'now'], ['#btnPeakQueue', 'queue'], ['#btnPeakCancel', 'cancel']]) {
+    const fn = () => done(v); $(sel).addEventListener('click', fn); binds.push([$(sel), fn])
+  }
+})
 
 // ---- 阅读字号缩放：scope=items(全部新闻)/digest(日报)/hourly(快报)；存 prefs.fontSize 重启后仍生效 ----
 // 分项值(items/digest/hourly)优先于设置页统一值(global)；设置页调整=整体覆盖 fontSize，分项被清除
@@ -861,10 +883,12 @@ $('#digestView').addEventListener('click', async (e) => {
   if (act === 'regen') {
     // error 态免确认直接重跑（失败本就没什么可覆盖）；done 态仍武装确认——会覆盖一份好报告
     if (b.dataset.force !== '1' && !armOnce(b, '⟳ 再次生成', '⚠ 确认覆盖重生成？再点一次执行')) return
+    const pc = await askPeak('专题重生成')
+    if (pc === 'cancel') return
     try {
-      await post(`/topics/${encodeURIComponent(id)}/regen`, {})
+      const r = await post(`/topics/${encodeURIComponent(id)}/regen`, { peakBypass: pc === 'now' })
       state.topicView = 'list'; state.topicId = ''
-      toast('专题已开始重新生成')
+      toast(r?.peakHeld ? '已排入低峰队列，出峰自动开始' : '专题已开始重新生成')
       startTopicWatch(); loadTopicsView()
     } catch (err) { toast(`重生成失败: ${err.message}`) }
     return
@@ -909,7 +933,7 @@ const busyDone = (owner) => {
 }
 // ---- 任务队列悬停面板：悬停 busybar 拉 /tasks 全量列表（running+waiting），逐项可取消 ----
 const taskSfx = (n) => n ? ` · +${n} 任务排队` : '' // busybar 尾缀：本任务之外还有任务在等位
-const STAGE_ZH = { fetch: '抓取中', score: '评分中', judge: '过滤中', translate: '翻译中', cluster: '聚类去重中', summaries: '条目摘要中', finishing: '收尾中', candidates: '筛选候选中', chunks: '分块小结中' }
+const STAGE_ZH = { fetch: '抓取中', score: '评分中', judge: '过滤中', translate: '翻译中', cluster: '聚类去重中', summaries: '条目摘要中', finishing: '收尾中', candidates: '筛选候选中', chunks: '分块小结中', backfill: '低峰补跑中' }
 const stageZh = (s) => STAGE_ZH[s] ?? s // 任务弹层/忙条共用：未知 stage 原样透传
 let tqTimer = 0
 async function refreshTaskPop() {
@@ -919,9 +943,9 @@ async function refreshTaskPop() {
   if (!r?.ok) return
   const rows = [
     ...(r.running || []).map((t) => `<div class="tq-row"><span class="tq-dot run">▶</span><span class="tq-lab">${esc(t.label)}${t.total ? ` · ${t.done}/${t.total}` : ''}${t.stage ? ` · ${esc(stageZh(t.stage))}` : ''}${fmtEta(t.etaMs)}</span><button class="tq-x" data-tcancel="${esc(t.id)}" title="停止该任务">✕</button></div>`),
-    ...(r.waiting || []).map((t) => `<div class="tq-row"><span class="tq-dot wait">⌛</span><span class="tq-lab">${esc(t.label)} · 排队第 ${t.position} 位</span><button class="tq-x" data-tcancel="${esc(t.id)}" title="取消排队">✕</button></div>`),
+    ...(r.waiting || []).map((t) => `<div class="tq-row"><span class="tq-dot wait">⌛</span><span class="tq-lab">${esc(t.label)} · ${t.held ? '高峰暂停中·等低峰' : `排队第 ${t.position} 位`}</span><button class="tq-x" data-tcancel="${esc(t.id)}" title="取消排队">✕</button></div>`),
   ]
-  pop.innerHTML = `<div class="tq-head">任务队列 · 并发上限 ${r.limit}</div>` + (rows.join('') || '<div class="tq-row"><span style="color:var(--dim)">当前无任务</span></div>')
+  pop.innerHTML = `<div class="tq-head">任务队列 · 并发上限 ${r.limit}${r.peak ? ' · ⏸高峰中' : ''}</div>` + (rows.join('') || '<div class="tq-row"><span style="color:var(--dim)">当前无任务</span></div>')
 }
 $('#busyWrap').addEventListener('mouseenter', () => { refreshTaskPop(); tqTimer = setInterval(refreshTaskPop, 2000) })
 $('#busyWrap').addEventListener('mouseleave', () => { clearInterval(tqTimer); tqTimer = 0 })
@@ -956,7 +980,7 @@ function startTopicWatch() {
         return
       }
       if ((p.queuedIds || []).length) { // 本专题/别的专题还在全局队列等位——保持进度条活着继续轮询
-        busyShow('topic', `⌛ 专题排队中…${taskSfx(p.taskWaiting)}`)
+        busyShow('topic', (p.heldIds || []).length ? `⌛ 高峰暂停中·出峰自动执行…${taskSfx(p.taskWaiting)}` : `⌛ 专题排队中…${taskSfx(p.taskWaiting)}`)
         return
       }
       clearInterval(dp)
@@ -1103,17 +1127,19 @@ $('#tpSrcList').addEventListener('change', (e) => {
 $('#btnTpGen').addEventListener('click', async () => {
   const p = tpParams()
   if (!p.keywords.length) return
+  const pc = await askPeak(tpEditId ? '专题重生成' : '专题生成') // 高峰三选：now=仍执行/queue=排低峰/cancel=放弃
+  if (pc === 'cancel') return
   $('#btnTpGen').disabled = true
   try {
     if (tpEditId) { // 修改专题：保存新设置并同 id 重生成（弹层本身即确认，不再武装）
-      const r = await post(`/topics/${encodeURIComponent(tpEditId)}/regen`, p)
+      const r = await post(`/topics/${encodeURIComponent(tpEditId)}/regen`, { ...p, peakBypass: pc === 'now' })
       $('#topicModal').hidden = true
-      toast(r?.queued ? '设置已保存——已加入排队，轮到自动重新生成' : '设置已保存，专题开始重新生成')
+      toast(r?.peakHeld ? '已排入低峰队列，出峰自动开始' : r?.queued ? '设置已保存——已加入排队，轮到自动重新生成' : '设置已保存，专题开始重新生成')
     } else {
-      const r = await post('/topics', p)
+      const r = await post('/topics', { ...p, peakBypass: pc === 'now' })
       $('#topicModal').hidden = true
       state.topicView = 'list'; state.topicId = ''
-      toast(r?.queued ? '已有专题在生成——已加入排队，轮到自动开始' : '专题已开始生成，进度见上方横幅')
+      toast(r?.peakHeld ? '已排入低峰队列，出峰自动开始' : r?.queued ? '已有专题在生成——已加入排队，轮到自动开始' : '专题已开始生成，进度见上方横幅')
     }
     startTopicWatch(); loadTopicsView()
   } catch (e) {
@@ -1159,7 +1185,7 @@ function startDigestWatch(reset) {
     try {
       const p = await api('/digest-progress')
       if (p.running) { seenRun = true; const stage = stageZh(p.stage) === p.stage ? '日报生成中' : stageZh(p.stage); busyShow('digest', `⏳ ${stage}…${p.total ? ` (${p.done}/${p.total})` : ''}${fmtEta(p.etaMs)}${fmtQueue(p.queue)}${taskSfx(p.taskWaiting)}`); return }
-      if (p.queued) { busyShow('digest', `⌛ 日报排队中…${taskSfx(p.taskWaiting)}`); return } // 全局队列等位中
+      if (p.queued) { busyShow('digest', p.held ? `⌛ 高峰暂停中·出峰自动执行…${taskSfx(p.taskWaiting)}` : `⌛ 日报排队中…${taskSfx(p.taskWaiting)}`); return } // 全局队列等位中（held=高峰挂起）
       clearInterval(dp); busyDone('digest'); reset(); toast(seenRun ? (p.cancelled ? '已按请求停止' : '日报生成完成') : '已取消排队'); loadDigest()
     } catch { /* 进度不可达不影响生成 */ }
   }, 900)
@@ -1172,7 +1198,7 @@ async function resumeDigestIfRunning() {
     const f = await api('/fetch-progress').catch(() => null)
     if (f?.running || f?.queued) { // 在跑或在全局队列等位都算活着——排队中也要显示状态
       $('#btnDigestStop').hidden = false
-      busyShow('fetch', f.queued && !f.running ? '⌛ 抓取+评分排队中…' : fetchProgText(f))
+      busyShow('fetch', f.queued && !f.running ? (f.held ? '⌛ 高峰暂停中·出峰自动执行…' : '⌛ 抓取+评分排队中…') : fetchProgText(f))
       const poll = setInterval(async () => {
         try {
           const q = await api('/fetch-progress')
@@ -1181,7 +1207,7 @@ async function resumeDigestIfRunning() {
             $('#btnDigestStop').hidden = false
             return
           }
-          if (q.queued) { busyShow('fetch', `⌛ 抓取+评分排队中…${taskSfx(q.taskWaiting)}`); return }
+          if (q.queued) { busyShow('fetch', q.held ? `⌛ 高峰暂停中·出峰自动执行…${taskSfx(q.taskWaiting)}` : `⌛ 抓取+评分排队中…${taskSfx(q.taskWaiting)}`); return }
           clearInterval(poll)
           busyDone('fetch')
           loadDigest()
@@ -1209,6 +1235,9 @@ resumeDigestIfRunning()
 
 $('#btnDigestRun').addEventListener('click', async () => {
   const btn = $('#btnDigestRun')
+  const isBrief = state.digestKind === 'hourly'
+  const pc = await askPeak(isBrief ? '快报生成' : '日报生成') // 高峰三选：now=仍执行/queue=排低峰/cancel=放弃（非高峰直接 now）
+  if (pc === 'cancel') return
   btn.disabled = true; btn.hidden = true // 生成中隐藏入口，防重入
   $('#btnDigestStop').hidden = false
   $('#digestBusy').hidden = false
@@ -1217,18 +1246,18 @@ $('#btnDigestRun').addEventListener('click', async () => {
   const dp = startDigestWatch(reset)
   // 生成始终针对今天：跨零点时日期框可能还停在昨天（日报回退改的），先拨回本地当天——日报/快报共用
   $('#digestDay').value = dayStr(new Date())
-  if (state.digestKind === 'hourly') { // 快报=抓取+评分产出：跑一轮 fetch 自然生成
+  if (isBrief) { // 快报=抓取+评分产出：跑一轮 fetch 自然生成；高峰「仍执行」产未译快报，「排低峰」整任务挂起
     clearInterval(dp)
     $('#digestBusy').textContent = '⏳ 快报生成中…（抓取+评分）'
     try {
-      await post('/fetch', { force: true })
-      toast('已开始抓取+评分，快报稍后生成')
+      await post('/fetch', { force: true, peakBrief: pc === 'now', holdInPeak: pc === 'queue' })
+      toast(pc === 'queue' ? '已排入低峰队列，出峰自动抓取并生成快报' : '已开始抓取+评分，快报稍后生成')
       let seenRun = false // 没跑过就结束 = 排队中被撤——toast 分文案
       const poll = setInterval(async () => {
         try {
           const p = await api('/fetch-progress')
           if (p.running) { seenRun = true; busyShow('fetch', fetchProgText(p, '快报生成·')); return }
-          if (p.queued) { busyShow('fetch', `⌛ 抓取+评分排队中…${taskSfx(p.taskWaiting)}`); return }
+          if (p.queued) { busyShow('fetch', p.held ? `⌛ 高峰暂停中·出峰自动执行…${taskSfx(p.taskWaiting)}` : `⌛ 抓取+评分排队中…${taskSfx(p.taskWaiting)}`); return }
           clearInterval(poll); busyDone('fetch'); reset(); toast(seenRun ? (p.cancelled ? '已按请求停止' : '快报已生成') : '已取消排队'); loadDigest()
         } catch { /* 进度不可达不阻塞 */ }
       }, 1500) // 无超时上限：抓取+评分远超 2min——挂到真正结束才收尾，期间停止键可取消
@@ -1239,8 +1268,8 @@ $('#btnDigestRun').addEventListener('click', async () => {
   try {
     // 异步触发：大条数下 LLM 全链路远超 HTTP 请求超时，服务端立即返回，轮询收尾
     // day 不传：服务端 zonedDayKey(config.timezone) 自算"今天"——选择框是查看过滤器，不是生成目标
-    await post('/digest-run', { force: true })
-    toast('已开始生成，进度见上方横幅')
+    await post('/digest-run', { force: true, peakBypass: pc === 'now' })
+    toast(pc === 'queue' ? '已排入低峰队列，出峰自动生成日报' : '已开始生成，进度见上方横幅')
   } catch (e) { toast(`生成失败: ${e.message}`); clearInterval(dp); reset() }
 })
 let retryPoll = 0
@@ -1497,6 +1526,7 @@ async function loadPrefs() {
     applyFontSize() // 字号缩放跟 prefs 走：启动/进设置页都重放一遍
     applyWide() // 适应宽屏同理
     renderPrefs()
+    renderPriceInputs(); renderStats() // 单价回填 + 费用列按最新单价重算
     $('#proxyUrl').value = r.prefs.proxyUrl || ''
     const d = r.prefs.digestOpts || {}
     for (const [id, k] of [['dItems','digestItems'],['dPerTopic','perTopicLimit'],['dMinScore','minLlmScore'],['dScoreN','llmScoreCandidates'],['dCandH','candidateHours'],['dSumN','summaryMaxItems'],['dConc','summaryConcurrency'],['dSumLen','digestMaxLength'],['dRetDays','retentionDays'],['dMaxItems','storeMaxItems']]) $(`#${id}`).value = d[k] ?? ''
@@ -1508,9 +1538,25 @@ async function loadPrefs() {
     $('#stubZh').value = r.prefs.stubLimits?.zh ?? ''
     $('#stubEn').value = r.prefs.stubLimits?.en ?? ''
     $('#stubList').value = (r.prefs.contentBlocklist || []).join('\n')
+    const pk = r.prefs.peak || {}
+    $('#peakEnabled').checked = pk.enabled === true
+    $('#peakStart').value = pk.start || ''
+    $('#peakEnd').value = pk.end || ''
+    $('#peakBrief').checked = pk.brief === true
+    renderPeakInfo()
     renderSubTopics(r.prefs)
   } catch { /* ignore */ }
 }
+// 高峰时段设置：enabled/start/end/brief 一体提交；后端 peakChanged 重挂边界定时器，峰外立即放行补跑
+const savePeak = async () => {
+  try {
+    const r = await post('/prefs', { peak: { enabled: $('#peakEnabled').checked, start: $('#peakStart').value || undefined, end: $('#peakEnd').value || undefined, brief: $('#peakBrief').checked } })
+    state.prefs = r.prefs
+    toast('高峰设置已保存')
+    loadStatus() // 立即刷新 state.peak——状态行/弹层判断用最新峰谷
+  } catch (e) { toast(`保存失败: ${e.message}`) }
+}
+for (const id of ['peakEnabled', 'peakBrief', 'peakStart', 'peakEnd']) $(`#${id}`)?.addEventListener('change', savePeak)
 const saveProxy = async () => {
   try {
     await post('/prefs', { proxyUrl: $('#proxyUrl').value.trim() || undefined })
@@ -1992,33 +2038,95 @@ $('#btnShowOnboard')?.addEventListener('click', () => {
 
 // ---- token 统计（彩蛋：版本号点 10 次解锁） ----
 let statsData = null
-const fmtTok = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`
+const fmtTok = (n) => { // ≥1e6 进位 M；小数去尾零（3.0M→3M，21.9M 保一位）
+  const u = n >= 1e6 ? [n / 1e6, 'M'] : n >= 1000 ? [n / 1000, 'k'] : null
+  return u ? `${parseFloat(u[0].toFixed(1))}${u[1]}` : `${n}`
+}
+const STAT_FEATURES = [['digest', '日报'], ['score', '评分/快报'], ['translate', '翻译'], ['topic', '专题']]
+// 单价（每百万 tokens）：处理模型覆盖日报/评分/专题，翻译模型覆盖翻译桶
+const priceOfFeature = (f) => { const p = state.prefs?.tokenPrice || {}; return f === 'translate' ? p.translate : p.digest }
+const costOf = (io, f) => { const p = priceOfFeature(f); return p && io ? (io.in * (p.in || 0) + (io.cached || 0) * (p.cached ?? p.in ?? 0) + io.out * (p.out || 0)) / 1e6 : 0 }
+const fmtCost = (x) => x.toFixed(x >= 100 ? 0 : 2)
+const hasPrice = () => !!(state.prefs?.tokenPrice?.digest || state.prefs?.tokenPrice?.translate)
+function renderPriceInputs() {
+  const p = state.prefs?.tokenPrice || {}
+  const set = (id, v) => { const el = $(id); if (el && document.activeElement !== el) el.value = v ?? '' }
+  set('#priceDigestIn', p.digest?.in); set('#priceDigestOut', p.digest?.out); set('#priceDigestCached', p.digest?.cached)
+  set('#priceTrIn', p.translate?.in); set('#priceTrOut', p.translate?.out); set('#priceTrCached', p.translate?.cached)
+}
 function renderStats() {
   const body = $('#statsBody'); if (!body || !statsData) return
   const view = $('#statsView').value, range = +$('#statsRange').value
   const days = Object.entries(statsData.days || {}).sort((a, b) => b[0].localeCompare(a[0]))
   const filtered = range ? days.slice(0, range) : days
+  const rangeTxt = $('#statsRange')?.selectedOptions?.[0]?.textContent || ''
   if (view === 'day') {
-    body.innerHTML = filtered.map(([d, v]) =>
-      `<div class="hist-item"><span>${d}</span><span>日报 ${fmtTok(v.digest)} · 评分 ${fmtTok(v.score)} · 翻译 ${fmtTok(v.translate)} · 专题 ${fmtTok(v.topic || 0)} · 计 ${fmtTok(v.in + v.out)}</span></div>`).join('') || '<p class="empty">暂无数据</p>'
+    // 功能列：新数据「入/出」拆分（有缓存追加「·缓N」）；旧合计值标「旧」（未拆分不计费用）；空桶显示 —
+    const cell = (v, f) => {
+      const io = v.featureIO?.[f]
+      if (io) return `${fmtTok(io.in)} / ${fmtTok(io.out)}${io.cached ? ` ·缓${fmtTok(io.cached)}` : ''}`
+      return v[f] ? `${fmtTok(v[f])}<small class="stats-legacy">旧</small>` : '—'
+    }
+    const sum = { in: 0, out: 0, cached: 0, cost: 0 }
+    const fsum = Object.fromEntries(STAT_FEATURES.map(([f]) => [f, { in: 0, out: 0, cached: 0, legacy: 0 }]))
+    const rowCost = (v) => STAT_FEATURES.reduce((s, [f]) => s + costOf(v.featureIO?.[f], f), 0)
+    for (const [, v] of filtered) {
+      sum.in += v.in; sum.out += v.out; sum.cached += v.cached ?? 0; sum.cost += rowCost(v)
+      for (const [f] of STAT_FEATURES) {
+        const io = v.featureIO?.[f]
+        if (io) { fsum[f].in += io.in; fsum[f].out += io.out; fsum[f].cached += io.cached ?? 0 } else fsum[f].legacy += v[f] ?? 0
+      }
+    }
+    const costCell = (c) => hasPrice() ? fmtCost(c) : '—'
+    body.innerHTML = filtered.length
+      ? `<table class="stats-table"><thead><tr><th>日期</th><th>输入</th><th>输出</th><th>缓存</th>${STAT_FEATURES.map(([, k]) => `<th>${k}<br>入/出</th>`).join('')}<th>费用</th></tr></thead><tbody>`
+        + filtered.map(([d, v]) => `<tr><td>${d}</td><td>${fmtTok(v.in)}</td><td>${fmtTok(v.out)}</td><td>${v.cached ? fmtTok(v.cached) : '—'}</td>${STAT_FEATURES.map(([f]) => `<td>${cell(v, f)}</td>`).join('')}<td>${costCell(rowCost(v))}</td></tr>`).join('')
+        + `</tbody><tfoot><tr><td>汇总${rangeTxt ? `（${rangeTxt}）` : ''}</td><td>${fmtTok(sum.in)}</td><td>${fmtTok(sum.out)}</td><td>${sum.cached ? fmtTok(sum.cached) : '—'}</td>${STAT_FEATURES.map(([f]) => `<td>${fmtTok(fsum[f].in)} / ${fmtTok(fsum[f].out)}${fsum[f].cached ? ` ·缓${fmtTok(fsum[f].cached)}` : ''}${fsum[f].legacy ? `<small class="stats-legacy">+${fmtTok(fsum[f].legacy)}旧</small>` : ''}</td>`).join('')}<td><strong>${costCell(sum.cost)}</strong></td></tr></tfoot></table>`
+        + (fsum.digest.legacy || fsum.score.legacy || fsum.translate.legacy || fsum.topic.legacy ? '<p class="stats-note">带「旧」后缀=早期数据未拆输入/输出，仅合计值，不计入费用；「缓」= 命中缓存的输入 token，不计入「输入」列</p>' : '<p class="stats-note">「缓」= 命中缓存的输入 token，不计入「输入」列</p>')
+      : '<p class="empty">暂无数据</p>'
   } else if (view === 'feature') {
-    const agg = { digest: 0, score: 0, translate: 0, topic: 0 }
-    for (const [, v] of filtered) { agg.digest += v.digest; agg.score += v.score; agg.translate += v.translate; agg.topic += v.topic || 0 }
-    body.innerHTML = [['日报', agg.digest], ['评分/快报', agg.score], ['翻译', agg.translate], ['专题', agg.topic]]
-      .map(([k, v]) => `<div class="hist-item"><span>${k}</span><span>${fmtTok(v)} tok</span></div>`).join('')
+    body.innerHTML = STAT_FEATURES.map(([f, k]) => {
+      let fin = 0, fout = 0, fcache = 0, legacy = 0
+      for (const [, v] of filtered) {
+        const io = v.featureIO?.[f]
+        if (io) { fin += io.in; fout += io.out; fcache += io.cached ?? 0 } else legacy += v[f] ?? 0
+      }
+      return `<div class="hist-item"><span>${k}</span><span>入 ${fmtTok(fin)} · 出 ${fmtTok(fout)}${fcache ? ` · 缓存 ${fmtTok(fcache)}` : ''}${legacy ? ` · 旧合计 ${fmtTok(legacy)}` : ''} tok</span></div>`
+    }).join('')
   } else {
     body.innerHTML = `<div class="hist-item"><span>总输入</span><span>${fmtTok(statsData.totalIn)} tok</span></div>`
       + `<div class="hist-item"><span>总输出</span><span>${fmtTok(statsData.totalOut)} tok</span></div>`
+      + (statsData.totalCached ? `<div class="hist-item"><span>总缓存命中</span><span>${fmtTok(statsData.totalCached)} tok</span></div>` : '')
       + `<div class="hist-item"><span>合计</span><span>${fmtTok(statsData.totalIn + statsData.totalOut)} tok</span></div>`
   }
 }
 $('#statsView')?.addEventListener('change', renderStats)
 $('#statsRange')?.addEventListener('change', renderStats)
+// 单价：任一输入框 change 即整组落盘（留空视为未设；缓价留空=按入价计，显式填 0 = 缓存免费）
+const readPrice = (id) => { const s = $(id).value.trim(); if (!s) return undefined; const n = parseFloat(s); return Number.isFinite(n) && n >= 0 ? n : undefined }
+const priceTriple = (i, o, c) => (i !== undefined || o !== undefined || c !== undefined ? { in: i ?? 0, out: o ?? 0, ...(c !== undefined ? { cached: c } : {}) } : undefined)
+for (const id of ['#priceDigestIn', '#priceDigestOut', '#priceDigestCached', '#priceTrIn', '#priceTrOut', '#priceTrCached']) {
+  $(id)?.addEventListener('change', async () => {
+    try {
+      const tokenPrice = { digest: priceTriple(readPrice('#priceDigestIn'), readPrice('#priceDigestOut'), readPrice('#priceDigestCached')), translate: priceTriple(readPrice('#priceTrIn'), readPrice('#priceTrOut'), readPrice('#priceTrCached')) }
+      const r = await post('/prefs', { tokenPrice })
+      state.prefs = r.prefs || state.prefs
+      renderPriceInputs(); renderStats()
+      toast('单价已保存')
+    } catch (e) { toast(`保存失败: ${e.message}`) }
+  })
+}
 let verClicks = 0, verTimer = 0
 $('#versionTag')?.addEventListener('click', () => {
   clearTimeout(verTimer); verTimer = setTimeout(() => { verClicks = 0 }, 1500)
   if (++verClicks >= 10) {
-    verClicks = 0; $('#devSection').hidden = false
+    verClicks = 0
+    const dev = $('#devSection')
+    if (dev) {
+      dev.hidden = false
+      dev.closest('details.settings-fold')?.setAttribute('open', '') // 高级与排障默认收起：只摘 hidden 仍看不见，连带展开
+      dev.scrollIntoView({ block: 'nearest' })
+    }
     loadDevlog()
     toast('已解锁开发者选项')
   }

@@ -86,7 +86,7 @@ export interface ApiDeps {
   timezone: string
   readerPageSize: number
   digestsDir: string
-  runDigest: (force?: boolean, day?: string) => Promise<unknown>
+  runDigest: (force?: boolean, day?: string, opts?: { peakBypass?: boolean }) => Promise<unknown>
   /** 宿主 LLM runtime（可选能力）；用于 /api/llm 列 provider/model */
   getLlm?: () => { listProviders(): Array<{ id: string }>; listModels(p: string): Promise<Array<{ id: string }>> } | undefined
   /** 宿主目录选择服务（可选能力）；native 能力弹系统对话框，browse/缺失时 pick-dir 返回 supported:false */
@@ -324,10 +324,11 @@ function apiTopics(deps: ApiDeps) {
     }
     // POST /api/topics —— 校验后同步落 generating/queued 元数据，fire-and-forget；busy 时进内存队列
     if (method === 'POST' && parts.length === 0) {
-      const norm = normalizeTopicParams(await readBody(req))
+      const body = await readBody(req) as Record<string, unknown>
+      const norm = normalizeTopicParams(body)
       if (!norm.ok) return sendJson(res, 400, { ok: false, error: norm.error })
       if (!deps.svc.runTopic) return sendJson(res, 501, { ok: false, error: 'topic service unavailable' })
-      const r = await deps.svc.runTopic(norm.params)
+      const r = await deps.svc.runTopic(norm.params, { peakBypass: body.peakBypass === true })
       return sendJson(res, r.ok ? 200 : 409, r)
     }
     // POST /api/topics/preview —— 只读候选预览；不调 LLM、不受生成锁限制；page 翻页入文集
@@ -368,7 +369,7 @@ function apiTopics(deps: ApiDeps) {
         if (!n.ok) return sendJson(res, 400, { ok: false, error: n.error })
         params = n.params
       }
-      const r = await deps.svc.regenTopic(id, params)
+      const r = await deps.svc.regenTopic(id, params, { peakBypass: body.peakBypass === true })
       return sendJson(res, r.ok ? 200 : 409, r)
     }
     if (act === 'delete') { // 前端二次确认已到才到；generating 行禁用；queued 先摘内存队列再删档
@@ -429,11 +430,14 @@ function apiPrefs(deps: ApiDeps) {
         devLog: body.devLog, notifyDesktop: body.notifyDesktop,
         digestOpts: body.digestOpts, subscribedTopics: body.subscribedTopics,
         fontSize: body.fontSize, llmConcurrency: body.llmConcurrency, wide: body.wide,
-        contentBlocklist: body.contentBlocklist, stubLimits: body.stubLimits,
+        contentBlocklist: body.contentBlocklist, stubLimits: body.stubLimits, tokenPrice: body.tokenPrice,
+        peak: body.peak,
       }).filter(([, v]) => v !== undefined))
       deps.prefs.save(patch)
       // 名单变更后回扫存量：新加词条命中的短正文条目立刻隐藏（删词条不解隐——hidden 可能来自别的途径）
       if (body.contentBlocklist !== undefined) await deps.svc?.rescanStubContent?.()
+      // 高峰窗口变更：重挂边界定时器；若已在峰外立刻放行挂起任务+补跑欠账
+      if (body.peak !== undefined) deps.svc?.peakChanged?.()
       return sendJson(res, 200, { ok: true, prefs: deps.prefs.get() })
     }
     sendJson(res, 405, { ok: false, error: `unsupported ${method}` })
@@ -687,9 +691,10 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   const postOnly = (q: Req): boolean => String(q.method || 'GET').toUpperCase() === 'POST'
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch`, handler: guard(async (q, r) => {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
-    const body = await readBody(q) as { force?: boolean; onlyFailed?: boolean; source?: string; category?: string }
+    const body = await readBody(q) as { force?: boolean; onlyFailed?: boolean; source?: string; category?: string; holdInPeak?: boolean; peakBrief?: boolean }
     // fire-and-forget：autoTranslate 串行翻译远超 HTTP 超时,立即返回+前端轮询 /fetch-progress
-    deps.svc.runFetch(!!body?.force, !!body?.onlyFailed, { source: body?.source, category: body?.category })
+    // holdInPeak=高峰「排低峰队列」整个任务挂起；peakBrief=高峰「仍执行」本轮仍产快报
+    deps.svc.runFetch(!!body?.force, !!body?.onlyFailed, { source: body?.source, category: body?.category }, { holdInPeak: body?.holdInPeak === true, peakBrief: body?.peakBrief === true })
       .catch(() => { /* 错误经 progress/日志可见 */ })
     sendJson(r, 200, { ok: true, started: true })
   }) }))
@@ -739,11 +744,11 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/fetch-cancel`, handler: guard(async (q, r) => { if (q.method !== 'POST') { r.statusCode = 405; r.end(); return } sendJson(r, 200, { ok: true, result: await deps.svc.cancelFetch?.() }) }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/digest-run`, handler: guard(async (q, r) => {
     if (!postOnly(q)) return sendJson(r, 405, { ok: false, error: 'use POST' })
-    const body = await readBody(q) as { force?: boolean; day?: string }
+    const body = await readBody(q) as { force?: boolean; day?: string; peakBypass?: boolean }
     const day = /^\d{4}-\d{2}-\d{2}$/.test(body?.day || '') ? body!.day : undefined
     // fire-and-forget：大 digestItems 下 LLM 全链路远超 HTTP 请求超时，
-    // 改为立即返回 + 前端轮询 /digest-progress 收尾
-    deps.runDigest(!!body?.force, day).catch(() => { /* 错误经 progress/degraded 可见 */ })
+    // 改为立即返回 + 前端轮询 /digest-progress 收尾；peakBypass=高峰「仍执行」
+    deps.runDigest(!!body?.force, day, { peakBypass: body?.peakBypass === true }).catch(() => { /* 错误经 progress/degraded 可见 */ })
     sendJson(r, 200, { ok: true, started: true })
   }) }))
   // P7 导出/导入：NDJSON 流式 bundle + .db 快照

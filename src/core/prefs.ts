@@ -48,6 +48,10 @@ export interface PrefsFile extends Prefs {
   contentBlocklist?: string[]
   /** 短正文判定阈值（汉字数/英文词数双口径，低于即进名单匹配+AI 判定；缺省 15/10） */
   stubLimits?: { zh?: number; en?: number }
+  /** 单价（每百万 tokens，货币自定义）。digest=新闻处理模型，translate=新闻翻译模型；cached 为缓存命中输入价：缺省按入价计，填 0 = 缓存免费 */
+  tokenPrice?: { digest?: { in: number; out: number; cached?: number }; translate?: { in: number; out: number; cached?: number } }
+  /** 高峰时段暂停：窗口内只抓取不调 AI（start/end 为 'HH:MM' 墙钟，config.timezone 口径；支持跨零点；brief=高峰仍产快报不翻译） */
+  peak?: { enabled?: boolean; start?: string; end?: string; brief?: boolean }
 }
 
 function numMapOf(v: unknown): Record<string, number> {
@@ -101,6 +105,19 @@ export function normalizePrefs(value: unknown): PrefsFile {
     llmConcurrency: typeof r.llmConcurrency === 'number' && Number.isFinite(r.llmConcurrency) ? Math.min(8, Math.max(1, Math.floor(r.llmConcurrency))) : undefined,
     contentBlocklist: (() => { const seen = new Set<string>(); const out: string[] = []; for (const s of strListOf(r.contentBlocklist)) { const t = s.trim().slice(0, 300); if (t && !seen.has(t)) { seen.add(t); out.push(t) } } return out.length ? out.slice(0, 2000) : undefined })(),
     stubLimits: (() => { const s = (typeof r.stubLimits === 'object' && r.stubLimits !== null ? r.stubLimits : {}) as Record<string, unknown>; const num = (k: string) => typeof s[k] === 'number' && Number.isFinite(s[k]) ? Math.min(500, Math.max(1, Math.floor(s[k]))) : undefined; const o = { zh: num('zh'), en: num('en') }; return Object.values(o).some((v) => v !== undefined) ? o : undefined })(),
+    tokenPrice: (() => {
+      const t = (typeof r.tokenPrice === 'object' && r.tokenPrice !== null ? r.tokenPrice : {}) as Record<string, unknown>
+      const pair = (v: unknown) => { const p = (typeof v === 'object' && v !== null ? v : {}) as Record<string, unknown>; const n = (k: string) => typeof p[k] === 'number' && Number.isFinite(p[k]) && p[k] >= 0 ? p[k] as number : undefined; const i = n('in'), o = n('out'), c = n('cached'); return i !== undefined || o !== undefined || c !== undefined ? { in: i ?? 0, out: o ?? 0, ...(c !== undefined ? { cached: c } : {}) } : undefined }
+      const d = pair(t.digest), tr = pair(t.translate)
+      return d || tr ? { ...(d ? { digest: d } : {}), ...(tr ? { translate: tr } : {}) } : undefined
+    })(),
+    peak: (() => {
+      const p = (typeof r.peak === 'object' && r.peak !== null ? r.peak : {}) as Record<string, unknown>
+      const t = (v: unknown) => typeof v === 'string' && TIME_RE.test(v.trim()) ? v.trim() : undefined
+      const start = t(p.start), end = t(p.end)
+      const o = { enabled: p.enabled === true, ...(start ? { start } : {}), ...(end ? { end } : {}), brief: p.brief === true }
+      return o.enabled || start || end || o.brief ? o : undefined
+    })(),
   }
 }
 

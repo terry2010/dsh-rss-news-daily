@@ -47,6 +47,7 @@ import { zonedDayKey, zonedDayBounds } from './core/time.js'
 import { probeSqlite, SqliteStore } from './core/sqlite-store.js'
 import { addTokenStats } from './core/token-stats.js'
 import { createTaskQueue } from './task-queue.js'
+import { isPeak, nextPeakTransition, peakRangeValid } from './core/peak.js'
 
 export { Config }
 
@@ -116,9 +117,19 @@ export function apply(ctx: Context, config: ConfigType) {
       && (Date.now() - uiActive.apiAt > 15_000 || Date.now() - uiActive.gestureAt > 15 * 60_000),
   })
   const prefs = new PrefsStore(join(dataDir, 'prefs.json'), log)
+  // ---- 高峰时段暂停：窗口内只抓取不调 AI；推迟的工作记 store.meta.peakDefer，出峰补跑 ----
+  const peakCfg = () => prefs.get().peak
+  const peakNow = () => { const p = peakCfg(); return p?.enabled === true && isPeak(new Date(), { start: p.start ?? '', end: p.end ?? '' }, config.timezone || undefined) }
+  /** 任务是否被高峰挂起：digest/topic 默认挂（peakBypass 豁免），fetch 默认放行（AI 段由管线自己跳），holdInPeak 显式挂 */
+  const taskHeld = (t: { kind: 'fetch' | 'digest' | 'topic'; peakBypass?: boolean; holdInPeak?: boolean }) =>
+    peakNow() && !t.peakBypass && (t.kind !== 'fetch' || t.holdInPeak === true)
   // 全局任务队列：抓取/日报/专题按「任务」排队，同时在跑的任务数 = llmConcurrency；
   // 满了进 FIFO 等位——不再让各管线的单次 LLM 调用在调用级信号量里互相交错
-  const taskQ = createTaskQueue({ limit: () => prefs.get().llmConcurrency ?? 1, log })
+  const taskQ = createTaskQueue({
+    limit: () => prefs.get().llmConcurrency ?? 1,
+    canStart: (t) => !taskHeld(t), // 高峰挂起的任务留在等待队列，出峰 pump 放行
+    log,
+  })
   const fetcher = createFetcher({
     proxyUrl: () => (prefs.get() as { proxyUrl?: string }).proxyUrl || config.fetch.proxyUrl,
     timeoutMs: config.fetch.requestTimeoutMs,
@@ -182,7 +193,7 @@ export function apply(ctx: Context, config: ConfigType) {
     log,
   })
   // token 用量分账：把 client.usage 累计进 meta.tokenStats（按日+按功能，实现在 core/token-stats）
-  const addTokens = (feature: 'digest' | 'score' | 'translate' | 'topic', usage?: { inputTokens: number; outputTokens: number }) =>
+  const addTokens = (feature: 'digest' | 'score' | 'translate' | 'topic', usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number }) =>
     addTokenStats(store.meta, feature, usage, zonedDayKey(new Date(), config.timezone || undefined))
   // P1+P8：评分+快报——fetch 完成后 fire-and-forget（调度/手动路径共用，不阻塞 fetch 返回）
   let scoringInFlight = false // 闩锁：与 digest rescoreMissing 互斥，防同批双评
@@ -215,7 +226,8 @@ export function apply(ctx: Context, config: ConfigType) {
     }
     desktopNotify(`📰 ${hm} 时段快报`, brief.replace(/\s+/g, ' ').slice(0, 500), click)
   }
-  const briefNow = async (fresh: FeedItem[], signal?: AbortSignal) => {
+  // briefNow opts.noTranslate/heuristicScores：高峰快报用——不翻译（低峰不补）+未评条目启发式兜底
+  const briefNow = async (fresh: FeedItem[], signal?: AbortSignal, opts?: { noTranslate?: boolean; heuristicScores?: boolean }) => {
     const now = new Date()
     const day = zonedDayKey(now, config.timezone || undefined)
     const hm = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: config.timezone || undefined }).format(now)
@@ -226,7 +238,9 @@ export function apply(ctx: Context, config: ConfigType) {
       minScore: config.fetch.hourlyMinScore,
       digestsDir: join(dataDir, 'digests'), log,
       llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log, 'brief') : undefined,
-      translateClient: llmRuntime ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'brief-translate') : undefined,
+      translateClient: llmRuntime && !opts?.noTranslate ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'brief-translate') : undefined,
+      noTranslate: opts?.noTranslate,
+      heuristicScores: opts?.heuristicScores,
       summaryConcurrency: prefs.get().digestOpts?.summaryConcurrency ?? config.summary.concurrency,
       signal,
       llmTimeoutMs: config.llm.timeoutMs,
@@ -234,14 +248,15 @@ export function apply(ctx: Context, config: ConfigType) {
       onBrief: (brief) => notifyBrief(hm, brief),
     })
   }
-  const scoreAndBrief = async (cycleStart: string, signal?: AbortSignal) => {
+  // runBrief=false：低峰补跑只补评分不重写快报（被跳的时段不补——时段快报是时点快照）
+  const scoreAndBrief = async (cycleStart: string, signal?: AbortSignal, runBrief = true) => {
     const dopts = prefs.get().digestOpts
     const doScore = (dopts?.scoreOnFetch ?? config.fetch.scoreOnFetch) && config.llm.enabled && llmRuntime
     const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart)
     dbgScore('enter', { doScore, fresh: fresh.length, llmEnabled: config.llm.enabled, hasRuntime: !!llmRuntime })
-    // 评分在跑不挡快报：用已评出的分照样追加一段（长评分窗口期快报不停更）
+    // 评分在跑不挡快报：用已评出的分照样追加一段（长评分窗口期快报不停更）；补跑路径不产快报
     if (scoringInFlight) {
-      if (briefEnabled(dopts)) await briefNow(fresh, signal)
+      if (runBrief && briefEnabled(dopts)) await briefNow(fresh, signal)
       return
     }
     if (!doScore) return
@@ -263,7 +278,7 @@ export function apply(ctx: Context, config: ConfigType) {
       dbgScore('scored', { scored, lastWarn })
       addTokens('score', scoreClient.usage)
       if (scored) await store.save()
-      if (!signal?.aborted && briefEnabled(dopts)) await briefNow(fresh, signal) // 取消后不再补写快报
+      if (!signal?.aborted && runBrief && briefEnabled(dopts)) await briefNow(fresh, signal) // 取消后不再补写快报
       dbgScore('done', { scored })
     } catch (e) { dbgScore('error', { error: e instanceof Error ? e.message : String(e) }); log.warn(`score-on-fetch failed (items kept unscored): ${e instanceof Error ? e.message : e}`) }
     finally { scoringInFlight = false }
@@ -282,7 +297,7 @@ export function apply(ctx: Context, config: ConfigType) {
       if (!isShortLead(text, zh, en)) continue
       if (inBlocklist(text, list)) { it.state.hidden = true; dirty = true; continue }
       if (!text) { it.state.stubLead = true; dirty = true; continue } // 空正文：免判直接只显标题
-      if (!it.state.stubLead) pending.push(it)
+      if (!it.state.stubLead && !it.state.stubJudged) pending.push(it) // stubJudged=已判有效——补跑重扫不重复送判
     }
     if (pending.length && llmRuntime) {
       // 按正文归一化分组：100 条同文只调一次 AI，结果套到全组（同题源的短正文完全一致）
@@ -310,6 +325,9 @@ export function apply(ctx: Context, config: ConfigType) {
           if (/\byes\b/i.test(out)) {
             for (const it of g.items) it.state.stubLead = true
             if (!inBlocklist(g.text, list)) { list.push(g.text); added = true }
+            dirty = true
+          } else if (/\bno\b/i.test(out)) {
+            for (const it of g.items) it.state.stubJudged = true // 判有效也落标：高峰补跑/下轮重扫不再送判
             dirty = true
           }
         } catch (e) { if (signal?.aborted) break; log.warn(`stub-judge failed: ${String((e as Error)?.message || e)}`) }
@@ -365,14 +383,24 @@ export function apply(ctx: Context, config: ConfigType) {
     const days = b.period === 'week' ? 7 : b.period === 'month' ? 30 : 1
     if (Date.now() - last >= days * 86_400_000) await runBackup().catch((e) => log.warn(`backup failed: ${e}`))
   }
+  // ---- 高峰推迟台账：since=首个被跳过的周期起点（补跑窗口并集）；digest=到点日报被推迟；briefSkipped 记数仅供展示 ----
+  const markPeakDefer = (cycleStart: string, extra?: { digest?: boolean; briefSkipped?: boolean }) => {
+    const d = store.meta.peakDefer ??= {}
+    if (!d.since || cycleStart < d.since) d.since = cycleStart
+    if (extra?.digest) d.digest = true
+    if (extra?.briefSkipped) d.briefSkipped = (d.briefSkipped ?? 0) + 1
+    void store.save()
+  }
   // 抓取管线经全局任务队列：id 'fetch' 同类去重（定时器/手动/源重试撞车合并成一个任务）；
-  // 返回的 Promise 在任务真正跑完才兑现——调度器的周期锁语义与改造前一致
-  const runFetchPool = (pool: ReturnType<typeof effectiveSources>, force = false): Promise<FetchCycleResult> => {
+  // 返回的 Promise 在任务真正跑完才兑现——调度器的周期锁语义与改造前一致。
+  // opts.holdInPeak=「排入低峰队列」整个任务等出峰；opts.peakBrief=高峰内仍产快报（手动「仍执行」路径）
+  const runFetchPool = (pool: ReturnType<typeof effectiveSources>, force = false, opts?: { holdInPeak?: boolean; peakBrief?: boolean }): Promise<FetchCycleResult> => {
     let settle!: { resolve: (v: unknown) => void; reject: (e: unknown) => void }
     const doneP = new Promise<FetchCycleResult>((res, rej) => { settle = { resolve: res as (v: unknown) => void, reject: rej } })
     const r = taskQ.enqueue({
-      id: 'fetch', kind: 'fetch', label: '抓取+评分+快报', queuedAt: Date.now(),
-      start: () => runFetchWork(pool, force),
+      id: 'fetch', kind: 'fetch', label: peakNow() ? '抓取（高峰：AI 推迟）' : '抓取+评分+快报', queuedAt: Date.now(),
+      holdInPeak: opts?.holdInPeak,
+      start: () => runFetchWork(pool, force, opts),
       cancel: () => { if (fetchAbort) { fetchAbort.abort(); fetchCancelled = true } },
       settle,
     })
@@ -381,7 +409,7 @@ export function apply(ctx: Context, config: ConfigType) {
     if (r === 'dup') { const now = new Date().toISOString(); return Promise.resolve({ startedAt: now, finishedAt: now, sources: [], totalFetched: 0, totalAdded: 0, errors: 0 }) }
     return doneP
   }
-  const runFetchWork = (pool: ReturnType<typeof effectiveSources>, force = false) => {
+  const runFetchWork = (pool: ReturnType<typeof effectiveSources>, force = false, opts?: { peakBrief?: boolean }) => {
     const cycleStart = new Date().toISOString()
     store.meta.lastFetchStartedAt = cycleStart // 本轮起点:「本次」实时计数以此为界
     const controller = new AbortController()
@@ -390,9 +418,23 @@ export function apply(ctx: Context, config: ConfigType) {
     fetchProg = { running: true, done: 0, total: pool.filter((s) => s.enabled).length, stage: 'fetch', current: '' }
     return runFetchCycle({ ...makeFetchOpts(pool), force, signal: controller.signal })
       .then(async (result) => {
-        await judgeStubs(cycleStart, controller.signal)
-        await translateFresh(cycleStart, controller.signal)
-        await scoreAndBrief(cycleStart, controller.signal) // 纳入生命周期：快报写完前 running 不置闲
+        if (peakNow()) {
+          // 高峰：只抓取不调 AI——judge/translate/score 全部记入 defer，出峰补跑
+          markPeakDefer(cycleStart)
+          const dopts = prefs.get().digestOpts
+          if (briefEnabled(dopts)) {
+            if (peakCfg()?.brief || opts?.peakBrief) { // 设了「高峰仍产快报」或手动「仍执行」：不翻译不评分，启发式分兜底
+              const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart)
+              await briefNow(fresh, controller.signal, { noTranslate: true, heuristicScores: true })
+            } else {
+              markPeakDefer(cycleStart, { briefSkipped: true }) // 跳过的快报时段不补——只记数
+            }
+          }
+        } else {
+          await judgeStubs(cycleStart, controller.signal)
+          await translateFresh(cycleStart, controller.signal)
+          await scoreAndBrief(cycleStart, controller.signal) // 纳入生命周期：快报写完前 running 不置闲
+        }
         void maybeBackup()
         return result
       })
@@ -403,6 +445,51 @@ export function apply(ctx: Context, config: ConfigType) {
         }
       })
   }
+  // 低峰补跑：高峰 defer 的 AI 工作一次补齐——since 窗口内正文判定/翻译/评分（快报时段不补，日报另行触发）
+  const peakBackfill = () => {
+    const defer = store.meta.peakDefer
+    if (!defer) return
+    delete store.meta.peakDefer // 先清标再跑：补跑失败不连环重试（正常周期还会捞新条目）
+    void store.save()
+    const since = defer.since ?? new Date(Date.now() - 24 * 3600e3).toISOString()
+    taskQ.enqueue({
+      id: 'peak-backfill', kind: 'fetch', label: '低峰补跑·过滤/翻译/评分', queuedAt: Date.now(),
+      holdInPeak: true, // 理论到不了这（出峰才入队），防万一在峰内被 enqueue 仍挂起
+      start: async () => {
+        const controller = new AbortController()
+        fetchAbort = controller
+        fetchCancelled = false
+        fetchProg = { running: true, done: 0, total: 0, stage: 'backfill', current: '' }
+        try {
+          await judgeStubs(since, controller.signal)
+          await translateFresh(since, controller.signal)
+          await scoreAndBrief(since, controller.signal, false)
+        } finally {
+          if (fetchAbort === controller) { fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }; fetchAbort = undefined }
+        }
+      },
+      cancel: () => { if (fetchAbort) { fetchAbort.abort(); fetchCancelled = true } },
+    })
+    if (defer.digest) { log.info('peak ended: running deferred digest'); void digestNow().catch((e) => log.warn(`deferred digest failed: ${String(e)}`)) }
+  }
+  // 高峰边界定时器：进峰无需动作（各处惰性判定），出峰放行挂起任务+补跑
+  let peakTimer: (() => void) | undefined
+  const armPeak = () => {
+    peakTimer?.(); peakTimer = undefined
+    const p = peakCfg()
+    if (p?.enabled !== true) return
+    const next = nextPeakTransition(new Date(), { start: p.start ?? '', end: p.end ?? '' }, config.timezone || undefined)
+    if (next) peakTimer = (ctx as unknown as TimerSeam).timeout(() => onPeakEdge(), Math.max(1000, next.getTime() - Date.now()))
+  }
+  const onPeakEdge = () => {
+    peakTimer = undefined
+    if (peakNow()) { armPeak(); if (!peakTimer) peakTimer = (ctx as unknown as TimerSeam).timeout(() => onPeakEdge(), 30_000); return } // 提早触发兜底：还在峰内 30s 后重试
+    taskQ.pump() // 放行所有高峰挂起的任务
+    if (store.meta.peakDefer) { log.info(`peak ended: backfilling deferred AI work since ${store.meta.peakDefer.since ?? 'n/a'}`); peakBackfill() }
+    armPeak() // 挂下一次边界（明天的进峰）
+  }
+  /** prefs.peak 变更后调用：重挂边界定时器；若此刻已在峰外，立刻放行+补跑（用户手动关高峰也要出效果） */
+  const peakChanged = () => { armPeak(); if (!peakNow()) { taskQ.pump(); if (store.meta.peakDefer) peakBackfill() } }
   const runFetch = () => runFetchPool(effectiveSources(config.sources, store))
   // 所有 LLM 调用必须带超时——本地模型半死（连接挂起不响应）会把 runFetchPool 永不 settle，
   // 调度 mkCycle 的 running 锁随之卡死，后续每轮定时抓取全部跳过（生产曾停摆 11 小时）。
@@ -444,15 +531,15 @@ export function apply(ctx: Context, config: ConfigType) {
     } catch { return '' }
   }
 
-  const runFetchForce = (force = false, onlyFailed = false, filter?: { source?: string; category?: string }) => {
+  const runFetchForce = (force = false, onlyFailed = false, filter?: { source?: string; category?: string }, opts?: { holdInPeak?: boolean; peakBrief?: boolean }) => {
     // onlyFailed：只重试失败/冷却中的启用源（「重试全部失败源」按钮）；否则默认全量
     let pool = effectiveSources(config.sources, store)
     if (onlyFailed) pool = pool.filter((s) => s.enabled && (s.health.lastError || (s.health.cooldownUntil && new Date(s.health.cooldownUntil).getTime() > Date.now())))
     // 界面筛选联动：选了源只抓该源，选了分类只抓该分类下所有源
     if (filter?.source) pool = pool.filter((s) => s.id === filter.source || s.url === filter.source)
     else if (filter?.category) pool = pool.filter((s) => s.category === filter.category)
-    return runFetchPool(pool, force) // 手动抓取与定时/源重试共用进度、取消、翻译和评分流程
-  } // svc/api：手动抓取可带 force 绕冷却
+    return runFetchPool(pool, force, opts) // 手动抓取与定时/源重试共用进度、取消、翻译和评分流程
+  } // svc/api：手动抓取可带 force 绕冷却；opts.holdInPeak=高峰排低峰队列；opts.peakBrief=高峰内仍产快报
   const runFetchFor = (sources: ReturnType<typeof effectiveSources>) => {
     return runFetchPool(sources)
   }
@@ -476,7 +563,7 @@ export function apply(ctx: Context, config: ConfigType) {
     importOpml: (text) => importOpml(store, text, config.sources),
     exportOpml: () => exportOpml(store, config.sources),
     runFetch: runFetchForce,
-    fetchProgress: async () => ({ ...fetchProg, running: fetchProg.running || taskQ.isRunning('fetch'), cancelled: fetchCancelled, etaMs: fetchEta(), queue: llmQueueSnapshot(FETCH_QUEUE_TAGS), queued: taskQ.isQueued('fetch'), taskWaiting: taskQ.waitingCount() }), // isRunning 补位：任务进 running-map 到 start() 之间有一拍盲区（setImmediate 排水），此间 progress 仍应报忙
+    fetchProgress: async () => ({ ...fetchProg, running: fetchProg.running || taskQ.isRunning('fetch'), cancelled: fetchCancelled, etaMs: fetchEta(), queue: llmQueueSnapshot(FETCH_QUEUE_TAGS), queued: taskQ.isQueued('fetch'), held: taskQ.waitingList().some((t) => t.id === 'fetch' && taskHeld(t)) || undefined, taskWaiting: taskQ.waitingCount() }), // isRunning 补位：任务进 running-map 到 start() 之间有一拍盲区（setImmediate 排水），此间 progress 仍应报忙
     translateItem: async (id) => {
       const item = store.items.find((i) => i.id === id)
       if (!item) return { ok: false, error: 'item not found' }
@@ -485,7 +572,7 @@ export function apply(ctx: Context, config: ConfigType) {
       await store.save()
       return { ok: true, translation: item.state.translation }
     },
-    digestProgress: async () => ({ ...digestProg, running: digestProg.running || taskQ.isRunning('digest'), cancelled: digestCancelled, etaMs: digestEta(), queue: llmQueueSnapshot(DIGEST_QUEUE_TAGS), queued: taskQ.isQueued('digest'), taskWaiting: taskQ.waitingCount() }),
+    digestProgress: async () => ({ ...digestProg, running: digestProg.running || taskQ.isRunning('digest'), cancelled: digestCancelled, etaMs: digestEta(), queue: llmQueueSnapshot(DIGEST_QUEUE_TAGS), queued: taskQ.isQueued('digest'), held: taskQ.waitingList().some((t) => t.id === 'digest' && taskHeld(t)) || undefined, taskWaiting: taskQ.waitingCount() }),
     rescanStubContent: async () => { // 名单改了就回扫：命中且短正文的存量条目立刻隐藏（单向——删词条不解隐）
       const p = prefs.get()
       const list = p.contentBlocklist ?? []
@@ -521,6 +608,10 @@ export function apply(ctx: Context, config: ConfigType) {
       }
     },
     regenDigest: async (force) => {
+      if (peakNow()) { // 高峰中：排低峰队列立即返回——doneP 要等任务跑完，tools 调用会挂住数小时
+        void digestNow(force)
+        return { ok: true, queued: true, error: undefined }
+      }
       const doc = await digestNow(force)
       return { ok: true, items: doc.itemCount, degraded: doc.degraded }
     },
@@ -592,7 +683,7 @@ export function apply(ctx: Context, config: ConfigType) {
         })),
       }
     },
-    runTopic: async (params: TopicParams) => {
+    runTopic: async (params: TopicParams, opts?: { peakBypass?: boolean }) => {
       if (taskQ.waitingCount() >= TASK_WAIT_MAX) return { ok: false, error: `排队已满（${TASK_WAIT_MAX}）` }
       const now = new Date().toISOString()
       const meta: TopicMeta = { // queued 条目先落盘——列表立即可见，轮到它时 start() 翻 generating；重启后懒修复
@@ -605,10 +696,10 @@ export function apply(ctx: Context, config: ConfigType) {
         durationMs: 0, degraded: false, excerpt: '', status: 'queued',
       }
       await upsertTopicMeta(join(dataDir, 'digests'), meta)
-      const r = enqueueTopicTask(meta)
-      return { ok: true, id: meta.id, queued: r !== 'started' }
+      const r = enqueueTopicTask(meta, opts)
+      return { ok: true, id: meta.id, queued: r !== 'started', peakHeld: r !== 'started' && taskHeld({ kind: 'topic', peakBypass: opts?.peakBypass }) }
     },
-    regenTopic: async (id: string, params?: TopicParams) => { // 覆盖重生成：默认沿用 meta 参数；传 params=修改专题后按新设置重跑，同 id 重写正文
+    regenTopic: async (id: string, params?: TopicParams, opts?: { peakBypass?: boolean }) => { // 覆盖重生成：默认沿用 meta 参数；传 params=修改专题后按新设置重跑，同 id 重写正文
       const old = (await listTopics(join(dataDir, 'digests'), { queuedIds: taskQ.waitingIds('topic').map((t) => t.slice(6)) })).find((m) => m.id === id)
       if (!old) return { ok: false, error: 'not found' }
       if (old.status === 'generating' || old.status === 'queued') return { ok: false, error: '生成中/排队中不可重生成' }
@@ -625,10 +716,10 @@ export function apply(ctx: Context, config: ConfigType) {
         durationMs: 0, degraded: false, updatedAt: new Date().toISOString(),
       }
       await upsertTopicMeta(join(dataDir, 'digests'), meta)
-      const r = enqueueTopicTask(meta)
-      return { ok: true, id: meta.id, queued: r !== 'started' }
+      const r = enqueueTopicTask(meta, opts)
+      return { ok: true, id: meta.id, queued: r !== 'started', peakHeld: r !== 'started' && taskHeld({ kind: 'topic', peakBypass: opts?.peakBypass }) }
     },
-    topicProgress: async () => ({ ...topicProg, running: topicProg.running || taskQ.runningList().some((t) => t.kind === 'topic'), etaMs: topicEta(), queue: llmQueueSnapshot(TOPIC_QUEUE_TAGS), queuedIds: taskQ.waitingIds('topic').map((t) => t.slice(6)), taskWaiting: taskQ.waitingCount() }),
+    topicProgress: async () => ({ ...topicProg, running: topicProg.running || taskQ.runningList().some((t) => t.kind === 'topic'), etaMs: topicEta(), queue: llmQueueSnapshot(TOPIC_QUEUE_TAGS), queuedIds: taskQ.waitingIds('topic').map((t) => t.slice(6)), heldIds: taskQ.waitingList().filter((t) => t.kind === 'topic' && taskHeld(t)).map((t) => t.id.slice(6)), taskWaiting: taskQ.waitingCount() }),
     stopTopic: async (id?: string) => {
       const tid = id ? `topic:${id}` : (topicProg.id ? `topic:${topicProg.id}` : '')
       if (tid) {
@@ -651,8 +742,9 @@ export function apply(ctx: Context, config: ConfigType) {
           : { stage: topicProg.stage, done: topicProg.done, total: topicProg.total, etaMs: topicEta() }
       return {
         limit: taskQ.limit(),
+        peak: peakNow() || undefined, // 高峰中标记：前端给挂起任务显示「等低峰」而非普通排队
         running: taskQ.runningList().map((t) => ({ id: t.id, kind: t.kind, label: t.label, ...progOf(t.kind) })),
-        waiting: taskQ.waitingList().map((t, i) => ({ id: t.id, kind: t.kind, label: t.label, position: i + 1 })),
+        waiting: taskQ.waitingList().map((t, i) => ({ id: t.id, kind: t.kind, label: t.label, position: i + 1, held: taskHeld(t) || undefined })),
       }
     },
     cancelTask: async (id: string) => {
@@ -663,6 +755,7 @@ export function apply(ctx: Context, config: ConfigType) {
       }
       return { ok: r !== 'none', cancelled: r === 'none' ? undefined : r }
     },
+    peakChanged, // prefs.peak 保存后由 api 调用：重挂边界定时器+峰外立刻放行补跑
     status: () => {
       const list = effectiveSources(config.sources, store)
       const failures = list.filter((s) => s.health.lastError).map((s) => ({ name: s.title, error: s.health.lastError! }))
@@ -690,6 +783,17 @@ export function apply(ctx: Context, config: ConfigType) {
         lastDigestDay: store.meta.lastDigestDay,
         failures,
         cooling: list.filter((s) => s.health.cooldownUntil && new Date(s.health.cooldownUntil).getTime() > Date.now()).length,
+        peak: (() => { // 高峰暂停状态：前端弹层/徽章/任务弹层据此前置提示
+          const p = peakCfg()
+          const range = { start: p?.start ?? '', end: p?.end ?? '' }
+          const enabled = p?.enabled === true && peakRangeValid(range)
+          const defer = store.meta.peakDefer
+          return {
+            enabled, active: enabled && peakNow(), start: p?.start, end: p?.end, brief: p?.brief === true,
+            nextTransition: enabled ? nextPeakTransition(new Date(), range, config.timezone || undefined)?.toISOString() : undefined,
+            defer: defer ? { since: defer.since, digest: defer.digest === true, briefSkipped: defer.briefSkipped ?? 0 } : undefined,
+          }
+        })(),
       }
     },
   }
@@ -711,9 +815,11 @@ export function apply(ctx: Context, config: ConfigType) {
   let topicAbort: AbortController | undefined
   const TASK_WAIT_MAX = 16 // 全局等待队列上限（topicQueue 原有 8 条上限升级为统一闸门）
   /** 专题入队：meta 已是 queued 落盘态；start() 在拿到任务槽后翻 generating 再发射；
-   *  waiting 态取消落 error「排队中已取消」（与用户手动停止的在跑取消同构——都是主动终止） */
-  const enqueueTopicTask = (meta: TopicMeta) => taskQ.enqueue({
+   *  waiting 态取消落 error「排队中已取消」（与用户手动停止的在跑取消同构——都是主动终止）。
+   *  opts.peakBypass=高峰弹层「仍执行」：任务不被高峰挂起 */
+  const enqueueTopicTask = (meta: TopicMeta, opts?: { peakBypass?: boolean }) => taskQ.enqueue({
     id: `topic:${meta.id}`, kind: 'topic', label: `专题·${meta.title || meta.id}`, queuedAt: Date.now(),
+    peakBypass: opts?.peakBypass,
     start: () => {
       meta.status = 'generating'
       meta.updatedAt = new Date().toISOString()
@@ -769,12 +875,14 @@ export function apply(ctx: Context, config: ConfigType) {
       throw e // 上抛给任务队列——发射失败也要排水，队列不该被哑弹卡死
     }
   }
-  // 日报经全局任务队列：dup 时返回兼容的降级 doc；返回的 Promise 在任务跑完才兑现（regenDigest 语义不变）
-  const digestNow = (force = false, day?: string) => {
+  // 日报经全局任务队列：dup 时返回兼容的降级 doc；返回的 Promise 在任务跑完才兑现（regenDigest 语义不变）。
+  // opts.peakBypass=高峰弹层「仍执行」：任务不被高峰挂起
+  const digestNow = (force = false, day?: string, opts?: { peakBypass?: boolean }) => {
     let settle!: { resolve: (v: unknown) => void; reject: (e: unknown) => void }
     const doneP = new Promise<Awaited<ReturnType<typeof digestRun>>>((res, rej) => { settle = { resolve: res as (v: unknown) => void, reject: rej } })
     const r = taskQ.enqueue({
       id: 'digest', kind: 'digest', label: '日报生成', queuedAt: Date.now(),
+      peakBypass: opts?.peakBypass,
       start: () => runDigestWork(force, day),
       cancel: () => { if (digestAbort) { digestAbort.abort(); digestCancelled = true } },
       settle,
@@ -786,7 +894,7 @@ export function apply(ctx: Context, config: ConfigType) {
     digestAbort = new AbortController()
     digestCancelled = false // 新一轮清除上轮取消标记
     digestProg = { running: true, done: 0, total: 0, stage: '' }
-    return digestRun(force, day).then((doc) => { addTokens('digest', doc.tokens); return doc })
+    return digestRun(force, day).then((doc) => { addTokens('digest', doc.tokens); addTokens('translate', doc.translateTokens); return doc })
       .finally(() => { digestAbort = undefined; digestProg = { running: false, done: 0, total: 0, stage: '' } })
   }
   const digestRun = (force: boolean, day?: string) => runDailyDigest({
@@ -871,8 +979,12 @@ export function apply(ctx: Context, config: ConfigType) {
         lastDigestDay: () => store.meta.lastDigestDay,
         runFetchCycle: runFetch,
         runDailyDigest: digestNow,
+        shouldDeferDigest: () => peakNow(), // 高峰到点不跑日报——记 defer 出峰补（任务挂起会卡 scheduledRunning 闩锁）
+        onDigestDeferred: () => markPeakDefer(new Date().toISOString(), { digest: true }),
         log,
       }))
+      armPeak() // 高峰边界定时器首次挂钟
+      if (store.meta.peakDefer && !peakNow()) peakBackfill() // 重启落在峰外且有欠账：直接补跑
       log.info('tools registered, scheduler armed')
     })
     .catch((e) => log.error('store load failed; plugin degraded to inert', e))

@@ -55,8 +55,11 @@ export interface NewsService {
     runFetch(force?: boolean, onlyFailed?: boolean, filter?: {
         source?: string;
         category?: string;
+    }, opts?: {
+        holdInPeak?: boolean;
+        peakBrief?: boolean;
     }): Promise<FetchCycleResult>;
-    /** 抓取进度（{running,done,total,cancelled,etaMs?,queue?,queued?,taskWaiting?}），供 UI 轮询 */
+    /** 抓取进度（{running,done,total,cancelled,etaMs?,queue?,queued?,held?,taskWaiting?}），供 UI 轮询；held=排队项被高峰挂起 */
     fetchProgress?(): Promise<{
         running: boolean;
         done: number;
@@ -65,6 +68,7 @@ export interface NewsService {
         etaMs?: number;
         queue?: LlmQueueInfo;
         queued?: boolean;
+        held?: boolean;
         taskWaiting?: number;
     }>;
     /** 中止进行中的抓取 */
@@ -75,7 +79,7 @@ export interface NewsService {
         translation?: string;
         error?: string;
     }>;
-    /** 日报生成进度（{running,done,total,cancelled,etaMs?,queue?,queued?,taskWaiting?}），供 UI 轮询 */
+    /** 日报生成进度（{running,done,total,cancelled,etaMs?,queue?,queued?,held?,taskWaiting?}），供 UI 轮询；held=排队项被高峰挂起 */
     digestProgress?(): Promise<{
         running: boolean;
         done: number;
@@ -84,6 +88,7 @@ export interface NewsService {
         etaMs?: number;
         queue?: LlmQueueInfo;
         queued?: boolean;
+        held?: boolean;
         taskWaiting?: number;
     }>;
     /** 连通性测试：真实 fetcher 路径抓 url，返回 status/body 片段（验证出口/代理） */
@@ -118,6 +123,7 @@ export interface NewsService {
         ok: boolean;
         items?: number;
         degraded?: boolean;
+        queued?: boolean;
         error?: string;
     }>;
     searchItems(q: string, limit?: number): Array<{
@@ -151,21 +157,27 @@ export interface NewsService {
         sources: Array<Record<string, unknown>>;
         items: Array<Record<string, unknown>>;
     }>;
-    /** AI 专题：启动生成（落 queued 元数据进全局任务队列；拿到槽位才翻 generating 发射） */
-    runTopic?(params: TopicParams): Promise<{
+    /** AI 专题：启动生成（落 queued 元数据进全局任务队列；拿到槽位才翻 generating 发射；opts.peakBypass=高峰「仍执行」） */
+    runTopic?(params: TopicParams, opts?: {
+        peakBypass?: boolean;
+    }): Promise<{
         ok: boolean;
         id?: string;
         queued?: boolean;
+        peakHeld?: boolean;
         error?: string;
     }>;
     /** AI 专题：覆盖重生成（仅 done/error；generating/queued 行禁用；统一排队）；传 params=修改专题后按新设置重跑 */
-    regenTopic?(id: string, params?: TopicParams): Promise<{
+    regenTopic?(id: string, params?: TopicParams, opts?: {
+        peakBypass?: boolean;
+    }): Promise<{
         ok: boolean;
         id?: string;
         queued?: boolean;
+        peakHeld?: boolean;
         error?: string;
     }>;
-    /** AI 专题生成进度（{running,done,total,stage,id,etaMs?,queue?,queuedIds?,taskWaiting?}），供 UI 轮询与懒修复排除 */
+    /** AI 专题生成进度（{running,done,total,stage,id,etaMs?,queue?,queuedIds?,heldIds?,taskWaiting?}），供 UI 轮询与懒修复排除；heldIds=被高峰挂起的排队项 */
     topicProgress?(): Promise<{
         running: boolean;
         done: number;
@@ -175,15 +187,17 @@ export interface NewsService {
         etaMs?: number;
         queue?: LlmQueueInfo;
         queuedIds?: string[];
+        heldIds?: string[];
         taskWaiting?: number;
     }>;
     /** 中止专题：id 命中排队项→撤队落 error；命中在跑（或不带 id）→abort 在飞调用 */
     stopTopic?(id?: string): Promise<unknown>;
     /** 把排队中的专题从内存队列摘除（删除接口用——不动 meta） */
     dequeueTopic?(id: string): boolean;
-    /** 全局任务队列快照：{limit,running[],waiting[]}——悬停提示渲染全部任务+逐项取消 */
+    /** 全局任务队列快照：{limit,peak?,running[],waiting[]}——悬停提示渲染全部任务+逐项取消；waiting.held=高峰挂起 */
     taskList?(): Promise<{
         limit: number;
+        peak?: boolean;
         running: Array<{
             id: string;
             kind: string;
@@ -198,6 +212,7 @@ export interface NewsService {
             kind: string;
             label: string;
             position: number;
+            held?: boolean;
         }>;
     }>;
     /** 按任务 id 取消：'fetch'/'digest'/'topic:{metaId}'——waiting 撤队，running abort */
@@ -205,6 +220,8 @@ export interface NewsService {
         ok: boolean;
         cancelled?: 'waiting' | 'running';
     }>;
+    /** prefs.peak 保存后由 api 调用：重挂高峰边界定时器；若已出峰立刻放行挂起任务+补跑 */
+    peakChanged?(): void;
 }
 /** 注册全部 news_* 工具；返回 disposer。 */
 export declare function registerTools(ctx: Context, svc: NewsService): () => void;
