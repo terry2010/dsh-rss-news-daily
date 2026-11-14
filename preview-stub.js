@@ -92,6 +92,13 @@ window.fetch = (url, opts) => {
   if (p === '/fetch-progress') return Promise.resolve(json({ running: false }))
   if (p === '/digest-progress') return Promise.resolve(json({ running: false }))
   if (p === '/devlog') return Promise.resolve(json({ enabled: false, files: [] }))
+  if (p === '/brief-types') return Promise.resolve(json({ types: [
+    { id:'hourly', name:'时段快报', builtin:true, enabled:true, schedule:{ kind:'hourly', minute:0 }, scheduleText:'每小时第 0 分', sourceIds:[], keywords:[], minScore:6, maxItems:0, focus:'' },
+    { id:'bt_ai', name:'AI 速递', enabled:true, schedule:{ kind:'hourly', minute:15 }, scheduleText:'每小时第 15 分', sourceIds:['https://c.com/atom'], keywords:['大模型','开源'], minScore:7, maxItems:20, focus:'只看大模型发布与开源项目动态' },
+  ] }))
+  if (p.startsWith('/brief-types/')) return Promise.resolve(json({ ok: true, type: {} })) // PATCH/DELETE 桩
+  if (p === '/brief-run') return Promise.resolve(json({ ok: true, started: true }))
+  if (p.startsWith('/briefs')) return Promise.resolve(json({ markdown: '# 今日快报 · 预览\n\n## 14:00 时段快报\n\n- 桩条目一\n\n## 13:15 AI 速递\n\n- 桩条目二\n' }))
   if (p.startsWith('/digest/')) return Promise.resolve(json({ markdown: '# 预览日报\n\n## 概述\n\n桩数据。' }))
   return Promise.resolve(json({}))
 }

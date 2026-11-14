@@ -10,6 +10,8 @@ import type { Prefs } from './scorer.js'
 import { EMPTY_PREFS } from './scorer.js'
 import type { LogSink } from './types.js'
 import { noopLog } from './types.js'
+import type { BriefType } from '../brief-types.js'
+import { normalizeBriefTypes } from '../brief-types.js'
 
 export interface PrefsFile extends Prefs {
   /** 调教历史（M5 写入）：{at, text, actions[]} */
@@ -52,6 +54,12 @@ export interface PrefsFile extends Prefs {
   tokenPrice?: { digest?: { in: number; out: number; cached?: number }; translate?: { in: number; out: number; cached?: number } }
   /** 高峰时段暂停：窗口内只抓取不调 AI（start/end 为 'HH:MM' 墙钟，config.timezone 口径；支持跨零点；brief=高峰仍产快报不翻译） */
   peak?: { enabled?: boolean; start?: string; end?: string; brief?: boolean }
+  /**
+   * 快报类型列表（今日快报列表的生产者）：未配置=虚拟内置「时段快报」沿用旧语义
+   * （resolveBriefTypes 由 digestOpts.hourlyBrief/schedule.intervalMinutes/config 合成种子）。
+   * 配置过即权威——[]=删光不产快报；内置条目以 id='hourly'/builtin=true 落表。
+   */
+  briefTypes?: BriefType[]
 }
 
 function numMapOf(v: unknown): Record<string, number> {
@@ -118,6 +126,7 @@ export function normalizePrefs(value: unknown): PrefsFile {
       const o = { enabled: p.enabled === true, ...(start ? { start } : {}), ...(end ? { end } : {}), brief: p.brief === true }
       return o.enabled || start || end || o.brief ? o : undefined
     })(),
+    briefTypes: normalizeBriefTypes(r.briefTypes),
   }
 }
 

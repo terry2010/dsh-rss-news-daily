@@ -4,6 +4,7 @@
  */
 import type { Prefs } from './scorer.js';
 import type { LogSink } from './types.js';
+import type { BriefType } from '../brief-types.js';
 export interface PrefsFile extends Prefs {
     /** 调教历史（M5 写入）：{at, text, actions[]} */
     tuningHistory?: Array<{
@@ -109,6 +110,12 @@ export interface PrefsFile extends Prefs {
         end?: string;
         brief?: boolean;
     };
+    /**
+     * 快报类型列表（今日快报列表的生产者）：未配置=虚拟内置「时段快报」沿用旧语义
+     * （resolveBriefTypes 由 digestOpts.hourlyBrief/schedule.intervalMinutes/config 合成种子）。
+     * 配置过即权威——[]=删光不产快报；内置条目以 id='hourly'/builtin=true 落表。
+     */
+    briefTypes?: BriefType[];
 }
 /** 把未知输入消毒成 PrefsFile；畸形字段回默认，不抛错。 */
 export declare function normalizePrefs(value: unknown): PrefsFile;

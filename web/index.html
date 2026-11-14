@@ -66,12 +66,13 @@
       <label class="f" for="digestDay"><span class="f-lab">日期</span><input type="date" id="digestDay" title="查看历史日报（生成始终针对今天）"></label>
       <div class="seg" role="group" aria-label="精选类型">
         <button id="btnKindDigest" class="active" title="当日精选日报">日报</button>
-        <button id="btnKindHourly" title="逐时段快报">快报</button>
+        <button id="btnKindHourly" title="今日快报列表">快报</button>
         <button id="btnKindTopics" title="自定义专题报告">专题</button>
       </div>
       <button id="btnTopicNew" class="primary" hidden title="按关键词从新闻库生成专题报告">＋ 新建专题</button>
       <button id="btnDigestRun" class="primary" title="立即生成今日日报">▶ 生成日报</button>
       <button id="btnDigestStop" hidden title="中止当前生成">⏹ 停止</button>
+      <button id="btnBriefList" hidden title="管理快报类型：增删改与运行频率">☰ 快报列表</button>
       <span id="busyWrap" class="busywrap"><span id="digestBusy" class="busybar" hidden>⏳ 日报生成中…</span><span id="taskPop" class="taskpop"></span></span>
     </div>
     <article id="digestView" class="digest"></article>
@@ -119,6 +120,67 @@
         <div class="obNav">
           <span></span>
           <span><button data-close>取消</button><button id="btnTpGen" class="primary" disabled>生成专题</button></span>
+        </div>
+      </div>
+    </div>
+    <!-- 快报类型列表（今日快报列表的生产者管理） -->
+    <div id="briefTypesModal" class="obOverlay" hidden>
+      <div class="obCard topic-card">
+        <button class="obSkip" data-close title="关闭">✕</button>
+        <h3><button id="btAllView" class="bt-h3btn" title="关闭弹层并查看全部快报（同标题栏「今日快报」）">快报列表</button></h3>
+        <div class="obBody">
+          <div id="btList" class="bt-list"></div>
+          <p class="settings-help">每种快报按自己的频率独立运行：到点抓取所选新闻源、AI 评分后把高分条目写成一节。「全部快报」视图把当天各类型快报按时间倒序合并显示。</p>
+        </div>
+        <div class="obNav">
+          <span><button data-close>关闭</button></span>
+          <span><button id="btnBtNew" class="primary">＋ 新增快报</button></span>
+        </div>
+      </div>
+    </div>
+    <!-- 快报类型编辑（新增/修改共用） -->
+    <div id="briefEditModal" class="obOverlay" hidden>
+      <div class="obCard topic-card">
+        <button class="obSkip" data-close title="关闭">✕</button>
+        <h3 id="btEditTitle">新增快报</h3>
+        <div class="obBody addsrc-form">
+          <label class="f" for="btName"><span class="f-lab">快报名称</span><input id="btName" placeholder="如：时段快报 / AI 速递 / 财经早报"></label>
+          <div class="tp-opts">
+            <label class="f" for="btFreq"><span class="f-lab">运行频率</span><select id="btFreq">
+              <option value="minutes">每 xx 分钟</option>
+              <option value="hourly">每小时</option>
+              <option value="daily">每天</option>
+            </select></label>
+            <label class="f" for="btEvery" id="btEveryWrap"><span class="f-lab">间隔分钟</span><input type="number" id="btEvery" min="5" max="1440" placeholder="60"></label>
+            <label class="f" for="btMinute" id="btMinuteWrap" hidden><span class="f-lab">第几分</span><select id="btMinute"></select></label>
+            <label class="f" for="btTime" id="btTimeWrap" hidden><span class="f-lab">时间</span><input type="time" id="btTime"></label>
+          </div>
+          <div class="tp-srcbox" id="btSrcBox">
+            <div class="tp-src-head" id="btSrcHead" title="点击展开/收起源列表">
+              <span class="f-lab">新闻源</span>
+              <input id="btSrcQ" type="search" placeholder="点击展开选择源（留空=全部启用源）" autocomplete="off">
+              <button type="button" id="btSrcAll">全选</button>
+              <button type="button" id="btSrcNone">清空</button>
+              <span id="btSrcCount" class="tp-srccount"></span>
+              <span class="tp-caret">▾</span>
+            </div>
+            <div id="btSrcList" class="tp-src-grid" hidden></div>
+          </div>
+          <div class="tp-opts">
+            <label class="f" for="btMinScore"><span class="f-lab">最低评分</span><input type="number" id="btMinScore" min="0" max="10" step="0.5" placeholder="6"></label>
+            <label class="f" for="btMaxItems"><span class="f-lab">入文条数</span><input type="number" id="btMaxItems" min="0" max="500" placeholder="留空=不限"></label>
+          </div>
+          <label class="f" for="btKeywords"><span class="f-lab">筛选关键字（可选）</span><input id="btKeywords" placeholder="空格或逗号分隔多个词；留空不筛"></label>
+          <div class="tp-focus">
+            <label class="f-lab" for="btFocus">快报重点（可选）</label>
+            <textarea id="btFocus" rows="2" placeholder="这份快报偏重关注的方向，如：只看大模型发布与开源项目动态"></textarea>
+          </div>
+          <label class="setting-check"><input type="checkbox" id="btEnabled" checked> 启用该快报（停用后不自动运行）</label>
+          <p id="btErr" class="addsrc-err" hidden></p>
+        </div>
+        <div class="obNav">
+          <span></span>
+          <span><button data-close>取消</button><button id="btnBtSave" class="primary">保存</button></span>
         </div>
       </div>
     </div>
@@ -268,14 +330,14 @@
           </label>
         </div>
         <div class="settings-checks">
-          <label class="setting-check"><input type="checkbox" id="peakBrief"> 高峰时段仍生成时段快报（评分+概括照常，只省翻译；低峰不重写）</label>
+          <label class="setting-check"><input type="checkbox" id="peakBrief"> 高峰时段仍生成快报（评分+概括照常，只省翻译；低峰不重写）</label>
         </div>
         <div id="peakInfo" class="hist"></div>
       </div>
     </details>
 
     <details class="settings-fold">
-      <summary><span>每日精选</span><small>精选数量、评分门槛、逐条摘要与时段快报</small></summary>
+      <summary><span>每日精选</span><small>精选数量、评分门槛与逐条摘要</small></summary>
       <div class="settings-fold-body">
         <p class="settings-help">这些选项会影响每日精选的内容和评分策略。修改后自动保存；不确定时保持默认即可。</p>
         <div class="setting-grid">
@@ -309,10 +371,10 @@
           </label>
         </div>
         <div class="settings-checks">
-          <label class="setting-check"><input type="checkbox" id="dHourly"> 生成时段快报</label>
           <label class="setting-check"><input type="checkbox" id="dScoreFetch"> 抓取后自动评分</label>
           <label class="setting-check"><input type="checkbox" id="dRescore"> 为缺少评分的新闻补评分</label>
         </div>
+        <p class="settings-help">快报类型在「每日精选 → 快报 → 快报列表」里增删改（频率/新闻源/评分门槛/关键字/快报重点各自独立）。</p>
       </div>
     </details>
 

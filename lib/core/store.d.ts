@@ -47,6 +47,8 @@ export interface StoreMeta {
         digest?: boolean;
         briefSkipped?: number;
     };
+    /** 快报类型上次运行时刻台账：typeId → ISO——槽位覆盖判定与候选窗口起点 */
+    briefRuns?: Record<string, string>;
     /** 最后打开此库的插件版本号——跨版本数据形状迁移/排障依据（区别于 PRAGMA user_version 的结构纪元） */
     pluginVersion?: string;
 }

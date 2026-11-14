@@ -5,6 +5,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 
 import type { FeedSource, FetchCycleResult } from './core/types.js'
 import type { TopicParams } from './topic-pipeline.js'
+import type { BriefType } from './brief-types.js'
 
 const text = (value: string): ContentBlock[] => [{ type: 'text', text: value }]
 const err = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -30,7 +31,7 @@ export interface NewsService {
   restoreSource?(url: string): Promise<boolean>
   importOpml(opmlText: string): Promise<{ added: number; duplicated: number; skipped: number; details?: Array<{ url: string; action: string; reason?: string }> }>
   exportOpml(): Promise<string>
-  runFetch(force?: boolean, onlyFailed?: boolean, filter?: { source?: string; category?: string }, opts?: { holdInPeak?: boolean; peakBrief?: boolean }): Promise<FetchCycleResult>
+  runFetch(force?: boolean, onlyFailed?: boolean, filter?: { source?: string; category?: string }): Promise<FetchCycleResult>
   /** 抓取进度（{running,done,total,cancelled,etaMs?,queue?,queued?,held?,taskWaiting?}），供 UI 轮询；held=排队项被高峰挂起 */
   fetchProgress?(): Promise<{ running: boolean; done: number; total: number; cancelled?: boolean; etaMs?: number; queue?: LlmQueueInfo; queued?: boolean; held?: boolean; taskWaiting?: number }>
   /** 中止进行中的抓取 */
@@ -66,12 +67,18 @@ export interface NewsService {
   stopTopic?(id?: string): Promise<unknown>
   /** 把排队中的专题从内存队列摘除（删除接口用——不动 meta） */
   dequeueTopic?(id: string): boolean
-  /** 全局任务队列快照：{limit,peak?,running[],waiting[],pendingBrief?}——悬停提示渲染全部任务+逐项取消；waiting.held=高峰挂起；pendingBrief=已合并的快报意图伪条目 */
-  taskList?(): Promise<{ limit: number; peak?: boolean; running: Array<{ id: string; kind: string; label: string; stage?: string; done?: number; total?: number; etaMs?: number }>; waiting: Array<{ id: string; kind: string; label: string; position: number; held?: boolean }>; pendingBrief?: boolean }>
-  /** 按任务 id 取消：'fetch'/'digest'/'topic:{metaId}'/'pending:fetch-brief'——waiting 撤队，running abort，pending 清意图标记 */
+  /** 全局任务队列快照：{limit,peak?,running[],waiting[]}——悬停提示渲染全部任务+逐项取消；waiting.held=高峰挂起 */
+  taskList?(): Promise<{ limit: number; peak?: boolean; running: Array<{ id: string; kind: string; label: string; stage?: string; done?: number; total?: number; etaMs?: number }>; waiting: Array<{ id: string; kind: string; label: string; position: number; held?: boolean }> }>
+  /** 按任务 id 取消：'fetch'/'digest'/'topic:{metaId}'/'brief:{typeIds}'——waiting 撤队，running abort */
   cancelTask?(id: string): Promise<{ ok: boolean; cancelled?: 'waiting' | 'running' | 'pending' }>
   /** prefs.peak 保存后由 api 调用：重挂高峰边界定时器；若已出峰立刻放行挂起任务+补跑 */
   peakChanged?(): void
+  /** 快报类型列表（今日快报列表生产者）：未配置时返回内置「时段快报」默认种子 */
+  listBriefTypes?(): BriefType[]
+  /** 手动触发一次快报运行：sel='all'|typeId；holdInPeak=排低峰等出峰；peakBypass=峰内仍跑 */
+  runBriefNow?(sel?: string, opts?: { holdInPeak?: boolean; peakBypass?: boolean }): { ok: boolean; started?: boolean; queued?: boolean; merged?: boolean; error?: string }
+  /** prefs.briefTypes 变更后由 api 调用：重挂快报调度钟 */
+  briefsChanged?(): void
 }
 
 const sourceSchema = {

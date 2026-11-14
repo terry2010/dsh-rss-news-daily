@@ -120,6 +120,25 @@ export function nextZonedOccurrence(time: string, timezone: string | undefined, 
   const secondsUntil = Math.max(0, Math.floor((guess.getTime() - now.getTime()) / 1000))
   return { next: guess, secondsUntil }
 }
+
+/**
+ * `now` 所在 zoned 日历日的 "HH:MM" 对应的 UTC 时刻——可落在过去或未来，
+ * 不做过夜翻转（nextZonedOccurrence 的"今日定点"版本，DST 二次修正相同）。
+ * 快报 daily 槽位用它求"今日槽起点"与"昨日槽起点"。
+ * @throws {RangeError} malformed clock string.
+ */
+export function zonedDayOccurrence(time: string, timezone: string | undefined, now: Date): Date {
+  const clock = parseClockTime(time)
+  if (clock === undefined) throw new RangeError(`invalid time ${JSON.stringify(time)} (expected HH:MM)`)
+  let guess = new Date(now.getTime())
+  for (let pass = 0; pass < 2; pass += 1) {
+    const parts = partsOf(guess, timezone)
+    const currentWall = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second)
+    const targetWall = Date.UTC(parts.year, parts.month - 1, parts.day, clock.hour, clock.minute, 0)
+    guess = new Date(guess.getTime() + (targetWall - currentWall))
+  }
+  return guess
+}
 /** 本地日历日 → UTC 时刻范围（含 DST 二次修正）。fetchedAt 存 UTC ISO，day 过滤要按此窗口比。 */
 export function zonedDayBounds(day: string, timezone?: string): { after: string; before: string } {
   const fmt = new Intl.DateTimeFormat('en-US', {

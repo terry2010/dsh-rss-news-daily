@@ -5,8 +5,8 @@
  * 铁律 2：任何一条/一段 LLM 失败只降级该处，日报永远产出。
  */
 
-import { mkdir, writeFile, readFile, access } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, writeFile, readFile, readdir, access } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 import type { DigestDocument, DigestLanguage, FeedItem, LogSink } from './core/types.js'
 import { noopLog, isStaleItem } from './core/types.js'
@@ -241,7 +241,7 @@ export async function scoreNewItems(
   return scored
 }
 
-/** P8 时段快报：高分条目按领域分组追加/覆盖 `## HH:mm 时段快报` 节（{day}-hourly.md）。 */
+/** P8 时段快报/自定义快报：高分条目按领域分组追加/覆盖 `## HH:mm <节名>` 节（缺省 {day}-hourly.md）。 */
 export async function appendHourlyBrief(opts: {
   items: FeedItem[]
   sourcesById: Map<string, { title: string }>
@@ -264,19 +264,42 @@ export async function appendHourlyBrief(opts: {
   heuristicScores?: boolean
   /** 槽位任务用：同刻已有快报节（峰内生成的正式节）则不重写——连概括/翻译调用一并省掉 */
   keepExisting?: boolean
+  /** 自定义类型：输出文件（缺省 `{digestsDir}/{day}-hourly.md`） */
+  file?: string
+  /** 自定义类型：文件头（缺省 `# 时段快报 · day`） */
+  head?: string
+  /** 节名（缺省 '时段快报'；`## HH:mm <节名>`） */
+  sectionName?: string
+  /** 使用新闻源 id 集；空/未设=全部源 */
+  sourceIds?: string[]
+  /** 筛选关键字（标题/摘要 OR 命中）；空/未设=不筛 */
+  keywords?: string[]
+  /** 入文条数上限；0/未设=不限 */
+  maxItems?: number
+  /** 快报重点：注入概括 prompt 的侧重说明 */
+  focus?: string
   log?: LogSink
 }): Promise<number> {
   const log = opts.log || noopLog
   // 入选分键：正常只看 llmScore；高峰快报对未评条目回落启发式分（pickFinal 同款映射）
   const keyOf = (i: FeedItem) => i.llmScore ?? (opts.heuristicScores ? Math.min(10, Math.max(0, (i.score ?? 0) * 8)) : 0)
-  const scored = opts.items.filter((i) => !i.dupOf && !i.state.hidden && keyOf(i) >= opts.minScore)
-  const file = join(opts.digestsDir, `${opts.day}-hourly.md`)
-  const head = `# 时段快报 · ${opts.day}\n\n`
-  await mkdir(opts.digestsDir, { recursive: true })
+  const secName = opts.sectionName || '时段快报'
+  // 类型过滤链：源 → 关键字 → 分数 → 条数上限（按分键倒序截断）
+  let scored = opts.items.filter((i) => !i.dupOf && !i.state.hidden)
+  if (opts.sourceIds?.length) { const allow = new Set(opts.sourceIds); scored = scored.filter((i) => allow.has(i.sourceId)) }
+  if (opts.keywords?.length) {
+    const kws = opts.keywords.map((k) => k.toLowerCase())
+    scored = scored.filter((i) => kws.some((k) => `${i.title}\n${i.summary ?? ''}`.toLowerCase().includes(k)))
+  }
+  scored = scored.filter((i) => keyOf(i) >= opts.minScore)
+  if (opts.maxItems && opts.maxItems > 0 && scored.length > opts.maxItems) scored = scored.sort((a, b) => keyOf(b) - keyOf(a)).slice(0, opts.maxItems)
+  const file = opts.file ?? join(opts.digestsDir, `${opts.day}-hourly.md`)
+  const head = opts.head ?? `# 时段快报 · ${opts.day}\n\n`
+  await mkdir(dirname(file), { recursive: true })
   let body = ''
   try { body = await readFile(file, 'utf8') } catch { /* 新文件 */ }
   if (body.startsWith(head)) body = body.slice(head.length)
-  const marker = `## ${opts.time} 时段快报`
+  const marker = `## ${opts.time} ${secName}`
   if (opts.keepExisting && body.indexOf(marker) >= 0) { // 峰内快报已是 AI 正式质量——槽位任务低峰不重写（早退连概括调用都省）
     log.info(`hourly brief ${opts.time}: 同刻已有节，keepExisting 跳过重写`)
     return 0
@@ -306,7 +329,7 @@ export async function appendHourlyBrief(opts: {
   if (opts.llmClient) {
     try {
       brief = (await opts.llmClient.generateText({
-        system: '你是新闻快报编辑。概括本时段新闻要点：先一句总起（主线/主题是什么），再分点列出具体事件（谁、做了什么），每点一行以 - 开头，至多 4 点，挑最重要的。不要解释。',
+        system: `你是新闻快报编辑。${opts.focus ? `本快报重点：${opts.focus}。` : ''}概括本时段新闻要点：先一句总起（主线/主题是什么），再分点列出具体事件（谁、做了什么），每点一行以 - 开头，至多 4 点，挑最重要的。不要解释。`,
         prompt: scored.slice(0, 30).map((it, i) => `${i + 1}. [${it.topic || '综合'}] ${zhTitleOf(it)}`).join('\n'),
         maxTokens: Math.min(opts.llmMaxTokens ?? 4096, 4096), // 快报概括+推理思考共用预算，2K 易被吃光
         purpose: 'brief',
@@ -324,7 +347,7 @@ export async function appendHourlyBrief(opts: {
   // 逐行 > 前缀：mdLite 把连续引用行合并成一个白色卡片（保卡片底色；碎片化 bug 已修）
   // 峰内快报标按条目实况：有 LLM 评分=已评只缺译 →（高峰·未译）；纯启发式入选 →（高峰·未评未译）
   const peakSuffix = opts.noTranslate ? (scored.some((i) => i.llmScore != null) ? '（高峰·未译）' : '（高峰·未评未译）') : ''
-  const lines = [`## ${opts.time} 时段快报${peakSuffix}`, '', brief.split('\n').map((l) => `> ${l}`).join('\n'), '']
+  const lines = [`## ${opts.time} ${secName}${peakSuffix}`, '', brief.split('\n').map((l) => `> ${l}`).join('\n'), '']
   // 领域速览：有新闻才出——每域一行（条数+最高分）
   lines.push('### 领域速览', '')
   for (const [topic, list] of groups) {
@@ -599,10 +622,15 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   // 小集合（补评成功+入选）手动标脏借 save() UPDATE 通道回写；dupOf/dupCount 是临时注解不回写
   ;(opts.store as { persistItems?: (i: FeedItem[]) => void }).persistItems?.([...rescored, ...picked])
 
-  // 持续热点检测：读当日 hourly.md，统计每条在几个 ## HH:mm 节出现（≥2=持续发酵）
+  // 持续热点检测：读当日 hourly.md + briefs/{day}-*.md（自定义类型快报），统计每条在几个 ## HH:mm 节出现（≥2=持续发酵）
   try {
-    const hb = await readFile(join(opts.digestsDir, `${day}-hourly.md`), 'utf8')
-    const sections = hb.split(/^## \d{2}:\d{2}/m).slice(1)
+    const bodies: string[] = []
+    try { bodies.push(await readFile(join(opts.digestsDir, `${day}-hourly.md`), 'utf8')) } catch { /* 无内置快报文件 */ }
+    try {
+      const bdir = join(opts.digestsDir, 'briefs')
+      for (const f of await readdir(bdir)) if (f.startsWith(`${day}-`) && f.endsWith('.md')) bodies.push(await readFile(join(bdir, f), 'utf8'))
+    } catch { /* 无 briefs 目录 */ }
+    const sections = bodies.flatMap((hb) => hb.split(/^## \d{2}:\d{2}/m).slice(1))
     if (sections.length >= 2) {
       for (const it of picked) {
         const key = it.link || it.title

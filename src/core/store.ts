@@ -40,6 +40,8 @@ export interface StoreMeta {
   llmDurEma?: { global?: number; byPurpose?: Record<string, number> }
   /** 高峰时段被推迟的 AI 工作：since=首个被跳过的抓取周期起点（补跑窗口）；digest=到点日报被推迟；briefSkipped=跳过的快报时段数（信息展示） */
   peakDefer?: { since?: string; digest?: boolean; briefSkipped?: number }
+  /** 快报类型上次运行时刻台账：typeId → ISO——槽位覆盖判定与候选窗口起点 */
+  briefRuns?: Record<string, string>
   /** 最后打开此库的插件版本号——跨版本数据形状迁移/排障依据（区别于 PRAGMA user_version 的结构纪元） */
   pluginVersion?: string
 }
@@ -107,6 +109,7 @@ export function normalizeStoreData(value: unknown): StoreData | null {
       lastDigestAt: typeof meta.lastDigestAt === 'string' ? meta.lastDigestAt : '',
       lastDigestDay: typeof meta.lastDigestDay === 'string' ? meta.lastDigestDay : '',
       ...(typeof meta.peakDefer === 'object' && meta.peakDefer !== null ? { peakDefer: meta.peakDefer as StoreMeta['peakDefer'] } : {}), // 高峰欠账台账：JSON 后端重启不丢
+      ...(typeof meta.briefRuns === 'object' && meta.briefRuns !== null ? { briefRuns: meta.briefRuns as Record<string, string> } : {}), // 快报类型槽位台账：重启不丢 lastRun
     },
     sources,
     items,

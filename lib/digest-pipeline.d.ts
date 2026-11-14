@@ -77,7 +77,7 @@ export declare function textLooksForeign(text: string): boolean;
 export declare function scoreNewItems(items: FeedItem[], client: LlmClient, opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs' | 'onScoreProgress'> & {
     shouldPause?: () => boolean;
 }, log: LogSink): Promise<number>;
-/** P8 时段快报：高分条目按领域分组追加/覆盖 `## HH:mm 时段快报` 节（{day}-hourly.md）。 */
+/** P8 时段快报/自定义快报：高分条目按领域分组追加/覆盖 `## HH:mm <节名>` 节（缺省 {day}-hourly.md）。 */
 export declare function appendHourlyBrief(opts: {
     items: FeedItem[];
     sourcesById: Map<string, {
@@ -102,6 +102,20 @@ export declare function appendHourlyBrief(opts: {
     heuristicScores?: boolean;
     /** 槽位任务用：同刻已有快报节（峰内生成的正式节）则不重写——连概括/翻译调用一并省掉 */
     keepExisting?: boolean;
+    /** 自定义类型：输出文件（缺省 `{digestsDir}/{day}-hourly.md`） */
+    file?: string;
+    /** 自定义类型：文件头（缺省 `# 时段快报 · day`） */
+    head?: string;
+    /** 节名（缺省 '时段快报'；`## HH:mm <节名>`） */
+    sectionName?: string;
+    /** 使用新闻源 id 集；空/未设=全部源 */
+    sourceIds?: string[];
+    /** 筛选关键字（标题/摘要 OR 命中）；空/未设=不筛 */
+    keywords?: string[];
+    /** 入文条数上限；0/未设=不限 */
+    maxItems?: number;
+    /** 快报重点：注入概括 prompt 的侧重说明 */
+    focus?: string;
     log?: LogSink;
 }): Promise<number>;
 /** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。 */

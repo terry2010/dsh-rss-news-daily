@@ -73,6 +73,11 @@ export interface ApiDeps {
     onGesture?: () => void;
     /** 启动时间线打点（devlog/boot.log）——定位冷启动占位屏的真实空档 */
     bootMark?: (mark: string) => void;
+    /** 内置「时段快报」种子参数（svc.listBriefTypes 缺失时的回落——测试挂载可省略） */
+    briefDefaults?: {
+        enabled: boolean;
+        minScore: number;
+    };
 }
 /** 注册阅读器全部路由；返回 disposer。MOUNT 于 ctx.inject(['webServer']) 内调用。 */
 export declare function mountApi(ws: WebServerLike, deps: ApiDeps): () => void;
