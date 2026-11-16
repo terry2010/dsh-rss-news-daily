@@ -70,3 +70,11 @@ test('addSources→store：provider 落源、URL 去重', async () => {
   assert.equal(saved?.summarize, false)
   assert.equal(saved?.method, 'test:ok')
 })
+
+test('stream 标志：SourceDef→FeedSource 透传，缺省 undefined', async () => {
+  const { toFeedSource } = await import('../lib/service.js')
+  const s = toFeedSource({ url: 'https://flash.example/s', title: 'S', method: 'test:ok', stream: true, summarize: false })
+  assert.equal(s.stream, true)
+  const n = toFeedSource({ url: 'https://flash.example/n', title: 'N' })
+  assert.equal(n.stream, false)
+})

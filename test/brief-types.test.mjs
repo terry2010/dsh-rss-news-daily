@@ -261,3 +261,28 @@ test('api: /brief-run 透传 type/holdInPeak/peakBypass 给 svc.runBriefNow', as
   assert.equal(out.ok, true)
   assert.deepEqual(deps._ran[0], { sel: 'bt_ai', opts: { holdInPeak: true, peakBypass: false } })
 })
+
+// ---- 伴随插件注册类型（extra）合并 ----
+
+test('resolve: 注册类型追加在 resolved 尾部', () => {
+  const reg = normalizeBriefType({ id: 'kuaixun', name: '快讯快报', schedule: { kind: 'minutes', everyMinutes: 30 }, sourceIds: ['u1'], minScore: 0 })
+  const all = resolveBriefTypes({}, DEF, [reg])
+  assert.equal(all.length, 2)
+  assert.equal(all[0].id, 'hourly') // 内置时段快报种子
+  assert.equal(all[1].id, 'kuaixun')
+})
+
+test('resolve: prefs 同 id 优先于注册类型（用户配置覆盖伴随默认）', () => {
+  const reg = normalizeBriefType({ id: 'kuaixun', name: '快讯快报', enabled: true, schedule: { kind: 'minutes', everyMinutes: 30 } })
+  const all = resolveBriefTypes({ briefTypes: [{ id: 'kuaixun', name: '我的快讯', enabled: false }] }, DEF, [reg])
+  const t = all.find((x) => x.id === 'kuaixun')
+  assert.equal(t.name, '我的快讯')
+  assert.equal(t.enabled, false)
+  assert.equal(all.length, 1)
+})
+
+test('resolve: prefs.briefTypes=[] 时注册类型仍出现（墓碑删除走 enabled:false 固化）', () => {
+  const reg = normalizeBriefType({ id: 'kuaixun', name: '快讯快报', schedule: { kind: 'daily', time: '9:00' } })
+  const all = resolveBriefTypes({ briefTypes: [] }, DEF, [reg])
+  assert.deepEqual(all.map((t) => t.id), ['kuaixun'])
+})

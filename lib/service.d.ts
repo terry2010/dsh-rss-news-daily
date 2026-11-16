@@ -43,6 +43,7 @@ export declare function toFeedSource(raw: {
     builtin?: boolean;
     addedAt?: string;
     summarize?: boolean;
+    stream?: boolean;
     proxy?: string | boolean;
     cooldownHours?: number;
     provider?: string;
@@ -54,6 +55,7 @@ export declare function effectiveSources(configSources: Array<{
     category?: string;
     enabled?: boolean;
     summarize?: boolean;
+    stream?: boolean;
     proxy?: string | boolean;
     cooldownHours?: number;
 }>, store: StoreLike): FeedSource[];

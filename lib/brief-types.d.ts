@@ -55,10 +55,11 @@ export interface BriefDefaults {
 }
 /** 内置默认类型：现有「时段快报」语义等价迁移（写 `{day}-hourly.md`）——每个整点槽 :00 */
 export declare function builtinBriefType(def: BriefDefaults): BriefType;
-/** prefs.briefTypes 未配置时返回内置默认（「现有的时段快报默认填进去」）；配置过即按表返回。 */
+/** prefs.briefTypes 未配置时返回内置默认（「现有的时段快报默认填进去」）；配置过即按表返回。
+ *  extra = 伴随插件注册的类型：追加在后，但 prefs 已存同 id 时用户配置优先（启停/改名保留）。 */
 export declare function resolveBriefTypes(prefs: {
     briefTypes?: unknown;
-}, def: BriefDefaults): BriefType[];
+}, def: BriefDefaults, extra?: BriefType[]): BriefType[];
 export declare function newBriefTypeId(): string;
 /** UI 频率文案 */
 export declare function briefScheduleText(t: BriefType): string;

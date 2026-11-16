@@ -82,6 +82,8 @@ export declare function appendHourlyBrief(opts: {
     items: FeedItem[];
     sourcesById: Map<string, {
         title: string;
+        summarize?: boolean;
+        stream?: boolean;
     }>;
     day: string;
     time: string;

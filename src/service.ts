@@ -86,7 +86,7 @@ function sourceIdOf(url: string): string {
 
 export function toFeedSource(raw: {
   url: string; title: string; category?: string; tier?: number; lang?: 'zh' | 'en'
-  method?: string; enabled?: boolean; builtin?: boolean; addedAt?: string; summarize?: boolean; proxy?: string | boolean; cooldownHours?: number
+  method?: string; enabled?: boolean; builtin?: boolean; addedAt?: string; summarize?: boolean; stream?: boolean; proxy?: string | boolean; cooldownHours?: number
   provider?: string
 }): FeedSource {
   return {
@@ -103,6 +103,7 @@ export function toFeedSource(raw: {
     builtin: raw.builtin === true,
     weight: 1,
     summarize: raw.summarize !== false,
+    stream: raw.stream === true,
     proxy: raw.proxy,
     cooldownHours: raw.cooldownHours,
     health: emptyHealth(),
@@ -111,7 +112,7 @@ export function toFeedSource(raw: {
 
 /** 生效源表：内置 ∪ config 预置 ∪ store 用户源，按规范化 URL 合并（用户覆盖内置）。 */
 export function effectiveSources(
-  configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean; summarize?: boolean; proxy?: string | boolean; cooldownHours?: number }>,
+  configSources: Array<{ url: string; title?: string; category?: string; enabled?: boolean; summarize?: boolean; stream?: boolean; proxy?: string | boolean; cooldownHours?: number }>,
   store: StoreLike,
 ): FeedSource[] {
   const byUrl = new Map<string, FeedSource>()
@@ -132,6 +133,7 @@ export function effectiveSources(
       url: s.url, title: s.title || prev?.title || s.url, category: s.category || prev?.category,
       tier: prev?.tier, lang: prev?.lang, enabled: s.enabled !== false,
       builtin: prev?.builtin, summarize: s.summarize !== false,
+      stream: s.stream === true,
       proxy: s.proxy, cooldownHours: s.cooldownHours,
     }))
   }

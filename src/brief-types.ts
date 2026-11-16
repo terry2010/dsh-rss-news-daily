@@ -112,10 +112,12 @@ export function builtinBriefType(def: BriefDefaults): BriefType {
   }
 }
 
-/** prefs.briefTypes 未配置时返回内置默认（「现有的时段快报默认填进去」）；配置过即按表返回。 */
-export function resolveBriefTypes(prefs: { briefTypes?: unknown }, def: BriefDefaults): BriefType[] {
-  if (Array.isArray(prefs.briefTypes)) return normalizeBriefTypes(prefs.briefTypes) ?? []
-  return [builtinBriefType(def)]
+/** prefs.briefTypes 未配置时返回内置默认（「现有的时段快报默认填进去」）；配置过即按表返回。
+ *  extra = 伴随插件注册的类型：追加在后，但 prefs 已存同 id 时用户配置优先（启停/改名保留）。 */
+export function resolveBriefTypes(prefs: { briefTypes?: unknown }, def: BriefDefaults, extra: BriefType[] = []): BriefType[] {
+  const base = Array.isArray(prefs.briefTypes) ? (normalizeBriefTypes(prefs.briefTypes) ?? []) : [builtinBriefType(def)]
+  const have = new Set(base.map((t) => t.id))
+  return [...base, ...extra.filter((t) => !have.has(t.id))]
 }
 
 export function newBriefTypeId(): string {

@@ -15,7 +15,7 @@ import type { Config as ConfigType } from './config.js';
 import { RndSourceHub } from './source-hub.js';
 export { Config };
 export { RndSourceHub };
-export type { MethodHandler, MethodCtx, RawItem, SourceDef } from './core/methods.js';
+export type { MethodHandler, MethodCtx, RawItem, SourceDef, ViewDef, BriefTypeDef } from './core/methods.js';
 export declare const name = "rss-news-daily";
 /** 本插件对外提供的服务（cordis loaders 读取）——伴随插件经 inject 消费。 */
 export declare const provide = "rndSources";

@@ -56,7 +56,7 @@ import type { BriefType } from './brief-types.js'
 
 export { Config }
 export { RndSourceHub }
-export type { MethodHandler, MethodCtx, RawItem, SourceDef } from './core/methods.js'
+export type { MethodHandler, MethodCtx, RawItem, SourceDef, ViewDef, BriefTypeDef } from './core/methods.js'
 
 export const name = 'rss-news-daily'
 
@@ -175,23 +175,41 @@ export function apply(ctx: Context, config: ConfigType) {
   // ---- rndSources 服务：伴随插件的公开注册面（registerMethod/addSources）。
   //   源落 store 用户源层，effectiveSources 每轮重算——apply 期注册的下个抓取周期即生效。
   //   provider 源在提供方卸载后 method 查不到 → 走 unknown method → 既有健康度冷却降级。 ----
+  let sourceHub: RndSourceHub | undefined
   try {
-    new RndSourceHub(ctx, (provider: string, defs: SourceDef[]) => {
+    sourceHub = new RndSourceHub(ctx, (provider: string, defs: SourceDef[]) => {
     const existing = new Set(store.sources.map((s) => normalizeUrl(s.url)))
-    let n = 0
+    let n = 0, dirty = false
     for (const d of defs) {
       if (!d?.url || !d?.title) continue
       const key = normalizeUrl(d.url)
-      if (existing.has(key)) continue
+      const have = store.sources.find((s) => normalizeUrl(s.url) === key)
+      if (have) {
+        // 同 provider 重推：刷新 provider 拥有、用户 UI 不可编辑的字段（stream/method/tier/lang）；
+        // 用户可编辑的 title/category/enabled/summarize/proxy/cooldown 不动
+        if (have.provider === provider && (
+          have.stream !== (d.stream === true)
+          || (d.method !== undefined && have.method !== d.method)
+          || (d.tier !== undefined && have.tier !== d.tier)
+          || (d.lang !== undefined && have.lang !== d.lang)
+        )) {
+          have.stream = d.stream === true
+          if (d.method) have.method = d.method
+          if (d.tier !== undefined) have.tier = d.tier
+          if (d.lang !== undefined) have.lang = d.lang
+          dirty = true
+        }
+        continue
+      }
       store.addSource(toFeedSource({
         url: d.url, title: d.title, category: d.category, tier: d.tier, lang: d.lang,
         method: d.method ?? 'direct', enabled: d.enabled, builtin: false,
-        summarize: d.summarize, proxy: d.proxy, cooldownHours: d.cooldownHours, provider,
+        summarize: d.summarize, stream: d.stream, proxy: d.proxy, cooldownHours: d.cooldownHours, provider,
       }))
       existing.add(key)
       n += 1
     }
-    if (n) { void store.save(); log.info(`rndSources: ${provider} registered ${n} source(s)`) }
+    if (n || dirty) { void store.save(); log.info(`rndSources: ${provider} registered ${n} source(s)${dirty ? ' (+updated)' : ''}`) }
     })
   } catch (e) {
     // 非完整 cordis 宿主（stub ctx 测试/极简宿主）无 reflect 层——服务注册失败只影响伴随插件，不拖垮主插件
@@ -269,7 +287,7 @@ export function apply(ctx: Context, config: ConfigType) {
   const briefTypesOf = (): BriefType[] => resolveBriefTypes(prefs.get(), {
     enabled: prefs.get().digestOpts?.hourlyBrief ?? config.fetch.hourlyBrief,
     minScore: config.fetch.hourlyMinScore,
-  })
+  }, sourceHub?.listBriefTypes() ?? [])
   /** 各类型上次运行时刻台账（typeId → ISO）：槽位覆盖判定与候选窗口起点；持久在 store.meta.briefRuns */
   const briefRuns = () => (store.meta.briefRuns ??= {})
   // 桌面通知的点击目标：desktop 走 dsh://open 深链唤起主窗口（pending-view.json
@@ -300,6 +318,8 @@ export function apply(ctx: Context, config: ConfigType) {
     const h = String(Number(parts.find((p) => p.type === 'hour')?.value ?? 0) % 24).padStart(2, '0')
     return `${h}:${parts.find((p) => p.type === 'minute')?.value ?? '00'}`
   }
+  /** stream 源（快讯类纯流）id 集——评分/翻译/stub 判定统一剔除；每次现算（源可热改） */
+  const streamIds = () => new Set(effectiveSources(config.sources, store).filter((s) => s.stream).map((s) => s.id))
   // 按快报类型写一节：文件/节名/源/关键字/分数/条数/重点全部来自 BriefType；
   // opts.noTranslate：高峰快报用——只省翻译；概括/评分照样调 AI（峰内快报是正式质量，标「高峰·未译」）
   // opts.heuristicScores：llmScore 未评出的条目启发式兜底入选（高峰/评分关时的兜底）
@@ -310,7 +330,7 @@ export function apply(ctx: Context, config: ConfigType) {
     const digestsDir = join(dataDir, 'digests')
     await appendHourlyBrief({
       items,
-      sourcesById: new Map(effectiveSources(config.sources, store).map((src) => [src.id, { title: src.title }])),
+      sourcesById: new Map(effectiveSources(config.sources, store).map((src) => [src.id, { title: src.title, summarize: src.summarize, stream: src.stream }])),
       day, time: hm,
       minScore: t.minScore,
       digestsDir, log,
@@ -342,7 +362,8 @@ export function apply(ctx: Context, config: ConfigType) {
       let lastWarn = ''
       const slog = Object.create(log)
       slog.warn = (m: string) => { lastWarn = m; log.warn(m) }
-      const scored = await scoreNewItems(fresh, scoreClient, {
+      const streams = streamIds()
+      const scored = await scoreNewItems(fresh.filter((i) => !streams.has(i.sourceId)), scoreClient, {
         llmTimeoutMs: config.llm.timeoutMs,
         llmScoreCandidates: prefs.get().digestOpts?.llmScoreCandidates ?? config.digest.llmScoreCandidates,
         llmMaxTokens: config.llm.maxTokens,
@@ -365,7 +386,8 @@ export function apply(ctx: Context, config: ConfigType) {
     const p = prefs.get()
     const zh = p.stubLimits?.zh ?? 10, en = p.stubLimits?.en ?? 6
     const list = [...(p.contentBlocklist ?? [])]
-    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && (!opts?.until || i.fetchedAt <= opts.until) && !i.state.hidden)
+    const streams = streamIds()
+    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && (!opts?.until || i.fetchedAt <= opts.until) && !i.state.hidden && !streams.has(i.sourceId))
     const pending: FeedItem[] = []
     let dirty = false, added = false
     for (const it of fresh) {
@@ -418,12 +440,13 @@ export function apply(ctx: Context, config: ConfigType) {
   // opts.until/backlog=槽位快报用：只译 [cycleStart, until] 槽内批次、不捎带历史积压（那是抓取周期/补跑的活）
   const translateFresh = async (cycleStart: string, signal?: AbortSignal, opts?: { until?: string; backlog?: boolean }) => {
     if (!prefs.get().autoTranslate || !llmRuntime) return
-    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && (!opts?.until || i.fetchedAt <= opts.until) && !i.state.hidden && !i.state.translation && !i.aiSummary && isForeign(i))
+    const streams = streamIds()
+    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && (!opts?.until || i.fetchedAt <= opts.until) && !i.state.hidden && !i.state.translation && !i.aiSummary && !streams.has(i.sourceId) && isForeign(i))
     // 历史失败重试：translationError 且未超次数的旧条目每轮捎带一批；限量防长尾占满抓取周期
     // 外文未翻全部进重试（早退轮次不打 error 标记的条目也会搁浅——不能只挑有 error 的）
     const backlog = opts?.backlog === false ? [] : store.items
       .filter((i) => i.fetchedAt < cycleStart && !i.state.hidden && !i.state.translation && !i.aiSummary
-        && (i.state.translationRetries ?? 0) < 3 && isForeign(i))
+        && (i.state.translationRetries ?? 0) < 3 && !streams.has(i.sourceId) && isForeign(i))
       .slice(0, 50)
     const queue = [...fresh, ...backlog]
     if (queue.length && !signal?.aborted) fetchProg = { running: true, done: 0, total: queue.length, stage: 'translate', current: '' }
@@ -1266,6 +1289,7 @@ export function apply(ctx: Context, config: ConfigType) {
         },
         onApiHit: () => { uiActive.apiAt = Date.now() },
         onGesture: () => { uiActive.gestureAt = Date.now() },
+        listViews: () => sourceHub?.listViews() ?? [],
         bootMark,
       }))
       bootMark('mountApi registered')

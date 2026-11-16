@@ -66,6 +66,32 @@ export interface SourceDef {
   enabled?: boolean
   /** 条目是否生成 AI 逐条摘要（默认 true；快讯类建议 false） */
   summarize?: boolean
+  /** 纯流源：只入库+展示，全程不碰 AI（评分/摘要/翻译/stub 判定），不进日报/通配快报 */
+  stream?: boolean
   proxy?: string | boolean
   cooldownHours?: number
+}
+
+/** registerView 入参：伴随插件给阅读器贡献的 iframe 视图（页自己挂在 webServer 下） */
+export interface ViewDef {
+  /** 视图 id（同一 provider 内唯一；tab id 用） */
+  id: string
+  /** tab 显示名 */
+  title: string
+  /** 页面地址——通常是本插件 webServer 挂载路径，如 '/dsh-news-kuaixun/' */
+  url: string
+}
+
+/** registerBriefType 入参：伴随插件注册快报类型（字段同 prefs.briefTypes 元素，id 冲突时用户已存配置优先） */
+export interface BriefTypeDef {
+  id: string
+  name: string
+  enabled?: boolean
+  schedule: { kind: 'minutes'; everyMinutes: number } | { kind: 'hourly'; minute: number } | { kind: 'daily'; time: string }
+  /** 显式点名的源 id 集（空=全部启用源；stream 源只能这样进快报） */
+  sourceIds?: string[]
+  keywords?: string[]
+  minScore?: number
+  maxItems?: number
+  focus?: string
 }

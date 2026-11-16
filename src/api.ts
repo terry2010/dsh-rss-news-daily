@@ -22,7 +22,7 @@ import { backupDirOf, runBackupZip, stageRestore, type BackupStore } from './bac
 import { zonedDayKey } from './core/time.js'
 import { parseTune, learnFromFeedback } from './core/tune.js'
 import { normalizeTopicParams, listTopics, deleteTopic, exportTopic, topicsDirOf, type TopicParams } from './topic-pipeline.js'
-import { briefFileFor, briefScheduleText, briefsDirOf, mergeBriefMarkdown, newBriefTypeId, normalizeBriefType, resolveBriefTypes } from './brief-types.js'
+import { briefFileFor, briefScheduleText, briefsDirOf, mergeBriefMarkdown, newBriefTypeId, normalizeBriefType, normalizeBriefTypes, resolveBriefTypes } from './brief-types.js'
 import type { BriefType } from './brief-types.js'
 
 const BASE = '/dsh-rss-news-daily'
@@ -104,6 +104,8 @@ export interface ApiDeps {
   onApiHit?: () => void
   /** 用户真实手势信号：前端只在最近 60s 内有鼠标/键盘/滚动/触屏交互时在 status 轮询上带 act=1——区分"页面挂机"和"人在用" */
   onGesture?: () => void
+  /** 伴随插件注册的阅读器视图（/api/views；iframe tab 列表） */
+  listViews?: () => Array<{ id: string; title: string; url: string; provider?: string }>
   /** 启动时间线打点（devlog/boot.log）——定位冷启动占位屏的真实空档 */
   bootMark?: (mark: string) => void
   /** 内置「时段快报」种子参数（svc.listBriefTypes 缺失时的回落——测试挂载可省略） */
@@ -303,7 +305,10 @@ function apiBriefTypes(deps: ApiDeps) {
     }
     if (method === 'DELETE') {
       if (idx < 0) return sendJson(res, 404, { ok: false, error: '快报类型不存在' })
-      types.splice(idx, 1)
+      // 注册类型（伴随插件提供、prefs 未固化）删除 → enabled:false 墓碑；否则下次 resolve 又被注册表复活
+      const inPrefs = (normalizeBriefTypes(deps.prefs.get().briefTypes) ?? []).some((t) => t.id === id)
+      if (inPrefs) types.splice(idx, 1)
+      else types[idx] = { ...types[idx], enabled: false }
       saveBriefTypes(deps, types)
       return sendJson(res, 200, { ok: true })
     }
@@ -654,6 +659,7 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
   }) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/feedback`, handler: guard(apiFeedback(deps)) }))
   disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/sources`, handler: guard((q, r) => apiSources(deps)(q, r, '')) }))
+  disposers.push(ws.register({ kind: 'exact', path: `${BASE}/api/views`, handler: guard((_q, r) => sendJson(r, 200, { ok: true, views: deps.listViews?.() ?? [] })) }))
   disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/api/sources`, handler: guard((q, r) => apiSources(deps)(q, r, (q.url || '').replace(`${BASE}/api/sources`, '').replace(/^\//, ''))) }))
   // AI 专题：prefix 一条覆盖 /topics、/topics/preview、/topics/<id>/<act>
   disposers.push(ws.register({ kind: 'prefix', path: `${BASE}/api/topics`, handler: guard((q, r) => apiTopics(deps)(q, r, (q.url || '').replace(`${BASE}/api/topics`, '').replace(/^\//, '').split('?')[0])) }))

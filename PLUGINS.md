@@ -51,6 +51,8 @@ export function apply(ctx: Context) {
 | `apiVersion` | `number` | 当前 `1`。首行检查，版本不符优雅退出 |
 | `registerMethod` | `(name, handler) => void` | 注册抓取 handler；约定 `'<包名>:<方法>'` 命名空间；**重名抛错** |
 | `addSources` | `(provider, defs) => void` | 注入源定义；`provider` 传自己的 `export const name`——卸载后遗留源可识别/清理 |
+| `registerBriefType` | `(provider, def) => void` | 注册快报类型（如「快讯快报」）；同 id 时用户已存配置优先 |
+| `registerView` | `(provider, view) => void` | 给阅读器顶栏贡献 iframe tab；页自己挂 `webServer` 路由 |
 
 ### MethodHandler
 
@@ -87,10 +89,40 @@ interface SourceDef {
   lang?: 'zh' | 'en'
   enabled?: boolean            // 缺省 true
   summarize?: boolean          // 缺省 true；快讯类建议 false（单条即完整信息，省 token）
+  stream?: boolean             // 缺省 false；true=纯流源：正常入库/展示，但不进 LLM 评分、
+                               //   翻译、正文补抓、日报与 wildcard 快报——只能被快报类型
+                               //   经 sourceIds 显式点名（见 registerBriefType）
   proxy?: string | boolean     // 'url'=指定代理；true=走全局代理
   cooldownHours?: number       // 连续失败时的源级冷却（覆盖默认 24h）
 }
 ```
+
+### BriefTypeDef / ViewDef
+
+```ts
+interface BriefTypeDef {
+  id: string                   // 唯一；用户在同 id 上已存的配置优先（启停/改名/改频率生效）
+  name: string
+  enabled?: boolean            // 缺省 true
+  schedule: { kind: 'minutes'; everyMinutes: number }
+          | { kind: 'hourly'; minute: number }
+          | { kind: 'daily'; time: string }   // 'HH:mm'
+  sourceIds?: string[]         // 显式点名源 id——stream 源只能这样进快报
+  keywords?: string[]
+  minScore?: number            // 入选分阈值；stream 源未评分条目按 0 计，要收就传 0
+  maxItems?: number
+  focus?: string               // 给 LLM 的写作侧重提示
+}
+
+interface ViewDef {
+  id: string                   // tab id（前缀 view- 加在 DOM 上）
+  title: string                // 顶栏显示名
+  url: string                  // 本插件 webServer 挂载路径，如 '/dsh-news-kuaixun/'
+}
+```
+
+视图页由伴随插件经 `ctx.inject(['webServer'], ...)` 自挂路由提供，主阅读器 iframe 载入。
+主题同步：首帧 URL 带 `?theme=light|dark`，运行时经 `postMessage({type:'rnd-theme', theme})` 跟随。
 
 ## 行为契约
 
