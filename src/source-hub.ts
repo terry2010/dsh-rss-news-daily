@@ -1,11 +1,12 @@
 /**
  * rndSources 服务：伴随插件的公开注册面。
  *
- * 伴随插件 `export const inject = ['rndSources']` 后在本服务上可做四件事：
+ * 伴随插件 `export const inject = ['rndSources']` 后在本服务上可做五件事：
  *   - registerMethod('<包名>:<方法>', handler)  注册非标抓取 handler
  *   - addSources('<包名>', defs)                注入源定义（provider 落源上，卸载可识别）
  *   - registerBriefType('<包名>', def)          注册快报类型（id 冲突时用户已存配置优先）
  *   - registerView('<包名>', view)              给阅读器顶部贡献 iframe tab（页挂自己 webServer 路由）
+ *   - notify(title, body, path)                 请求桌面通知（与快报同一通道；path=点击打开的阅读器路径）
  *
  * 调度/解析/去重/健康度/存储/日报管线全部归主插件——伴随插件只「给数据」。
  * 公开 API 面，签名进 semver；apiVersion 供伴随插件首行检查。
@@ -34,6 +35,7 @@ export class RndSourceHub extends Service {
 
   private readonly views = new Map<string, RegisteredView>()   // `${provider}:${id}` → view
   private readonly briefTypes = new Map<string, BriefType>()   // id → type（注册表为准，prefs 同 id 覆盖）
+  private notifier?: (title: string, body: string, path?: string) => void
 
   constructor(
     ctx: Context,
@@ -79,5 +81,18 @@ export class RndSourceHub extends Service {
   /** 注册的快报类型（resolveBriefTypes 与 prefs 类型合并；prefs 同 id 优先） */
   listBriefTypes(): BriefType[] {
     return [...this.briefTypes.values()]
+  }
+
+  /** 主插件注入通知实现（index.ts 在 notifyBrief 定义后回填）。伴随插件不直接摸 desktopNotify。 */
+  setNotifier(fn: (title: string, body: string, path?: string) => void): void {
+    this.notifier = fn
+  }
+
+  /**
+   * 桌面通知（与时段快报同一通道：prefs.notifyDesktop 门控 + RndNotify/osascript 降级）。
+   * path 为阅读器内路径（如 '/dsh-news-kuaixun/'），点击通知时打开对应页面；空则不可点击。
+   */
+  notify(title: string, body: string, path?: string): void {
+    try { this.notifier?.(title, body, path) } catch { /* 通知失败不影响抓取 */ }
   }
 }

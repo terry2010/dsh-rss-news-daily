@@ -53,6 +53,7 @@ export function apply(ctx: Context) {
 | `addSources` | `(provider, defs) => void` | 注入源定义；`provider` 传自己的 `export const name`——卸载后遗留源可识别/清理 |
 | `registerBriefType` | `(provider, def) => void` | 注册快报类型（如「快讯快报」）；同 id 时用户已存配置优先 |
 | `registerView` | `(provider, view) => void` | 给阅读器顶栏贡献 iframe tab；页自己挂 `webServer` 路由 |
+| `notify` | `(title, body, path?) => void` | 桌面通知（与时段快报同一通道，受 `notifyDesktop` 偏好门控）；`path` 为阅读器内路径，点击通知打开对应页面 |
 
 ### MethodHandler
 
