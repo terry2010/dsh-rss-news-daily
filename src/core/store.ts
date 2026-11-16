@@ -190,6 +190,8 @@ export interface StoreLike {
   save(): Promise<void>
   addItems(items: FeedItem[]): number
   addSource(source: FeedSource): void
+  /** 只删源记录不动条目——改 URL 换 id 时清旧行（缺省实现的宿主可没有） */
+  deleteSourceRow?(id: string): void | Promise<void>
   /** SqliteStore 为分块删除+让渡是异步的 */
   removeItemsBySource(sourceId: string): number | Promise<number>
   removeSource(id: string): boolean | Promise<boolean>
@@ -349,7 +351,16 @@ export class Store {
   // ---- sources ----
 
   addSource(source: FeedSource): void {
-    this.data.sources.push(source)
+    // upsert by id：与 SqliteStore.addSource 的 INSERT OR REPLACE 同语义——调用方拿
+    // 内存对象改完再 addSource 是合法的写穿透姿势（sqlite save() 不写 sources 表）
+    const i = this.data.sources.findIndex((s) => s.id === source.id)
+    if (i >= 0) this.data.sources[i] = source; else this.data.sources.push(source)
+  }
+
+  /** 只删源记录、不动条目（改 URL 换 id 时清旧行用；removeSource 会连删条目，语义不同） */
+  deleteSourceRow(id: string): void {
+    const i = this.data.sources.findIndex((s) => s.id === id)
+    if (i >= 0) this.data.sources.splice(i, 1)
   }
 
   removeSource(id: string): boolean {

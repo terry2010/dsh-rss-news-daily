@@ -95,6 +95,8 @@ export interface StoreLike {
     save(): Promise<void>;
     addItems(items: FeedItem[]): number;
     addSource(source: FeedSource): void;
+    /** 只删源记录不动条目——改 URL 换 id 时清旧行（缺省实现的宿主可没有） */
+    deleteSourceRow?(id: string): void | Promise<void>;
     /** SqliteStore 为分块删除+让渡是异步的 */
     removeItemsBySource(sourceId: string): number | Promise<number>;
     removeSource(id: string): boolean | Promise<boolean>;
@@ -135,6 +137,8 @@ export declare class Store {
     /** Rename a corrupt file aside so the original is moved, not copied. */
     private quarantine;
     addSource(source: FeedSource): void;
+    /** 只删源记录、不动条目（改 URL 换 id 时清旧行用；removeSource 会连删条目，语义不同） */
+    deleteSourceRow(id: string): void;
     removeSource(id: string): boolean;
     removeItemsBySource(sourceId: string): number;
     /** Append items not yet present by id, marking duplicates by identity. */

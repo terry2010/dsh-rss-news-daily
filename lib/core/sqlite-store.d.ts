@@ -137,6 +137,8 @@ export declare class SqliteStore {
     setHealth(id: string, health: FeedSource['health']): void;
     getHealth(id: string): import("./types.js").SourceHealth;
     addSource(source: FeedSource): void;
+    /** 只删源行不动条目（save() 不写 sources 表——源变更的持久化全走即时 SQL 通道） */
+    deleteSourceRow(id: string): void;
     /** 按源分块删除：sourceId 索引批取 id→DELETE→让渡——单语句 DELETE 在百万级匹配时
         是分钟级冻结+巨型 WAL（计数器/FTS 触发器逐行触发）。源删除=用户明确不要了，不归档。 */
     removeItemsBySource(sourceId: string): Promise<number>;
