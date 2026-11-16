@@ -28,5 +28,7 @@ export interface FetcherOptions {
 /** Create a fetch function with the given policies. */
 export declare function createFetcher(options?: FetcherOptions): (url: string, signal?: AbortSignal, init?: {
     proxy?: string | boolean;
+    headers?: Record<string, string>;
+    accept?: string;
 }) => Promise<FetchedDocument | FetchFailure>;
 //# sourceMappingURL=fetcher.d.ts.map

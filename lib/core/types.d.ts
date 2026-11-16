@@ -26,8 +26,10 @@ export interface FeedSource {
     tier: 1 | 2 | 3;
     /** 主要语言 */
     lang: 'zh' | 'en';
-    /** 抓取方式（预留 reader/镜像） */
+    /** 抓取方式（'direct'=常规 RSS；其余经 rndSources.registerMethod 注册的伴随插件 handler） */
     method: string;
+    /** 伴随插件来源标识（rndSources.addSources 注入的插件 id）；缺失=用户/内置源 */
+    provider?: string;
     /** 内置目录源 */
     builtin: boolean;
     /** 用户权重微调（prefs.sourceWeight 合并结果，默认 1） */

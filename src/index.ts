@@ -23,7 +23,9 @@ import type { Config as ConfigType } from './config.js'
 import { Store } from './core/store.js'
 import { PrefsStore } from './core/prefs.js'
 import { createFetcher } from './core/fetcher.js'
-import { effectiveSources, runFetchCycle, addSource, previewSource, removeSource, restoreBuiltinSource, setSourceEnabled, setSourceSummarize, updateSource, importOpml, exportOpml } from './service.js'
+import { effectiveSources, runFetchCycle, addSource, previewSource, removeSource, restoreBuiltinSource, setSourceEnabled, setSourceSummarize, updateSource, importOpml, exportOpml, toFeedSource } from './service.js'
+import { RndSourceHub } from './source-hub.js'
+import type { SourceDef } from './core/methods.js'
 import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
@@ -53,8 +55,13 @@ import { briefDue, briefFileOf, briefWindowStart, nextBriefMs, resolveBriefTypes
 import type { BriefType } from './brief-types.js'
 
 export { Config }
+export { RndSourceHub }
+export type { MethodHandler, MethodCtx, RawItem, SourceDef } from './core/methods.js'
 
 export const name = 'rss-news-daily'
+
+/** 本插件对外提供的服务（cordis loaders 读取）——伴随插件经 inject 消费。 */
+export const provide = 'rndSources'
 
 /** 静态依赖：定时调度与模型工具——缺了核心不成立。
  *  webServer/llm 走 ctx.inject 可选声明（无 webServer 的 headless profile 也要能加载）。 */
@@ -165,6 +172,31 @@ export function apply(ctx: Context, config: ConfigType) {
   })
   const sources = effectiveSources(config.sources, store)
   const enabledCount = sources.filter((s) => s.enabled).length
+  // ---- rndSources 服务：伴随插件的公开注册面（registerMethod/addSources）。
+  //   源落 store 用户源层，effectiveSources 每轮重算——apply 期注册的下个抓取周期即生效。
+  //   provider 源在提供方卸载后 method 查不到 → 走 unknown method → 既有健康度冷却降级。 ----
+  try {
+    new RndSourceHub(ctx, (provider: string, defs: SourceDef[]) => {
+    const existing = new Set(store.sources.map((s) => normalizeUrl(s.url)))
+    let n = 0
+    for (const d of defs) {
+      if (!d?.url || !d?.title) continue
+      const key = normalizeUrl(d.url)
+      if (existing.has(key)) continue
+      store.addSource(toFeedSource({
+        url: d.url, title: d.title, category: d.category, tier: d.tier, lang: d.lang,
+        method: d.method ?? 'direct', enabled: d.enabled, builtin: false,
+        summarize: d.summarize, proxy: d.proxy, cooldownHours: d.cooldownHours, provider,
+      }))
+      existing.add(key)
+      n += 1
+    }
+    if (n) { void store.save(); log.info(`rndSources: ${provider} registered ${n} source(s)`) }
+    })
+  } catch (e) {
+    // 非完整 cordis 宿主（stub ctx 测试/极简宿主）无 reflect 层——服务注册失败只影响伴随插件，不拖垮主插件
+    log.warn(`rndSources service unavailable: ${(e as Error).message}`)
+  }
   let fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }
   let digestProg = { running: false, done: 0, total: 0, stage: '' }
   // ---- 进度 ETA：优先本轮实测速率（自动吸收并发/排队），冷启动退 purpose EMA；非 LLM 阶段无兜底只认实测 ----

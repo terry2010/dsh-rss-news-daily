@@ -32,6 +32,21 @@ export interface FetchCycleOptions {
 }
 /** URL 规范化：去追踪参数（utm_、fbclid、gclid 等）与结尾斜杠（OPML/源去重共用） */
 export declare function normalizeUrl(raw: string): string;
+export declare function toFeedSource(raw: {
+    url: string;
+    title: string;
+    category?: string;
+    tier?: number;
+    lang?: 'zh' | 'en';
+    method?: string;
+    enabled?: boolean;
+    builtin?: boolean;
+    addedAt?: string;
+    summarize?: boolean;
+    proxy?: string | boolean;
+    cooldownHours?: number;
+    provider?: string;
+}): FeedSource;
 /** 生效源表：内置 ∪ config 预置 ∪ store 用户源，按规范化 URL 合并（用户覆盖内置）。 */
 export declare function effectiveSources(configSources: Array<{
     url: string;

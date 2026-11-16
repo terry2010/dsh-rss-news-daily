@@ -12,8 +12,13 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { Config } from './config.js';
 import type { Config as ConfigType } from './config.js';
+import { RndSourceHub } from './source-hub.js';
 export { Config };
+export { RndSourceHub };
+export type { MethodHandler, MethodCtx, RawItem, SourceDef } from './core/methods.js';
 export declare const name = "rss-news-daily";
+/** 本插件对外提供的服务（cordis loaders 读取）——伴随插件经 inject 消费。 */
+export declare const provide = "rndSources";
 /** 静态依赖：定时调度与模型工具——缺了核心不成立。
  *  webServer/llm 走 ctx.inject 可选声明（无 webServer 的 headless profile 也要能加载）。 */
 export declare const inject: string[];

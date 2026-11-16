@@ -10,12 +10,13 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { FeedItem, FeedSource, FetchCycleResult, LogSink, SourceFetchResult } from './core/types.js'
+import type { FeedItem, FeedSource, FetchCycleResult, LogSink, ParsedFeed, SourceFetchResult } from './core/types.js'
 import { noopLog, isStaleItem } from './core/types.js'
 import { parseFeedDocument, stripHtml, stripLeadStub, truncateCodePoints } from './core/parser.js'
 import { itemHash, tokenizeTitle, tokenSetSimilarity } from './core/dedupe.js'
 import type { StoreLike } from './core/store.js'
 import type { createFetcher } from './core/fetcher.js'
+import { methodHandler, methodKv } from './core/methods.js'
 
 export interface FetchCycleOptions {
   /** 手动抓取：绕过 24h 冷却重试失败源（调度路径不传） */
@@ -83,9 +84,10 @@ function sourceIdOf(url: string): string {
   return normalizeUrl(url)
 }
 
-function toFeedSource(raw: {
+export function toFeedSource(raw: {
   url: string; title: string; category?: string; tier?: number; lang?: 'zh' | 'en'
   method?: string; enabled?: boolean; builtin?: boolean; addedAt?: string; summarize?: boolean; proxy?: string | boolean; cooldownHours?: number
+  provider?: string
 }): FeedSource {
   return {
     id: sourceIdOf(raw.url),
@@ -97,6 +99,7 @@ function toFeedSource(raw: {
     tier: (raw.tier === 1 || raw.tier === 2 || raw.tier === 3 ? raw.tier : 3) as 1 | 2 | 3,
     lang: raw.lang || 'en',
     method: raw.method || 'direct',
+    provider: raw.provider,
     builtin: raw.builtin === true,
     weight: 1,
     summarize: raw.summarize !== false,
@@ -220,9 +223,24 @@ async function fetchOne(
   const t0 = performance.now()
   const res: SourceFetchResult = { sourceId: src.id, sourceUrl: src.url, fetched: 0, added: 0, duplicated: 0 }
   try {
-    const doc = await opts.fetch(src.url, opts.signal, { proxy: src.proxy })
-    if ('error' in doc) throw new Error(doc.error)
-    const feed = parseFeedDocument(doc.body)
+    // method!=='direct' → 查伴随插件注册表；handler 返回 RawItem[] 补齐默认后与 RSS 路径汇合
+    let feed: ParsedFeed
+    if (src.method && src.method !== 'direct') {
+      const h = methodHandler(src.method)
+      if (!h) throw new Error(`unknown method: ${src.method}`)
+      const raw = await h(src, { fetch: opts.fetch, log: opts.log ?? noopLog, signal: opts.signal, kv: methodKv(opts.store, src.id) })
+      feed = {
+        title: src.title,
+        items: raw.map((r) => ({
+          id: r.id ?? '', title: r.title, link: r.link ?? '', summary: r.summary ?? '',
+          content: r.content ?? '', publishedAt: r.publishedAt ?? '',
+        })),
+      }
+    } else {
+      const doc = await opts.fetch(src.url, opts.signal, { proxy: src.proxy })
+      if ('error' in doc) throw new Error(doc.error)
+      feed = parseFeedDocument(doc.body)
+    }
     const { seen, seenHash, known, inverted } = dedupe // 每周期共享——跨源同周期近似重复也被拦（比逐源重建更强）
     const threshold = Math.max(0, Math.min(1, opts.dedupeThreshold))
     const fresh: FeedItem[] = []

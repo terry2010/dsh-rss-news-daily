@@ -173,7 +173,7 @@ export function createFetcher(options: FetcherOptions = {}) {
   const retries = options.retries ?? DEFAULT_RETRIES
   const userAgent = options.userAgent ?? DEFAULT_USER_AGENT
 
-  const fetchOne = async (url: string, signal?: AbortSignal, init?: { proxy?: string | boolean }): Promise<FetchedDocument | FetchFailure> => {
+  const fetchOne = async (url: string, signal?: AbortSignal, init?: { proxy?: string | boolean; headers?: Record<string, string>; accept?: string }): Promise<FetchedDocument | FetchFailure> => {
     const dispatcher = await resolveDispatcher(init?.proxy, typeof options.proxyUrl === 'function' ? options.proxyUrl() : options.proxyUrl)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -190,7 +190,9 @@ export function createFetcher(options: FetcherOptions = {}) {
         response = await fetchImpl(current, {
           headers: {
             'user-agent': userAgent,
-            accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+            accept: init?.accept ?? 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+            // 非标抓取（伴随插件 adapter）自定义头：Referer/Origin/x-app-id 等逐键覆盖
+            ...init?.headers,
           },
           redirect: 'manual',
           signal: combined,
@@ -233,7 +235,7 @@ export function createFetcher(options: FetcherOptions = {}) {
    * Fetch a URL, returning a document or a structured failure. `signal`
    * aborts the whole attempt chain; only transient failures are retried.
    */
-  return async function fetchDocument(url: string, signal?: AbortSignal, init?: { proxy?: string | boolean }): Promise<FetchedDocument | FetchFailure> {
+  return async function fetchDocument(url: string, signal?: AbortSignal, init?: { proxy?: string | boolean; headers?: Record<string, string>; accept?: string }): Promise<FetchedDocument | FetchFailure> {
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       const result = await fetchOne(url, signal, init)
       if (!('error' in result)) return result

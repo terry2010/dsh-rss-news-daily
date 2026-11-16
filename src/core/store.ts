@@ -110,6 +110,7 @@ export function normalizeStoreData(value: unknown): StoreData | null {
       lastDigestDay: typeof meta.lastDigestDay === 'string' ? meta.lastDigestDay : '',
       ...(typeof meta.peakDefer === 'object' && meta.peakDefer !== null ? { peakDefer: meta.peakDefer as StoreMeta['peakDefer'] } : {}), // 高峰欠账台账：JSON 后端重启不丢
       ...(typeof meta.briefRuns === 'object' && meta.briefRuns !== null ? { briefRuns: meta.briefRuns as Record<string, string> } : {}), // 快报类型槽位台账：重启不丢 lastRun
+      ...(typeof meta.methodState === 'object' && meta.methodState !== null ? { methodState: meta.methodState as Record<string, Record<string, string>> } : {}), // adapter 游标 kv：JSON 后端重启不丢
     },
     sources,
     items,
