@@ -7,6 +7,7 @@
  *   - registerBriefType('<包名>', def)          注册快报类型（id 冲突时用户已存配置优先）
  *   - registerView('<包名>', view)              给阅读器顶部贡献 iframe tab（页挂自己 webServer 路由）
  *   - notify(title, body, path)                 请求桌面通知（与快报同一通道；path=点击打开的阅读器路径）
+ *   - removeSources(provider)                   清掉自己注入过的源及其条目（伴随插件转向独立存储时的卸载通道）
  *
  * 调度/解析/去重/健康度/存储/日报管线全部归主插件——伴随插件只「给数据」。
  * 公开 API 面，签名进 semver；apiVersion 供伴随插件首行检查。
@@ -40,6 +41,7 @@ export class RndSourceHub extends Service {
   constructor(
     ctx: Context,
     private readonly addSourcesImpl: (provider: string, defs: SourceDef[]) => void,
+    private readonly removeSourcesImpl?: (provider: string) => Promise<number>,
   ) {
     super(ctx, 'rndSources')
   }
@@ -56,6 +58,17 @@ export class RndSourceHub extends Service {
   /** provider = 调用方插件 id（传自己的 export const name）——卸载后遗留源可识别/禁用/清理 */
   addSources(provider: string, defs: SourceDef[]): void {
     this.addSourcesImpl(provider, defs)
+  }
+
+  /**
+   * 删除 provider 名下的全部源及其条目（幂等）。
+   * 伴随插件从「注入主库」转向「独立存储」时调用，把历史数据从主库清干净。
+   * 返回删除的源数；主插件未注入实现时返回 0。
+   */
+  async removeSources(provider: string): Promise<number> {
+    if (!this.removeSourcesImpl) return 0
+    try { return await this.removeSourcesImpl(provider) }
+    catch (e) { this.ctx.logger('rndSources').warn(`removeSources(${provider}) failed: ${(e as Error).message}`); return 0 }
   }
 
   /** 注册快报类型（如「快讯快报」）。def 经 normalizeBriefType 消毒；同名后注册覆盖（同 provider 幂等重注册安全）。 */

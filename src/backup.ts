@@ -4,7 +4,7 @@
  */
 
 import { cpSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { cp, mkdir, readdir, rm } from 'node:fs/promises'
+import { cp, mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { zipEntries, unzipEntries, type ZipEntry } from './core/zip.js'
@@ -50,6 +50,20 @@ export async function runBackupZip(dataDir: string, store: BackupStore, destDir:
   if (existsSync(ddir)) {
     for (const f of (await readdir(ddir)).filter((f) => f.endsWith('.md')).sort())
       entries.push({ name: `digests/${f}`, data: readFileSync(join(ddir, f)) })
+  }
+
+  // 伴随插件独立数据（companions/<provider>/…：独立 sqlite/alerts.json 等）——
+  // 递归打包；journal_mode=DELETE 的单文件库无 WAL 伴生，整文件拷贝即一致快照
+  const compDir = join(dataDir, 'companions')
+  if (existsSync(compDir)) {
+    const walk = async (dir: string, prefix: string): Promise<void> => {
+      for (const e of await readdir(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name)
+        if (e.isDirectory()) await walk(p, `${prefix}${e.name}/`)
+        else if (e.isFile()) entries.push({ name: `companions/${prefix}${e.name}`, data: await readFile(p) })
+      }
+    }
+    await walk(compDir, '')
   }
 
   writeFileSync(zipPath, zipEntries(entries))
@@ -100,6 +114,11 @@ export function applyPendingRestore(dataDir: string, log?: { info: (m: string) =
     if (existsSync(pd)) {
       rmSync(join(dataDir, 'digests'), { recursive: true, force: true })
       cpSync(pd, join(dataDir, 'digests'), { recursive: true })
+    }
+    const pc = join(pending, 'companions')
+    if (existsSync(pc)) {
+      rmSync(join(dataDir, 'companions'), { recursive: true, force: true })
+      cpSync(pc, join(dataDir, 'companions'), { recursive: true })
     }
     rmSync(pending, { recursive: true, force: true })
     log?.info('restore applied from pending stage')

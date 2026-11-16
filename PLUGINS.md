@@ -54,6 +54,7 @@ export function apply(ctx: Context) {
 | `registerBriefType` | `(provider, def) => void` | 注册快报类型（如「快讯快报」）；同 id 时用户已存配置优先 |
 | `registerView` | `(provider, view) => void` | 给阅读器顶栏贡献 iframe tab；页自己挂 `webServer` 路由 |
 | `notify` | `(title, body, path?) => void` | 桌面通知（与时段快报同一通道，受 `notifyDesktop` 偏好门控）；`path` 为阅读器内路径，点击通知打开对应页面 |
+| `removeSources` | `(provider) => Promise<number>` | 删除自己注入过的源及其全部条目（幂等）；伴随插件转向独立存储时调用清理主库 |
 
 ### MethodHandler
 

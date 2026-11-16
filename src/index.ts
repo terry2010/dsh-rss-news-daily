@@ -56,6 +56,7 @@ import type { BriefType } from './brief-types.js'
 
 export { Config }
 export { RndSourceHub }
+export { createFetcher } from './core/fetcher.js' // 伴随插件自建抓取管线时复用主插件策略 fetcher（SSRF/超时/代理）
 export type { MethodHandler, MethodCtx, RawItem, SourceDef, ViewDef, BriefTypeDef } from './core/methods.js'
 
 export const name = 'rss-news-daily'
@@ -216,6 +217,17 @@ export function apply(ctx: Context, config: ConfigType) {
       n += 1
     }
     if (n || dirty) { void store.save(); log.info(`rndSources: ${provider} registered ${n} source(s)${dirty ? ' (+updated)' : ''}`) }
+    }, async (provider: string) => {
+    // 伴随插件卸载主库数据（转独立存储）：删 provider 名下源行+连带条目+methodState 游标
+    const doomed = store.sources.filter((s) => s.provider === provider)
+    let n = 0
+    for (const s of doomed) {
+      if (await store.removeSource(s.id)) n += 1
+      const ms = (store.meta as { methodState?: Record<string, Record<string, string>> }).methodState
+      if (ms) delete ms[s.id]
+    }
+    if (n) { void store.save(); log.info(`rndSources: ${provider} removed ${n} source(s) + items`) }
+    return n
     })
   } catch (e) {
     // 非完整 cordis 宿主（stub ctx 测试/极简宿主）无 reflect 层——服务注册失败只影响伴随插件，不拖垮主插件
