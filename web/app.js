@@ -1186,7 +1186,8 @@ $('#btnTopicNew').addEventListener('click', () => {
   const today = new Date(), d30 = new Date(); d30.setDate(d30.getDate() - 30)
   $('#tpFrom').value = dayStr(d30); $('#tpTo').value = dayStr(today) // 默认近30天
   $('#tpMinScore').value = '0'; $('#tpMaxItems').value = '100'
-  tpSel.clear(); for (const s of state.sources || []) tpSel.add(s.id) // 默认全选
+  // 新专题默认选全部普通源；快讯 stream 源须由用户主动勾选，避免进入专题候选/摘要。
+  tpSel.clear(); for (const s of state.sources || []) if (!s.stream) tpSel.add(s.id)
   tpSrcListShow(false) // 源列表收起：点头行/输入框再展开
   renderTpSrcs()
   $('#topicModal').hidden = false
@@ -1209,7 +1210,7 @@ async function openTopicEdit(id) {
     $('#tpMinScore').value = String(m.minScore ?? 0); $('#tpMaxItems').value = String(m.maxItems ?? 100)
     tpSel.clear()
     if (m.sourceIds?.length) for (const s of m.sourceIds) tpSel.add(s)
-    else for (const s of state.sources || []) tpSel.add(s.id)
+    else for (const s of state.sources || []) if (!s.stream) tpSel.add(s.id)
     tpSrcListShow(false); renderTpSrcs()
     $('#topicModal').hidden = false
     $('#tpKeywords').focus()

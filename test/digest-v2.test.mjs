@@ -211,6 +211,27 @@ test('v2: LLM 语义聚类——措辞不同的同事件合并', async () => {
   assert.match(doc.markdown, /同题 2 家报道/)
 })
 
+test('v2: stream 快讯源不进日报候选/评分/总结', async () => {
+  const { runDailyDigest } = await import('../lib/digest-pipeline.js')
+  const store = await mkStore([
+    mkItem(1, { title: '普通新闻标题' }),
+    mkItem(2, { title: '快讯流标题', sourceId: 'flash-src' }),
+  ])
+  store.addSource({
+    id: 'flash-src', url: 'https://flash.example/feed', title: '快讯源', category: '快讯',
+    enabled: true, builtin: false, summarize: false, stream: true, method: 'test:flash', lang: 'zh',
+    weight: 1, tier: 3, addedAt: '', health: { ok: 1, fail: 0, failStreak: 0 },
+  })
+  const seenPrompts = []
+  const doc = await runDailyDigest(mkOpts(store, {
+    llmClient: mkClient((req) => { seenPrompts.push(req.prompt); return blocksHandler(req) }),
+  }))
+  assert.equal(doc.itemCount, 1)
+  assert.match(doc.markdown, /普通新闻标题/)
+  assert.doesNotMatch(doc.markdown, /快讯流标题/)
+  assert.ok(seenPrompts.every((p) => !p.includes('快讯流标题')), 'stream 条目不应进入 LLM 评分/总结 prompt')
+})
+
 test('textLooksForeign: 中文标题夹带英文型号不再误判外文', async () => {
   const { textLooksForeign } = await import('../lib/digest-pipeline.js')
   // 真实误判案例：中文标题 + Windows/8GB/16GB 型号名 → 不应送翻译
