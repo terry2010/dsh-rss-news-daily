@@ -185,6 +185,15 @@ test('api: /api/items 分页与 day 过滤', async () => {
   const localDay = `${ld.getFullYear()}-${String(ld.getMonth() + 1).padStart(2, '0')}-${String(ld.getDate()).padStart(2, '0')}`
   await items(mkReq('GET', `/dsh-rss-news-daily/api/items?day=${localDay}`), res)
   assert.equal(JSON.parse(res.body).items.length, 1, 'day 过滤只留今天的')
+
+  res = mkRes()
+  const after = new Date(Date.now() - 3600e3).toISOString()
+  await items(mkReq('GET', `/dsh-rss-news-daily/api/items?after=${encodeURIComponent(after)}`), res)
+  const ranged = JSON.parse(res.body)
+  assert.deepEqual(ranged.items.map((i) => i.id), ['b'], 'after 过滤掉 2020 老条目，hidden 仍剔除')
+  res = mkRes()
+  await items(mkReq('GET', '/dsh-rss-news-daily/api/items?before=2021-01-01T00:00:00.000Z'), res)
+  assert.deepEqual(JSON.parse(res.body).items.map((i) => i.id), ['a'], 'before 只留 2020 老条目')
 })
 
 test('api: serveStatic 路径消毒——../ 与不存在返回 404', async () => {
