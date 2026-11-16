@@ -1339,8 +1339,9 @@ const btSrcListShow = (v) => { $('#btSrcList').hidden = !v; $('#btSrcBox').class
 function renderBtSrcs() {
   const k = $('#btSrcQ').value.trim().toLowerCase()
   const list = (state.sources || []).filter((s) => !k || s.title.toLowerCase().includes(k) || (s.category || '').toLowerCase().includes(k))
+  // stream 源（快讯类）只能被显式点名进快报——徽标区分，通配/全选状态不含它们
   $('#btSrcList').innerHTML = list.length
-    ? list.map((s) => `<label class="tp-src"><input type="checkbox" class="tp-src" value="${esc(s.id)}" ${btSel.has(s.id) ? 'checked' : ''}> ${esc(s.title)}</label>`).join('')
+    ? list.map((s) => `<label class="tp-src"><input type="checkbox" class="tp-src" value="${esc(s.id)}" ${btSel.has(s.id) ? 'checked' : ''}> ${esc(s.title)}${s.stream ? ' <span class="src-badge" title="流源：通配快报不含；勾选才会被本条快报显式纳入">流</span>' : ''}</label>`).join('')
     : '<span class="empty">无匹配源</span>'
   $('#btSrcCount').textContent = `已选 ${btSel.size}/${(state.sources || []).length}`
 }
@@ -1380,7 +1381,7 @@ function openBriefEditor(id) {
   $('#btEnabled').checked = t?.enabled !== false
   btSel.clear()
   if (t?.sourceIds?.length) for (const sid of t.sourceIds) btSel.add(sid)
-  else for (const src of state.sources || []) btSel.add(src.id) // 空=全部源→视觉全选；保存时全选归一化回空（跟随新增源）
+  else for (const src of state.sources || []) { if (!src.stream) btSel.add(src.id) } // 通配=全部非流源——流源不属于通配，视觉不勾（保存归一化同口径）
   $('#btSrcQ').value = ''
   btSrcListShow(false); renderBtSrcs()
   $('#btErr').hidden = true
@@ -1396,10 +1397,15 @@ $('#btnBtSave').addEventListener('click', async () => {
   const schedule = freq === 'hourly' ? { kind: 'hourly', minute: +$('#btMinute').value || 0 }
     : freq === 'daily' ? { kind: 'daily', time: $('#btTime').value || '08:00' }
     : { kind: 'minutes', everyMinutes: Math.max(5, +$('#btEvery').value || 60) }
-  const total = (state.sources || []).length
+  const streamIds = new Set((state.sources || []).filter((s) => s.stream).map((s) => s.id))
+  const nonStreamTotal = (state.sources || []).filter((s) => !s.stream).length
+  const streamPicked = [...btSel].some((sid) => streamIds.has(sid))
+  const nonStreamPicked = [...btSel].filter((sid) => !streamIds.has(sid)).length
   const body = {
     name, schedule,
-    sourceIds: (btSel.size === 0 || btSel.size === total) ? [] : [...btSel], // 全选/全不选→空=全部启用源（新加的源自动纳入）
+    // 无流勾选 且（非流全选|全不选）→ 空=通配全部启用源（新加源自动纳入）；
+    // 勾了任意流源 → 显式列表——流源只有显式点名才进快报
+    sourceIds: (!streamPicked && (nonStreamPicked === 0 || nonStreamPicked === nonStreamTotal)) ? [] : [...btSel],
     minScore: +$('#btMinScore').value || 0,
     maxItems: Math.max(0, Math.floor(+$('#btMaxItems').value || 0)),
     keywords: $('#btKeywords').value.split(/[\s,，、;；]+/).map((s) => s.trim()).filter(Boolean).slice(0, 10),

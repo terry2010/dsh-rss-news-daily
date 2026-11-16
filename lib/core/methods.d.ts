@@ -20,6 +20,8 @@ export interface RawItem {
     content?: string;
     /** ISO 时间；缺省取抓取时刻。isStaleItem 依赖——快讯源务必给真实发布时间 */
     publishedAt?: string;
+    /** 源原生重要标记（红电/加粗/important 字段）→ 落 item.state.hot，快讯视图「重要」筛选依据 */
+    hot?: boolean;
 }
 /** adapter 收到的上下文：复用主插件护栏，不暴露内部实现 */
 export interface MethodCtx {

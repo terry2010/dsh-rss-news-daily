@@ -201,7 +201,7 @@ function toItem(source: FeedSource, p: ReturnType<typeof parseFeedDocument>['ite
     tags: isStaleItem({ publishedAt: p.publishedAt, fetchedAt: now.toISOString() }) ? ['旧闻'] : undefined,
     score: 0,
     reasons: [],
-    state: { read: false, hidden: false, liked: 0 },
+    state: { read: false, hidden: false, liked: 0, ...(p.hot ? { hot: true } : {}) },
   }
 }
 
@@ -235,7 +235,7 @@ async function fetchOne(
         title: src.title,
         items: raw.map((r) => ({
           id: r.id ?? '', title: r.title, link: r.link ?? '', summary: r.summary ?? '',
-          content: r.content ?? '', publishedAt: r.publishedAt ?? '',
+          content: r.content ?? '', publishedAt: r.publishedAt ?? '', hot: r.hot,
         })),
       }
     } else {

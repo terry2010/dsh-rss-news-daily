@@ -557,3 +557,6 @@ h3 { font-size: 14px; margin: 18px 0 8px; color: var(--lead); }
 /* ---- 伴随插件视图 tab（registerView 注入的 iframe 面板） ---- */
 .viewpane { height: calc(100vh - 150px); padding: 0; overflow: hidden; }
 .viewpane iframe { width: 100%; height: 100%; border: 0; display: block; }
+
+/* ---- 快报源选择器：流源徽标（只能显式点名进快报，通配不含） ---- */
+.src-badge { font-size: 10px; padding: 0 4px; border-radius: 4px; background: color-mix(in srgb, #ff9500 22%, transparent); color: #d45500; vertical-align: 1px; }

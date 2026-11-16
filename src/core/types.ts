@@ -64,6 +64,8 @@ export interface ItemState {
   translationError?: string
   /** 翻译失败重试次数（跨抓取周期重试，限次防长尾） */
   translationRetries?: number
+  /** 源原生重要标记（adapter 上报：CLS 加红电报/金十 important/THS color=2）——stream 不打分，hot 是流条目唯一的「重要」信号 */
+  hot?: boolean
 }
 
 /** 旧闻阈值：publishedAt 早于抓取时间 7 天（Google News 搜索源会用相关度回填旧文） */
@@ -155,6 +157,8 @@ export interface ParsedFeedItem {
   content: string
   publishedAt: string
   id: string
+  /** 源原生重要标记（method 路径透传 RawItem.hot） */
+  hot?: boolean
 }
 
 export interface ParsedFeed {
