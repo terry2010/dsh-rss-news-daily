@@ -58,6 +58,8 @@ export { Config }
 export { RndSourceHub }
 export { createFetcher } from './core/fetcher.js' // 伴随插件自建抓取管线时复用主插件策略 fetcher（SSRF/超时/代理）
 export type { MethodHandler, MethodCtx, RawItem, SourceDef, ViewDef, BriefTypeDef } from './core/methods.js'
+export type { BriefItemSupplier } from './source-hub.js'
+export type { FeedItem } from './core/types.js'
 
 export const name = 'rss-news-daily'
 
@@ -357,9 +359,12 @@ export function apply(ctx: Context, config: ConfigType) {
     const day = zonedDayKey(now, config.timezone || undefined)
     const hm = hmOf(now)
     const digestsDir = join(dataDir, 'digests')
+    // 供给器条目的来源不在主库源表——sourceNames 补显示名；标 stream=true（伴随流语义：跳过翻译/不入通配快报）
+    const sourcesById = new Map(effectiveSources(config.sources, store).map((src) => [src.id, { title: src.title, summarize: src.summarize, stream: src.stream }]))
+    if (t.sourceNames) for (const [id, name] of Object.entries(t.sourceNames)) if (!sourcesById.has(id)) sourcesById.set(id, { title: name, summarize: false, stream: true })
     await appendHourlyBrief({
       items,
-      sourcesById: new Map(effectiveSources(config.sources, store).map((src) => [src.id, { title: src.title, summarize: src.summarize, stream: src.stream }])),
+      sourcesById,
       day, time: hm,
       minScore: t.minScore,
       digestsDir, log,
@@ -367,6 +372,7 @@ export function apply(ctx: Context, config: ConfigType) {
       head: `# ${t.name} · ${day}\n\n`,
       sectionName: t.name,
       sourceIds: t.sourceIds, keywords: t.keywords, maxItems: t.maxItems, focus: t.focus,
+      prompt: t.prompt, itemTime: t.itemTime, timezone: config.timezone || undefined,
       // 概括 client 与 noTranslate 解耦：峰内快报也要 AI 概括（用户明示「需要调用ai只是不翻译」）
       llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log, 'brief') : undefined,
       translateClient: llmRuntime && !opts?.noTranslate ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'brief-translate') : undefined,
@@ -567,7 +573,14 @@ export function apply(ctx: Context, config: ConfigType) {
       fetchProg = { ...fetchProg, running: true, stage: 'brief', current: '' }
       for (const t of types) {
         if (controller.signal.aborted) break
-        const items = store.items.filter((i) => i.fetchedAt >= briefWindowStart(runs[t.id], dayStart))
+        // 伴随插件供给器类型：条目不在主库——回调取数；失败不盖台账（下槽重试同窗口，不吞错误）
+        const winStart = briefWindowStart(runs[t.id], dayStart)
+        const sup = sourceHub?.briefSupplierOf(t.id)
+        let items: FeedItem[]
+        if (sup) {
+          try { items = await sup(winStart) }
+          catch (e) { log.warn(`brief supplier for "${t.id}" failed: ${(e as Error).message}`); continue }
+        } else items = store.items.filter((i) => i.fetchedAt >= winStart)
         fetchProg.current = t.name
         await appendBriefFor(t, items, controller.signal, { noTranslate: inPeak, heuristicScores: inPeak || !doScore })
         runs[t.id] = cycleStart // 台账：窗口已覆盖（空时段也记——空档说明已写进文件，下轮从本轮起点续）

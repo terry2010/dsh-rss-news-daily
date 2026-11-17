@@ -41,6 +41,12 @@ export interface BriefType {
   maxItems: number
   /** 快报重点：注入概括 prompt 的侧重说明；空=通用概括 */
   focus: string
+  /** 供给器条目的来源显示名（sourceId→名）：伴随插件自管库的源不在主库源表里，节内来源标注靠它 */
+  sourceNames?: Record<string, string>
+  /** 整段替换概括指令（保留输出规约外壳）；空=内置「总起+分点」模板——快讯等异构条目换骨架用 */
+  prompt?: string
+  /** 渲染行加逐条 HH:mm（快讯类时序条目）；缺省 false */
+  itemTime?: boolean
 }
 
 const ID_RE = /^[A-Za-z0-9_-]{1,40}$/
@@ -86,7 +92,22 @@ export function normalizeBriefType(v: unknown): BriefType | undefined {
     minScore: clamp(numOf(r.minScore) ?? 6, 0, 10),
     maxItems: clamp(Math.floor(numOf(r.maxItems) ?? 0), 0, 500),
     focus: (typeof r.focus === 'string' ? r.focus : '').trim().slice(0, 300),
+    ...(strMap(r.sourceNames) ? { sourceNames: strMap(r.sourceNames) } : {}),
+    ...(typeof r.prompt === 'string' && r.prompt.trim() ? { prompt: r.prompt.trim().slice(0, 500) } : {}),
+    ...(r.itemTime === true ? { itemTime: true } : {}),
   }
+}
+
+/** sourceNames 消毒：{id: 显示名}，≤50 对，畸形整条不给 */
+function strMap(v: unknown): Record<string, string> | undefined {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined
+  const out: Record<string, string> = {}
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    const key = k.trim().slice(0, 200), name = typeof val === 'string' ? val.trim().slice(0, 40) : ''
+    if (key && name) out[key] = name
+    if (Object.keys(out).length >= 50) break
+  }
+  return Object.keys(out).length ? out : undefined
 }
 
 /** 数组消毒：非法条目剔除；[] 保持 []（用户删光=真的没有类型）。 */

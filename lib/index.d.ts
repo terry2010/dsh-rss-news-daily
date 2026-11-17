@@ -17,6 +17,8 @@ export { Config };
 export { RndSourceHub };
 export { createFetcher } from './core/fetcher.js';
 export type { MethodHandler, MethodCtx, RawItem, SourceDef, ViewDef, BriefTypeDef } from './core/methods.js';
+export type { BriefItemSupplier } from './source-hub.js';
+export type { FeedItem } from './core/types.js';
 export declare const name = "rss-news-daily";
 /** 本插件对外提供的服务（cordis loaders 读取）——伴随插件经 inject 消费。 */
 export declare const provide = "rndSources";

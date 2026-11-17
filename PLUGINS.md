@@ -42,16 +42,16 @@ export function apply(ctx: Context) {
       config: {}
 ```
 
-## API 面（apiVersion 1，进 semver）
+## API 面（apiVersion 2，进 semver）
 
 `ctx.inject(['rndSources'])` 或 `export const inject = ['rndSources']` 后：
 
 | 成员 | 签名 | 说明 |
 |---|---|---|
-| `apiVersion` | `number` | 当前 `1`。首行检查，版本不符优雅退出 |
+| `apiVersion` | `number` | 当前 `2`。首行检查，版本不符优雅退出；`≥2` 起 `registerBriefType` 支持 `opts.items` 供给器 |
 | `registerMethod` | `(name, handler) => void` | 注册抓取 handler；约定 `'<包名>:<方法>'` 命名空间；**重名抛错** |
 | `addSources` | `(provider, defs) => void` | 注入源定义；`provider` 传自己的 `export const name`——卸载后遗留源可识别/清理 |
-| `registerBriefType` | `(provider, def) => void` | 注册快报类型（如「快讯快报」）；同 id 时用户已存配置优先 |
+| `registerBriefType` | `(provider, def, opts?) => void` | 注册快报类型（如「快讯快报」）；同 id 时用户已存配置优先。`opts.items`（v2）= 条目供给器，自管库插件的快报数据入口 |
 | `registerView` | `(provider, view) => void` | 给阅读器顶栏贡献 iframe tab；页自己挂 `webServer` 路由 |
 | `notify` | `(title, body, path?) => void` | 桌面通知（与时段快报同一通道，受 `notifyDesktop` 偏好门控）；`path` 为阅读器内路径，点击通知打开对应页面 |
 | `removeSources` | `(provider) => Promise<number>` | 删除自己注入过的源及其全部条目（幂等）；伴随插件转向独立存储时调用清理主库 |
@@ -109,11 +109,15 @@ interface BriefTypeDef {
   schedule: { kind: 'minutes'; everyMinutes: number }
           | { kind: 'hourly'; minute: number }
           | { kind: 'daily'; time: string }   // 'HH:mm'
-  sourceIds?: string[]         // 显式点名源 id——stream 源只能这样进快报
+  sourceIds?: string[]         // 显式点名源 id——stream 源只能这样进快报；
+                               //   供给器类型此处是「允许名单」：空表时供给器条目会被 stream 剔除
   keywords?: string[]
   minScore?: number            // 入选分阈值；stream 源未评分条目按 0 计，要收就传 0
   maxItems?: number
-  focus?: string               // 给 LLM 的写作侧重提示
+  focus?: string               // 给 LLM 的写作侧重提示（追加在概括指令前）
+  sourceNames?: Record<string, string>  // 供给器条目的来源显示名（源不在主库源表时节内标注用）
+  prompt?: string              // 整段替换概括指令（≤500字；保留「不要解释」外壳）——快讯等异构条目换骨架
+  itemTime?: boolean           // 渲染行加逐条 HH:mm（按 config.timezone）——时序类条目用
 }
 
 interface ViewDef {
@@ -125,6 +129,37 @@ interface ViewDef {
 
 视图页由伴随插件经 `ctx.inject(['webServer'], ...)` 自挂路由提供，主阅读器 iframe 载入。
 主题同步：首帧 URL 带 `?theme=light|dark`，运行时经 `postMessage({type:'rnd-theme', theme})` 跟随。
+
+### 条目供给器（apiVersion ≥ 2）
+
+自管存储的伴随插件（如 dsh-news-kuaixun：高频轮询 + 独立 SQLite，条目不进主库）想复用快报产线时，
+给 `registerBriefType` 第三参挂供给器：
+
+```ts
+ctx.rndSources.registerBriefType(name, {
+  id: 'kx-flash', name: '快讯快报',
+  schedule: { kind: 'hourly', minute: 0 },
+  sourceIds: [...],                    // 必须点名——供给器源都视作 stream，空表全灭
+  sourceNames: { '<源id>': '显示名' },  // 节内来源标注
+  minScore: 6, maxItems: 40, itemTime: true,
+  prompt: '概括本时段快讯：…',          // 可整段换掉「总起+分点」模板
+}, {
+  items: async (since) => /* 返回 FeedItem[]——since 是窗口起点 ISO（上次出报时刻或今日零时） */,
+})
+```
+
+语义契约：
+
+- **时机**：供给器在类型槽位到期时由主插件任务队列调用（高峰期同享 holdInPeak 挂起），
+  `since` = `briefWindowStart`（上次台账或今日零时）——窗口/台账语义与主库类型完全一致
+- **条目形状**：返回 `FeedItem[]`（已导出类型）。主库才有的字段（`hash`/`digestedDay`）填空即可；
+  `state.hidden`/`dupOf` 参与入选过滤，`topic` 决定分节
+- **自评分**：供给器条目不经过主库评分管线——把重要性写进 `llmScore`（及 `llmReason` 显示理由），
+  否则按 `heuristicScores` 兜底可能恒为 0
+- **去重自管**：跨条合并由供给器决定——非代表条挂 `dupOf: rep.id` 即被快报剔除
+- **失败**：供给器抛错 → warn + 本轮跳过且**不盖台账**，下一槽位用同一窗口重试
+- **隔离**：供给器条目不落主库、不进「时段快报」通配候选池；渲染出的 `## HH:mm <name>` 节
+  照常进「今日快报·全部」合并视图
 
 ## 行为契约
 

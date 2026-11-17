@@ -42,6 +42,12 @@ export interface BriefType {
     maxItems: number;
     /** 快报重点：注入概括 prompt 的侧重说明；空=通用概括 */
     focus: string;
+    /** 供给器条目的来源显示名（sourceId→名）：伴随插件自管库的源不在主库源表里，节内来源标注靠它 */
+    sourceNames?: Record<string, string>;
+    /** 整段替换概括指令（保留输出规约外壳）；空=内置「总起+分点」模板——快讯等异构条目换骨架用 */
+    prompt?: string;
+    /** 渲染行加逐条 HH:mm（快讯类时序条目）；缺省 false */
+    itemTime?: boolean;
 }
 /** 单条消毒：id/schedule 非法整条丢弃，其余字段畸形回默认。 */
 export declare function normalizeBriefType(v: unknown): BriefType | undefined;

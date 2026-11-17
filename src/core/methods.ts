@@ -96,4 +96,10 @@ export interface BriefTypeDef {
   minScore?: number
   maxItems?: number
   focus?: string
+  /** 供给器条目的来源显示名（sourceId→名）：自管库源不在主库源表时快报节内标注用 */
+  sourceNames?: Record<string, string>
+  /** 整段替换概括指令；空=内置模板 */
+  prompt?: string
+  /** 渲染行加逐条 HH:mm */
+  itemTime?: boolean
 }

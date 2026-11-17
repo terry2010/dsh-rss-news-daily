@@ -278,6 +278,12 @@ export async function appendHourlyBrief(opts: {
   maxItems?: number
   /** 快报重点：注入概括 prompt 的侧重说明 */
   focus?: string
+  /** 整段替换概括指令（BriefType.prompt 透传）；空=内置「总起+分点」模板 */
+  prompt?: string
+  /** 渲染行加逐条 HH:mm（按 timezone 格式化）——快讯类时序条目用 */
+  itemTime?: boolean
+  /** itemTime 的时区（config.timezone 透传）；空=服务器本地 */
+  timezone?: string
   log?: LogSink
 }): Promise<number> {
   const log = opts.log || noopLog
@@ -329,9 +335,19 @@ export async function appendHourlyBrief(opts: {
   let brief = ''
   if (opts.llmClient) {
     try {
+      // 概括指令可整段替换（BriefType.prompt）——快讯等异构条目换骨架；尾部输出规约恒在
+      const instr = opts.prompt
+        ?? '概括本时段新闻要点：先一句总起（主线/主题是什么），再分点列出具体事件（谁、做了什么），每点一行以 - 开头，至多 4 点，挑最重要的。'
+      // prompt 行喂「领域+来源+tags+标题」——来源/栏目标签不进料，模型写不出"3源互证"类语义
+      const lineOf = (it: FeedItem, i: number) => {
+        const src = opts.sourcesById.get(it.sourceId)?.title ?? ''
+        const tags = (it.tags ?? []).slice(0, 3).map((tg) => `#${tg}`).join(' ')
+        const meta = [src, tags].filter(Boolean).join(' ')
+        return `${i + 1}. [${it.topic || '综合'}]${meta ? ` ${meta}` : ''} ${zhTitleOf(it)}`
+      }
       brief = (await opts.llmClient.generateText({
-        system: `你是新闻快报编辑。${opts.focus ? `本快报重点：${opts.focus}。` : ''}概括本时段新闻要点：先一句总起（主线/主题是什么），再分点列出具体事件（谁、做了什么），每点一行以 - 开头，至多 4 点，挑最重要的。不要解释。`,
-        prompt: scored.slice(0, 30).map((it, i) => `${i + 1}. [${it.topic || '综合'}] ${zhTitleOf(it)}`).join('\n'),
+        system: `你是新闻快报编辑。${opts.focus ? `本快报重点：${opts.focus}。` : ''}${instr} 不要解释。`,
+        prompt: scored.slice(0, 30).map(lineOf).join('\n'),
         maxTokens: Math.min(opts.llmMaxTokens ?? 4096, 4096), // 快报概括+推理思考共用预算，2K 易被吃光
         purpose: 'brief',
         signal: opts.signal,
@@ -357,6 +373,13 @@ export async function appendHourlyBrief(opts: {
     lines.push(`- **[${topic}](#${topic})** ${list.length} 条 · 最高 ${top} 分`)
   }
   lines.push('', '### 重要新闻', '')
+  // itemTime：逐条 HH:mm（ISO 是 UTC——必须按 timezone 格式化，不能切字符串）
+  const hmItem = (iso?: string) => {
+    const t = iso ? Date.parse(iso) : NaN
+    if (!Number.isFinite(t)) return ''
+    const p = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, ...(opts.timezone ? { timeZone: opts.timezone } : {}) }).formatToParts(new Date(t))
+    return `${String(Number(p.find((x) => x.type === 'hour')?.value ?? 0) % 24).padStart(2, '0')}:${p.find((x) => x.type === 'minute')?.value ?? '00'}`
+  }
   for (const [topic, list] of groups) {
     lines.push(`#### ${topic}`)
     for (const it of list) {
@@ -366,7 +389,8 @@ export async function appendHourlyBrief(opts: {
       const safeTitle = zhTitle.replace(/[\[\]()\n]/g, ' ').trim() // 防 []() 破坏 markdown 链接语法
       const safeLink = (it.link || '').replace(/[()\n]/g, '') || '#'
       const tip = zhTitle.trim() !== it.title.trim() ? ` "${it.title.replace(/"/g, "'").replace(/\s+/g, ' ').trim()}"` : ''
-      lines.push(`- **[${safeTitle}](${safeLink}${tip})**  \n  ${meta}${it.llmReason ? ` — ${it.llmReason}` : ''}`)
+      const itm = opts.itemTime ? `${hmItem(it.publishedAt || it.fetchedAt)} ` : ''
+      lines.push(`- **${itm}[${safeTitle}](${safeLink}${tip})**  \n  ${meta}${it.llmReason ? ` — ${it.llmReason}` : ''}`)
     }
     lines.push('')
   }

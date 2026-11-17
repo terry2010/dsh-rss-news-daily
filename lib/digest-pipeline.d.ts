@@ -118,6 +118,12 @@ export declare function appendHourlyBrief(opts: {
     maxItems?: number;
     /** 快报重点：注入概括 prompt 的侧重说明 */
     focus?: string;
+    /** 整段替换概括指令（BriefType.prompt 透传）；空=内置「总起+分点」模板 */
+    prompt?: string;
+    /** 渲染行加逐条 HH:mm（按 timezone 格式化）——快讯类时序条目用 */
+    itemTime?: boolean;
+    /** itemTime 的时区（config.timezone 透传）；空=服务器本地 */
+    timezone?: string;
     log?: LogSink;
 }): Promise<number>;
 /** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。 */

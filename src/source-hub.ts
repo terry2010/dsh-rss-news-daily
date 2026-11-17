@@ -4,7 +4,9 @@
  * 伴随插件 `export const inject = ['rndSources']` 后在本服务上可做五件事：
  *   - registerMethod('<包名>:<方法>', handler)  注册非标抓取 handler
  *   - addSources('<包名>', defs)                注入源定义（provider 落源上，卸载可识别）
- *   - registerBriefType('<包名>', def)          注册快报类型（id 冲突时用户已存配置优先）
+ *   - registerBriefType('<包名>', def, opts?)   注册快报类型（id 冲突时用户已存配置优先）；
+ *                                             opts.items=条目供给器——自管库伴随插件的条目不进主库，
+ *                                             快报到期时由主插件回调取数（since=本类型候选窗口起点 ISO）
  *   - registerView('<包名>', view)              给阅读器顶部贡献 iframe tab（页挂自己 webServer 路由）
  *   - notify(title, body, path)                 请求桌面通知（与快报同一通道；path=点击打开的阅读器路径）
  *   - removeSources(provider)                   清掉自己注入过的源及其条目（伴随插件转向独立存储时的卸载通道）
@@ -18,6 +20,10 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { registry, registerMethod } from './core/methods.js'
 import type { MethodHandler, SourceDef, ViewDef, BriefTypeDef } from './core/methods.js'
 import { normalizeBriefType, type BriefType } from './brief-types.js'
+import type { FeedItem } from './core/types.js'
+
+/** 快报条目供给器：主插件在本类型槽位到期时回调，since=候选窗口起点 ISO；返回本窗口应参评的条目 */
+export type BriefItemSupplier = (since: string) => FeedItem[] | Promise<FeedItem[]>
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -31,11 +37,13 @@ export interface RegisteredView extends ViewDef {
 
 /** 对外注册面：伴随插件只摸这几个方法。公开 API，进 semver。 */
 export class RndSourceHub extends Service {
-  /** 伴随插件首行检查：`if (ctx.rndSources.apiVersion < 1) return` */
-  readonly apiVersion = 1
+  /** 伴随插件首行检查：`if (ctx.rndSources.apiVersion < 1) return`；v2 起支持 registerBriefType opts.items */
+  readonly apiVersion = 2
 
   private readonly views = new Map<string, RegisteredView>()   // `${provider}:${id}` → view
   private readonly briefTypes = new Map<string, BriefType>()   // id → type（注册表为准，prefs 同 id 覆盖）
+  /** typeId → 条目供给器：回调不可序列化，与 BriefType 数据分存；卸载伴随插件随注册表一起消失 */
+  private readonly briefSuppliers = new Map<string, BriefItemSupplier>()
   private notifier?: (title: string, body: string, path?: string) => void
 
   constructor(
@@ -71,12 +79,23 @@ export class RndSourceHub extends Service {
     catch (e) { this.ctx.logger('rndSources').warn(`removeSources(${provider}) failed: ${(e as Error).message}`); return 0 }
   }
 
-  /** 注册快报类型（如「快讯快报」）。def 经 normalizeBriefType 消毒；同名后注册覆盖（同 provider 幂等重注册安全）。 */
-  registerBriefType(provider: string, def: BriefTypeDef): void {
+  /**
+   * 注册快报类型（如「快讯快报」）。def 经 normalizeBriefType 消毒；同名后注册覆盖（同 provider 幂等重注册安全）。
+   * opts.items：自管库伴随插件的条目供给器——其条目不进主库 store，槽位到期时主插件调 since→items 取数；
+   * 不传则候选池照旧扫主库（addSources 注入路径）。
+   */
+  registerBriefType(provider: string, def: BriefTypeDef, opts?: { items?: BriefItemSupplier }): void {
     const t = normalizeBriefType({ enabled: true, sourceIds: [], keywords: [], minScore: 6, maxItems: 0, focus: '', ...def })
     if (!t) { this.ctx.logger('rndSources').warn(`briefType "${def?.id}" rejected (bad id)`); return }
     this.briefTypes.set(t.id, t)
-    this.ctx.logger('rndSources').info(`briefType "${t.id}" registered by ${provider}`)
+    if (opts?.items) this.briefSuppliers.set(t.id, opts.items)
+    else this.briefSuppliers.delete(t.id)
+    this.ctx.logger('rndSources').info(`briefType "${t.id}" registered by ${provider}${opts?.items ? ' (items supplier)' : ''}`)
+  }
+
+  /** 该类型的条目供给器（briefRunWork 分叉用）；未注册返回 undefined → 走主库候选池 */
+  briefSupplierOf(typeId: string): BriefItemSupplier | undefined {
+    return this.briefSuppliers.get(typeId)
   }
 
   /** 注册阅读器视图 tab（iframe 指向 view.url——页由伴随插件自己挂 webServer）。同 provider+id 幂等。 */
