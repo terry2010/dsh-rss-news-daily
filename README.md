@@ -6,6 +6,8 @@
 
 **不用在多个网站之间来回切换，也能及时掌握自己关心的新闻。**
 
+中文 | [English](./README.en.md)
+
 [![npm version](https://img.shields.io/npm/v/dsh-rss-news-daily)](https://www.npmjs.com/package/dsh-rss-news-daily)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
