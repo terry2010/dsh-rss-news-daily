@@ -78,7 +78,8 @@ export declare function briefFileOf(digestsDir: string, type: {
     id: string;
     builtin?: boolean;
 }, day: string): string;
-/** 读取侧按 key 定位（不问 prefs——已删类型的历史文件照样可读） */
+/** 读取侧按 key 定位（不问 prefs——已删类型的历史文件照样可读）。
+ *  key 消毒（audit P2 纵深防御）：API 层已校验 ID_RE，这里再剥路径分隔/穿越字符，防调用方漏校验。 */
 export declare function briefFileFor(digestsDir: string, typeKey: string, day: string): string;
 /** 当前槽是否未被 lastRun 覆盖（=该跑）。lastRun 是 ISO 时刻（store.meta.briefRuns[id]）。 */
 export declare function briefDue(t: BriefType, lastRunIso: string | undefined, now: Date, timezone?: string): boolean;
