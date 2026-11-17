@@ -75,6 +75,11 @@ This project is actively maintained. Found a bug, inaccurate content, or want a 
 
 **[github.com/terry2010/dsh-rss-news-daily](https://github.com/terry2010/dsh-rss-news-daily)**
 
+## Related plugins
+
+- **[dsh-rss-news-flash-kuaixun](https://github.com/terry2010/dsh-rss-news-flash-kuaixun)** — real-time finance flash-news companion: six sources at 60-second polling, multi-source corroboration, AI briefings and desktop notifications
+- **[dsh-rss-news-browser-fetch](https://github.com/terry2010/dsh-rss-news-browser-fetch)** — browserFetch transport service: dedicated Chrome + CDP, real-fingerprint same-origin fetch fallback for source adapters
+
 ## License
 
 Released under the [MIT License](LICENSE).

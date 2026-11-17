@@ -75,6 +75,11 @@ dsh plugin --profile <你的profile名> add dsh-rss-news-daily
 
 **[github.com/terry2010/dsh-rss-news-daily](https://github.com/terry2010/dsh-rss-news-daily)**
 
+## 相关插件
+
+- **[dsh-rss-news-flash-kuaixun](https://github.com/terry2010/dsh-rss-news-flash-kuaixun)** —— 「快讯」伴随插件：财联社/金十/华尔街见闻等六源 60 秒轮询实时财经快讯，多源互证 + AI 快报 + 桌面通知
+- **[dsh-rss-news-browser-fetch](https://github.com/terry2010/dsh-rss-news-browser-fetch)** —— browserFetch 浏览器传输服务：专用 Chrome + CDP，为源适配器提供真实指纹/同源页面取数兜底
+
 ## 许可
 
 本项目基于 [MIT License](LICENSE) 开源。
