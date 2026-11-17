@@ -46,10 +46,17 @@ export async function runBackupZip(dataDir: string, store: BackupStore, destDir:
   const prefsFile = join(dataDir, 'prefs.json')
   if (existsSync(prefsFile)) entries.push({ name: 'prefs.json', data: readFileSync(prefsFile) })
 
+  // digests 递归打包：顶层日报/时段快报 .md + briefs/（自定义与注册类型快报）+ topics/（专题报告）+ index.json
   const ddir = join(dataDir, 'digests')
   if (existsSync(ddir)) {
-    for (const f of (await readdir(ddir)).filter((f) => f.endsWith('.md')).sort())
-      entries.push({ name: `digests/${f}`, data: readFileSync(join(ddir, f)) })
+    const walkMd = async (dir: string, prefix: string): Promise<void> => {
+      for (const e of await readdir(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name)
+        if (e.isDirectory()) await walkMd(p, `${prefix}${e.name}/`)
+        else if (e.isFile()) entries.push({ name: `digests/${prefix}${e.name}`, data: await readFile(p) })
+      }
+    }
+    await walkMd(ddir, '')
   }
 
   // 伴随插件独立数据（companions/<provider>/…：独立 sqlite/alerts.json 等）——
