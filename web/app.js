@@ -2281,7 +2281,7 @@ function showSteps({ title, steps, doneText = '完成', onDone }) {
       <h4>${esc(st.title)}</h4>
       <div class="obBody">${st.bodyHtml || esc(st.body)}</div>
       <div class="obNav">
-        <span class="obDots">${steps.map((_, i) => `<i${i === idx ? ' class="on"' : ''}></i>`).join('')}</span>
+        <span class="obDots">${steps.length > 1 ? steps.map((_, i) => `<i${i === idx ? ' class="on"' : ''}></i>`).join('') : ''}</span>
         <span>
           ${idx > 0 ? '<button data-ob="prev" class="ghost">上一步</button>' : ''}
           <button data-ob="next" class="primary">${idx === steps.length - 1 ? esc(doneText) : '下一步'}</button>
