@@ -610,6 +610,8 @@ export function apply(ctx: Context, config: ConfigType) {
     let settle!: { resolve: (v: unknown) => void; reject: (e: unknown) => void }
     const done = new Promise<FetchCycleResult>((res, rej) => { settle = { resolve: res as (v: unknown) => void, reject: rej } })
     done.catch(() => {}) // 无人接的 reject 不得进 unhandledRejection（定时路径不等 done）
+    // 用户取消 = 本轮放弃——槽位台账记已覆盖，否则调度钟 1s 后重算 due 会立刻把任务再塞回来（反复取消反复启动）
+    const markCovered = () => { const runs = briefRuns(); const now = new Date().toISOString(); for (const t of types) runs[t.id] = now }
     const r = taskQ.enqueue({
       id, kind: 'fetch',
       label: types.length > 1 ? `快报·${types.length} 种` : `快报·${types[0]?.name ?? '快报'}`,
@@ -617,7 +619,8 @@ export function apply(ctx: Context, config: ConfigType) {
       holdInPeak: opts?.holdInPeak ?? (!manual && !peakCfg()?.brief ? true : undefined),
       peakBypass: opts?.peakBypass,
       start: () => briefRunWork(types, manual),
-      cancel: () => { if (fetchAbort) { fetchAbort.abort(); fetchCancelled = true } },
+      cancel: () => { if (fetchAbort) { fetchAbort.abort(); fetchCancelled = true }; markCovered() },
+      onCancelQueued: markCovered,
       settle,
     })
     if (r === 'dup') {
