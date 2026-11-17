@@ -48,7 +48,10 @@ export interface BriefType {
     prompt?: string;
     /** 渲染行加逐条 HH:mm（快讯类时序条目）；缺省 false */
     itemTime?: boolean;
+    /** 条目池 id（rndSources 注册池）；空/缺省=主库候选池。挂池类型条目由供给器取，sourceIds 空=全池 */
+    poolId?: string;
 }
+export declare const ID_RE: RegExp;
 /** 单条消毒：id/schedule 非法整条丢弃，其余字段畸形回默认。 */
 export declare function normalizeBriefType(v: unknown): BriefType | undefined;
 /** 数组消毒：非法条目剔除；[] 保持 []（用户删光=真的没有类型）。 */

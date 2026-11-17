@@ -359,8 +359,10 @@ export function apply(ctx: Context, config: ConfigType) {
     const day = zonedDayKey(now, config.timezone || undefined)
     const hm = hmOf(now)
     const digestsDir = join(dataDir, 'digests')
-    // 供给器条目的来源不在主库源表——sourceNames 补显示名；标 stream=true（伴随流语义：跳过翻译/不入通配快报）
+    // 供给器条目的来源不在主库源表——池 sourceNames + 类型 sourceNames 补显示名；标 stream=true（伴随流语义：跳过翻译/不入通配快报）
     const sourcesById = new Map(effectiveSources(config.sources, store).map((src) => [src.id, { title: src.title, summarize: src.summarize, stream: src.stream }]))
+    const pool = t.poolId ? sourceHub?.briefPoolOf(t.poolId) : undefined
+    if (pool) for (const [id, name] of Object.entries(pool.sourceNames)) if (!sourcesById.has(id)) sourcesById.set(id, { title: name, summarize: false, stream: true })
     if (t.sourceNames) for (const [id, name] of Object.entries(t.sourceNames)) if (!sourcesById.has(id)) sourcesById.set(id, { title: name, summarize: false, stream: true })
     await appendHourlyBrief({
       items,
@@ -372,7 +374,7 @@ export function apply(ctx: Context, config: ConfigType) {
       head: `# ${t.name} · ${day}\n\n`,
       sectionName: t.name,
       sourceIds: t.sourceIds, keywords: t.keywords, maxItems: t.maxItems, focus: t.focus,
-      prompt: t.prompt, itemTime: t.itemTime, timezone: config.timezone || undefined,
+      prompt: t.prompt, itemTime: t.itemTime, timezone: config.timezone || undefined, fromPool: !!t.poolId,
       // 概括 client 与 noTranslate 解耦：峰内快报也要 AI 概括（用户明示「需要调用ai只是不翻译」）
       llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log, 'brief') : undefined,
       translateClient: llmRuntime && !opts?.noTranslate ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'brief-translate') : undefined,
@@ -573,11 +575,12 @@ export function apply(ctx: Context, config: ConfigType) {
       fetchProg = { ...fetchProg, running: true, stage: 'brief', current: '' }
       for (const t of types) {
         if (controller.signal.aborted) break
-        // 伴随插件供给器类型：条目不在主库——回调取数；失败不盖台账（下槽重试同窗口，不吞错误）
+        // 挂池类型走供给器取数：池缺失→盖台账跳过（不写文件不刷 warn）；供给器抛错→不盖台账下槽重试
         const winStart = briefWindowStart(runs[t.id], dayStart)
-        const sup = sourceHub?.briefSupplierOf(t.id)
+        const sup = t.poolId ? sourceHub?.briefPoolOf(t.poolId)?.supplier : undefined
         let items: FeedItem[]
-        if (sup) {
+        if (t.poolId) {
+          if (!sup) { log.warn(`brief pool "${t.poolId}" missing for "${t.id}"; skipped this slot`); runs[t.id] = cycleStart; continue }
           try { items = await sup(winStart) }
           catch (e) { log.warn(`brief supplier for "${t.id}" failed: ${(e as Error).message}`); continue }
         } else items = store.items.filter((i) => i.fetchedAt >= winStart)
@@ -860,6 +863,8 @@ export function apply(ctx: Context, config: ConfigType) {
     },
     // ---- 快报类型（今日快报列表）：列表=resolveBriefTypes（未配置=内置时段快报种子）；sel 触发一次手动运行 ----
     listBriefTypes: () => briefTypesOf(),
+    // 已注册条目池（伴随插件提供）：GET /brief-types 顺带返回供 UI 池下拉
+    listBriefPools: () => sourceHub?.listBriefPools() ?? [],
     runBriefNow: (sel?: string, opts?: { holdInPeak?: boolean; peakBypass?: boolean }) => {
       const enabled = enabledBriefTypes()
       const picked = !sel || sel === 'all' ? enabled : enabled.filter((t) => t.id === sel)

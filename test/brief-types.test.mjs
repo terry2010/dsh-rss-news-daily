@@ -26,6 +26,16 @@ test('brief-type: normalize 非法 id 整条丢弃', () => {
   assert.equal(normalizeBriefType(null), undefined)
 })
 
+test('brief-type: normalize poolId/prompt/itemTime/sourceNames 透传与消毒', () => {
+  const t = normalizeBriefType({ id: 'bt_2', poolId: 'kx-flash', prompt: '  概括快讯  ', itemTime: true, sourceNames: { a: '甲', b: 1 } })
+  assert.equal(t.poolId, 'kx-flash')
+  assert.equal(t.prompt, '概括快讯')
+  assert.equal(t.itemTime, true)
+  assert.deepEqual(t.sourceNames, { a: '甲' })
+  const bad = normalizeBriefType({ id: 'bt_3', poolId: 'bad id!', poolId2: 'x' })
+  assert.equal(bad.poolId, undefined) // 非 ID_RE 的 poolId 被丢弃
+})
+
 test('brief-type: normalize schedule 畸形回退每 60 分钟；数值钳位', () => {
   assert.deepEqual(normalizeBriefType({ id: 'a', schedule: { kind: 'daily', time: '99:99' } }).schedule, { kind: 'minutes', everyMinutes: 60 })
   assert.deepEqual(normalizeBriefType({ id: 'a', schedule: { kind: 'minutes', everyMinutes: 1 } }).schedule, { kind: 'minutes', everyMinutes: 5 }) // 下限 5

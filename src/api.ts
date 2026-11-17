@@ -280,7 +280,9 @@ function apiBriefTypes(deps: ApiDeps) {
     const method = String(req.method || 'GET').toUpperCase()
     if (method === 'GET' && !sub) {
       const types = resolvedBriefTypes(deps).map((t) => ({ ...t, scheduleText: briefScheduleText(t) }))
-      return sendJson(res, 200, { ok: true, types })
+      // pools=伴随插件注册的条目池（UI「条目池」下拉+源 picker 用其 sourceNames）
+      const pools = deps.svc?.listBriefPools?.() ?? []
+      return sendJson(res, 200, { ok: true, types, pools })
     }
     if (method === 'POST' && !sub) {
       const body = await readBody(req) as Record<string, unknown>
@@ -299,7 +301,7 @@ function apiBriefTypes(deps: ApiDeps) {
       const body = await readBody(req) as Record<string, unknown>
       // 白名单字段合并；schedule 整体替换（前端总是提交完整频率对象）
       const merged: Record<string, unknown> = { ...types[idx] }
-      for (const k of ['name', 'enabled', 'builtin', 'schedule', 'sourceIds', 'keywords', 'minScore', 'maxItems', 'focus'] as const) {
+      for (const k of ['name', 'enabled', 'builtin', 'schedule', 'sourceIds', 'keywords', 'minScore', 'maxItems', 'focus', 'poolId'] as const) {
         if (body[k] !== undefined) merged[k] = body[k]
       }
       const type = normalizeBriefType({ ...merged, id })

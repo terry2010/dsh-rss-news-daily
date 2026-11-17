@@ -102,4 +102,6 @@ export interface BriefTypeDef {
   prompt?: string
   /** 渲染行加逐条 HH:mm */
   itemTime?: boolean
+  /** 条目池 id（registerBriefPool 注册）；空=主库候选池 */
+  poolId?: string
 }

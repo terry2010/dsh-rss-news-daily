@@ -47,9 +47,11 @@ export interface BriefType {
   prompt?: string
   /** 渲染行加逐条 HH:mm（快讯类时序条目）；缺省 false */
   itemTime?: boolean
+  /** 条目池 id（rndSources 注册池）；空/缺省=主库候选池。挂池类型条目由供给器取，sourceIds 空=全池 */
+  poolId?: string
 }
 
-const ID_RE = /^[A-Za-z0-9_-]{1,40}$/
+export const ID_RE = /^[A-Za-z0-9_-]{1,40}$/
 const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/
 
 function numOf(v: unknown): number | undefined {
@@ -95,6 +97,7 @@ export function normalizeBriefType(v: unknown): BriefType | undefined {
     ...(strMap(r.sourceNames) ? { sourceNames: strMap(r.sourceNames) } : {}),
     ...(typeof r.prompt === 'string' && r.prompt.trim() ? { prompt: r.prompt.trim().slice(0, 500) } : {}),
     ...(r.itemTime === true ? { itemTime: true } : {}),
+    ...(typeof r.poolId === 'string' && ID_RE.test(r.poolId) ? { poolId: r.poolId } : {}),
   }
 }
 

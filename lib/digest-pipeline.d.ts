@@ -124,6 +124,8 @@ export declare function appendHourlyBrief(opts: {
     itemTime?: boolean;
     /** itemTime 的时区（config.timezone 透传）；空=服务器本地 */
     timezone?: string;
+    /** 条目来自供给器池：空 sourceIds=全池（跳过 stream 剔除——池成员由供给器定） */
+    fromPool?: boolean;
     log?: LogSink;
 }): Promise<number>;
 /** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。 */

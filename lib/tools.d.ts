@@ -222,6 +222,12 @@ export interface NewsService {
     peakChanged?(): void;
     /** 快报类型列表（今日快报列表生产者）：未配置时返回内置「时段快报」默认种子 */
     listBriefTypes?(): BriefType[];
+    /** 已注册条目池（伴随插件 registerBriefPool；UI 池下拉 + 池源显示名） */
+    listBriefPools?(): Array<{
+        id: string;
+        name: string;
+        sourceNames: Record<string, string>;
+    }>;
     /** 手动触发一次快报运行：sel='all'|typeId；holdInPeak=排低峰等出峰；peakBypass=峰内仍跑 */
     runBriefNow?(sel?: string, opts?: {
         holdInPeak?: boolean;

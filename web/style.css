@@ -315,6 +315,8 @@ sup.cite { position: relative; font-style: normal; line-height: 0; font-size: .7
 .tp-tilde { color: var(--dim); }
 /* 快报列表弹层：类型行（启停开关 + 名称/参数 + 编辑/删除） */
 .bt-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.bt-grp { font-size: 12px; font-weight: 600; color: var(--dim); margin: 10px 2px 6px; }
+.bt-grp:first-child { margin-top: 0; }
 .bt-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-md); }
 .bt-row.off { opacity: .55; }
 .bt-en { flex: none; display: flex; align-items: center; }

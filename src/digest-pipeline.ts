@@ -284,6 +284,8 @@ export async function appendHourlyBrief(opts: {
   itemTime?: boolean
   /** itemTime 的时区（config.timezone 透传）；空=服务器本地 */
   timezone?: string
+  /** 条目来自供给器池：空 sourceIds=全池（跳过 stream 剔除——池成员由供给器定） */
+  fromPool?: boolean
   log?: LogSink
 }): Promise<number> {
   const log = opts.log || noopLog
@@ -293,7 +295,7 @@ export async function appendHourlyBrief(opts: {
   // 类型过滤链：源 → 关键字 → 分数 → 条数上限（按分键倒序截断）
   let scored = opts.items.filter((i) => !i.dupOf && !i.state.hidden)
   if (opts.sourceIds?.length) { const allow = new Set(opts.sourceIds); scored = scored.filter((i) => allow.has(i.sourceId)) }
-  else scored = scored.filter((i) => opts.sourcesById.get(i.sourceId)?.stream !== true) // 通配快报不装 stream 源——快讯快报靠显式 sourceIds 点名
+  else if (!opts.fromPool) scored = scored.filter((i) => opts.sourcesById.get(i.sourceId)?.stream !== true) // 通配快报不装 stream 源；池类型空 sourceIds=全池（池成员由供给器定）
   if (opts.keywords?.length) {
     const kws = opts.keywords.map((k) => k.toLowerCase())
     scored = scored.filter((i) => kws.some((k) => `${i.title}\n${i.summary ?? ''}`.toLowerCase().includes(k)))
