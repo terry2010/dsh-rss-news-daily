@@ -1,6 +1,15 @@
 // 更新日志——发版时同步,最新版本在第一个
 const CHANGELOG = [
   {
+    v: '1.2.0',
+    items: [
+      '重磅：开放伴随插件体系——新闻精选现在也能装插件啦',
+      '财经快讯插件开放测试：安装 [flash-kuaixun](https://github.com/terry2010/dsh-rss-news-flash-kuaixun) 时请同时安装 [browser-fetch](https://github.com/terry2010/dsh-rss-news-browser-fetch) 以获取最佳体验，具体原因见[此处](https://github.com/terry2010/dsh-rss-news-flash-kuaixun#browser-fetch)',
+      '多个伴随插件内测中，受邀用户请按群内公告按需安装：基金快讯、财报快讯、政策快讯、运维助手、今天特价了吗、赛博羊毛等',
+      '插件经过多个 AI 多轮审计、修复和加固，解决了所有已找到的安全问题；安全审计已固化为工作流，未来发版前都会进行审计',
+    ],
+  },
+  {
     v: '1.1.0',
     items: [
       '重磅：开放伴随插件体系——新闻精选现在也能装插件啦（rndSources API v3）',
