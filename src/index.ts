@@ -477,11 +477,13 @@ export function apply(ctx: Context, config: ConfigType) {
     if (!prefs.get().autoTranslate || !llmRuntime) return
     const streams = streamIds()
     const noTr = flagOff('translate')
-    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && (!opts?.until || i.fetchedAt <= opts.until) && !i.state.hidden && !i.state.translation && !i.aiSummary && !streams.has(i.sourceId) && !noTr.has(i.sourceId) && isForeign(i))
+    // llmScore!=null 门槛：AI 评分都没轮到的条目（规则负分/dupOf/截断/score=false 源）不自动翻——
+    // 翻译预算跟随 AI 注意力，未评条目留阅读器手动「译」；调用方先 scoreItems 再 translateFresh
+    const fresh = store.items.filter((i) => i.fetchedAt >= cycleStart && (!opts?.until || i.fetchedAt <= opts.until) && !i.state.hidden && !i.state.translation && !i.aiSummary && i.llmScore != null && !streams.has(i.sourceId) && !noTr.has(i.sourceId) && isForeign(i))
     // 历史失败重试：translationError 且未超次数的旧条目每轮捎带一批；限量防长尾占满抓取周期
     // 外文未翻全部进重试（早退轮次不打 error 标记的条目也会搁浅——不能只挑有 error 的）
     const backlog = opts?.backlog === false ? [] : store.items
-      .filter((i) => i.fetchedAt < cycleStart && !i.state.hidden && !i.state.translation && !i.aiSummary
+      .filter((i) => i.fetchedAt < cycleStart && !i.state.hidden && !i.state.translation && !i.aiSummary && i.llmScore != null
         && (i.state.translationRetries ?? 0) < 3 && !streams.has(i.sourceId) && !noTr.has(i.sourceId) && isForeign(i))
       .slice(0, 50)
     const queue = [...fresh, ...backlog]
@@ -696,8 +698,8 @@ export function apply(ctx: Context, config: ConfigType) {
           markPeakDefer(cycleStart)
         } else {
           await judgeStubs(cycleStart, controller.signal)
-          await translateFresh(cycleStart, controller.signal)
           await scoreItems(store.items.filter((i) => i.fetchedAt >= cycleStart), controller.signal)
+          await translateFresh(cycleStart, controller.signal)
         }
         void maybeBackup()
         return result
@@ -726,8 +728,8 @@ export function apply(ctx: Context, config: ConfigType) {
         fetchProg = { running: true, done: 0, total: 0, stage: 'backfill', current: '' }
         try {
           await judgeStubs(since, controller.signal)
-          await translateFresh(since, controller.signal)
           await scoreItems(store.items.filter((i) => i.fetchedAt >= since && !i.state.hidden), controller.signal)
+          await translateFresh(since, controller.signal)
         } finally {
           if (fetchAbort === controller) { fetchProg = { running: false, done: 0, total: 0, stage: '', current: '' }; fetchAbort = undefined }
         }
