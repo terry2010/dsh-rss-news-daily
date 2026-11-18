@@ -103,6 +103,19 @@ export interface DigestSectionConfig {
   categoryPrompts: Record<string, string>
 }
 
+export interface UpdateCheckSectionConfig {
+  /** 更新检查总开关；false 时完全不外联 */
+  enabled: boolean
+  /** 检查端点（仅 https，非 https 拒跑） */
+  endpoint: string
+  /** 启动后延迟分钟数 */
+  delayMinutes: number
+  /** 请求超时 ms */
+  timeoutMs: number
+  /** 发现新版本时弹系统通知（独立于 notifyEnabled） */
+  notify: boolean
+}
+
 export interface Config {
   /** 总开关 */
   enabled: boolean
@@ -130,6 +143,7 @@ export interface Config {
   summary: SummarySectionConfig
   digest: DigestSectionConfig
   schedule: ScheduleSectionConfig
+  updateCheck: UpdateCheckSectionConfig
 }
 
 const FeedSourceSchema = Schema.object({
@@ -195,6 +209,14 @@ const ScheduleSectionSchema = Schema.object({
   fetchTimes: Schema.array(Schema.string().pattern(TIME_RE)).default([]).description('墙钟定点抓取时刻列表（HH:MM）；与 intervalMinutes 轮询并存。'),
 }).description('多时间点定时。')
 
+const UpdateCheckSectionSchema = Schema.object({
+  enabled: Schema.boolean().default(true).description('每天一次向 zhuikan.net 上报自身+伴随插件版本并拉取升级信息；false 完全不外联。'),
+  endpoint: Schema.string().default('https://news-update.zhuikan.net/v1/check'),
+  delayMinutes: Schema.number().min(1).default(30),
+  timeoutMs: Schema.number().min(1000).default(10_000),
+  notify: Schema.boolean().default(false).description('发现新版本时弹系统通知。'),
+}).description('每日更新检查。')
+
 export const Config: Schema<Config> = Schema.object({
   enabled: Schema.boolean().default(true),
   dataDir: Schema.string().default('').description('数据目录；空=~/.dsh/rss-news-daily。'),
@@ -212,4 +234,5 @@ export const Config: Schema<Config> = Schema.object({
   llm: LlmSectionSchema,
   summary: SummarySectionSchema,
   digest: DigestSectionSchema,
+  updateCheck: UpdateCheckSectionSchema,
 })

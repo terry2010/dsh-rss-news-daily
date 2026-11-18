@@ -53,6 +53,7 @@ import { createTaskQueue } from './task-queue.js'
 import { isPeak, nextPeakTransition, peakRangeValid } from './core/peak.js'
 import { briefDue, briefFileOf, briefWindowStart, nextBriefMs, resolveBriefTypes } from './brief-types.js'
 import type { BriefType } from './brief-types.js'
+import { listCompanions, startUpdateCheck } from './update-check.js'
 
 export { Config }
 export { RndSourceHub }
@@ -1076,6 +1077,7 @@ export function apply(ctx: Context, config: ConfigType) {
         todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate, topic: d.topic ?? 0 } : undefined })(),
         tokenStats: store.meta.tokenStats,
         version: pkgVersion,
+        update: (() => { const u = store.meta.updateCheck; return u?.latest ? { hasUpdate: u.hasUpdate === true, latest: u.latest, url: u.url, notes: u.notes, checkedAt: u.lastCheckedAt } : undefined })(),
         lastFetchAt: store.meta.lastFetchAt,
         lastDigestDay: store.meta.lastDigestDay,
         failures,
@@ -1291,6 +1293,26 @@ export function apply(ctx: Context, config: ConfigType) {
         runDailyDigest: digestNow,
         shouldDeferDigest: () => peakNow(), // 高峰到点不跑日报——记 defer 出峰补（任务挂起会卡 scheduledRunning 闩锁）
         onDigestDeferred: () => markPeakDefer(new Date().toISOString(), { digest: true }),
+        log,
+      }))
+      // 每日更新检查：启动 delayMinutes 后打一次端点（当天已试则跳过），结果落 meta.updateCheck → /api/status
+      disposers.push(startUpdateCheck(ctx as unknown as TimerSeam, {
+        enabled: () => config.updateCheck.enabled,
+        endpoint: () => config.updateCheck.endpoint,
+        delayMs: config.updateCheck.delayMinutes * 60_000,
+        timeoutMs: config.updateCheck.timeoutMs,
+        timezone: config.timezone,
+        selfPkg: 'dsh-rss-news-daily',
+        selfVer: pkgVersion ?? '0.0.0',
+        companions: () => listCompanions('dsh-rss-news-daily', {
+          fromDir: dirname(fileURLToPath(import.meta.url)),
+          dshHome: process.env.DSH_HOME || join(homedir(), '.dsh'),
+        }),
+        meta: () => store.meta,
+        save: () => { void store.save() },
+        onUpdate: config.updateCheck.notify
+          ? (info) => desktopNotify('dsh-rss-news-daily 有新版本', `v${info.latest} 可用（当前 v${pkgVersion ?? '?'}）`, { url: info.url ?? '' })
+          : undefined,
         log,
       }))
       armPeak() // 高峰边界定时器首次挂钟

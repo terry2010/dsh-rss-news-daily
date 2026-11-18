@@ -94,6 +94,18 @@ export interface DigestSectionConfig {
     /** 分类→输出指令映射（覆盖内置默认，如 {"AI":"重点讲对从业者的影响"}） */
     categoryPrompts: Record<string, string>;
 }
+export interface UpdateCheckSectionConfig {
+    /** 更新检查总开关；false 时完全不外联 */
+    enabled: boolean;
+    /** 检查端点（仅 https，非 https 拒跑） */
+    endpoint: string;
+    /** 启动后延迟分钟数 */
+    delayMinutes: number;
+    /** 请求超时 ms */
+    timeoutMs: number;
+    /** 发现新版本时弹系统通知（独立于 notifyEnabled） */
+    notify: boolean;
+}
 export interface Config {
     /** 总开关 */
     enabled: boolean;
@@ -121,6 +133,7 @@ export interface Config {
     summary: SummarySectionConfig;
     digest: DigestSectionConfig;
     schedule: ScheduleSectionConfig;
+    updateCheck: UpdateCheckSectionConfig;
 }
 export declare const Config: Schema<Config>;
 //# sourceMappingURL=config.d.ts.map

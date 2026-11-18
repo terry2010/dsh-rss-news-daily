@@ -44,6 +44,15 @@ export interface StoreMeta {
   briefRuns?: Record<string, string>
   /** 最后打开此库的插件版本号——跨版本数据形状迁移/排障依据（区别于 PRAGMA user_version 的结构纪元） */
   pluginVersion?: string
+  /** 每日更新检查台账：lastAttemptDay=当天已试过（成败都记，每天最多一次）；其余为最近一次成功结果 */
+  updateCheck?: {
+    lastAttemptDay: string
+    lastCheckedAt?: string
+    latest?: string
+    hasUpdate?: boolean
+    url?: string
+    notes?: string
+  }
 }
 
 export interface StoreData {
@@ -111,6 +120,7 @@ export function normalizeStoreData(value: unknown): StoreData | null {
       ...(typeof meta.peakDefer === 'object' && meta.peakDefer !== null ? { peakDefer: meta.peakDefer as StoreMeta['peakDefer'] } : {}), // 高峰欠账台账：JSON 后端重启不丢
       ...(typeof meta.briefRuns === 'object' && meta.briefRuns !== null ? { briefRuns: meta.briefRuns as Record<string, string> } : {}), // 快报类型槽位台账：重启不丢 lastRun
       ...(typeof meta.methodState === 'object' && meta.methodState !== null ? { methodState: meta.methodState as Record<string, Record<string, string>> } : {}), // adapter 游标 kv：JSON 后端重启不丢
+      ...(typeof meta.updateCheck === 'object' && meta.updateCheck !== null ? { updateCheck: meta.updateCheck as StoreMeta['updateCheck'] } : {}), // 更新检查台账：JSON 后端重启不丢 lastAttemptDay
     },
     sources,
     items,

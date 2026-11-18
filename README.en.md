@@ -51,6 +51,7 @@ Before using AI digesting, summarization, or translation, make sure dsh has a wo
 - The plugin uses a standalone reading panel — news is never pushed into your chat conversations.
 - News items, subscriptions, and reading preferences are stored locally on your machine.
 - When AI is used for scoring, summarizing, or translating, the relevant content is sent to the model service you configured in dsh; how it's handled depends on that provider.
+- **Daily update check**: once per day at most, the plugin POSTs its own version plus installed companion-plugin versions to `news-update.zhuikan.net` — nothing else (no device ID, no usage data). Disable via `updateCheck.enabled = false`. Details: [zhuikan.net/privacy](https://zhuikan.net/privacy.html).
 
 ## Install
 
