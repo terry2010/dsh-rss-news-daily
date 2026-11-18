@@ -653,9 +653,9 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
   if (opts.summaryEnabled && opts.llmEnabled && opts.llmClient) {
     await itemSummaries(picked, sourcesById, opts.llmClient, opts)
   }
-  // 英文条目生成中英对照译文（翻译模型/缺省跟随摘要模型）
+  // 英文条目生成中英对照译文（翻译模型/缺省跟随摘要模型）；translate=false/stream 源不翻（与快报产线同源级口径）
   if (opts.llmEnabled && opts.translateClient) {
-    await translateItems(picked, opts.translateClient, opts)
+    await translateItems(picked.filter((i) => { const s = sourcesById.get(i.sourceId); return !i.state.translation && s?.stream !== true && s?.translate !== false }), opts.translateClient, opts)
   }
   // queryItems 候选是普通对象（非窗口代理）——管线写入的评分/摘要/译文不会自动标脏，
   // 小集合（补评成功+入选）手动标脏借 save() UPDATE 通道回写；dupOf/dupCount 是临时注解不回写
