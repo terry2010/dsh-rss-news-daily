@@ -49,6 +49,11 @@ test('单源重试显示进度并走自动翻译，翻译完成后恢复空闲�
     listProviders: () => [{ id: 'test-provider' }],
     listModels: async () => [{ id: 'test-model' }],
     stream: async function* (request) {
+      // purpose 不透传到 stream——按 system 区分：评分调用先回分（翻译门槛 i.llmScore != null 才放行）
+      if ((request.system || '').includes('新闻价值评审')) {
+        yield { type: 'text-delta', text: '[{"i":1,"s":8,"r":"测试","t":["天文"]}]' }
+        return
+      }
       if (blockTranslation) {
         translationStartedResolve()
         await new Promise((resolve) => request.signal.addEventListener('abort', resolve, { once: true }))
@@ -71,7 +76,7 @@ test('单源重试显示进度并走自动翻译，翻译完成后恢复空闲�
   const config = Config({
     dataDir: dir,
     sources: [{ url: feedUrl, title: 'Retry feed', category: '科学' }],
-    fetch: { enabled: false, scoreOnFetch: false, hourlyBrief: false },
+    fetch: { enabled: false, scoreOnFetch: true, hourlyBrief: false }, // scoreOnFetch：自动翻译门槛是 llmScore!=null，先评上才轮得到翻
   })
   const dispose = apply(ctx, config)
   try {
@@ -170,8 +175,13 @@ test('翻译 LLM 挂起不返回 → llm.timeoutMs 超时释放抓取循环，�
   const llm = {
     listProviders: () => [{ id: 'test-provider' }],
     listModels: async () => [{ id: 'test-model' }],
-    // 模拟本地模型半死：连接建立但永不产出 chunk，直到信号中止
+    // 模拟本地模型半死：翻译调用永不产出 chunk，直到信号中止；
+    // 评分调用照常回分（自动翻译门槛 llmScore!=null，scoreOnFetch 开着先评上）
     stream: async function* (request) {
+      if ((request.system || '').includes('新闻价值评审')) {
+        yield { type: 'text-delta', text: '[{"i":1,"s":8,"r":"测试","t":["天文"]}]' }
+        return
+      }
       await new Promise((resolve) => request.signal.addEventListener('abort', resolve, { once: true }))
       llmSignalAborted = true
       yield { type: 'finish', reason: { kind: 'aborted', failure: { message: 'aborted', code: 'ABORTED' } } }
@@ -190,7 +200,7 @@ test('翻译 LLM 挂起不返回 → llm.timeoutMs 超时释放抓取循环，�
   const config = Config({
     dataDir: dir,
     sources: [{ url: feedUrl, title: 'Hang feed', category: '科学' }],
-    fetch: { enabled: false, scoreOnFetch: false, hourlyBrief: false },
+    fetch: { enabled: false, scoreOnFetch: true, hourlyBrief: false },
     llm: { timeoutMs: 5000 },
   })
   const dispose = apply(ctx, config)
