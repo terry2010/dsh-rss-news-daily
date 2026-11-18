@@ -74,6 +74,8 @@ header { position: sticky; top: 0; z-index: 20; display: flex; align-items: cent
 .skip-link:focus { top: 10px; }
 .brand { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; flex-shrink: 0; }
 .tabs { position: relative; display: inline-flex; gap: 2px; background: var(--tabs-track); border-radius: var(--r-md); padding: 3px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+/* 横向可滚但滚动条隐藏——右缘渐隐提示「后面还有内容」 */
+.tabs.scrollable { mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); }
 .tabs::-webkit-scrollbar { display: none; }
 .tab-ind { position: absolute; top: 3px; bottom: 3px; left: 0; width: 0; background: var(--tabs-ind); border: 1px solid var(--line-l3); border-radius: var(--r-sm); transition: transform var(--m-slide) var(--ease); pointer-events: none; }
 .tab { position: relative; z-index: 1; background: none; border: none; box-shadow: none; color: var(--dim); height: 26px; padding: 0 12px; border-radius: var(--r-sm); cursor: pointer; font-size: 12.5px; font-weight: 500; white-space: nowrap; transition: color var(--m-in) var(--ease); }
