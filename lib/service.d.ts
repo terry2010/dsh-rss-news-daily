@@ -46,6 +46,10 @@ export declare function toFeedSource(raw: {
     stream?: boolean;
     proxy?: string | boolean;
     cooldownHours?: number;
+    score?: boolean;
+    translate?: boolean;
+    brief?: boolean;
+    digest?: boolean;
     provider?: string;
 }): FeedSource;
 /** 生效源表：内置 ∪ config 预置 ∪ store 用户源，按规范化 URL 合并（用户覆盖内置）。 */
@@ -63,6 +67,10 @@ export interface AddSourceOptions {
     url: string;
     title?: string;
     category?: string;
+    score?: boolean;
+    translate?: boolean;
+    brief?: boolean;
+    digest?: boolean;
 }
 /** 预览：验证+抓取+解析+分类，不落库；确认时由 addSource 重抓写入 */
 export declare function previewSource(fetch: ReturnType<typeof createFetcher>, store: StoreLike, opts: AddSourceOptions, classify?: (feed: {
@@ -106,6 +114,10 @@ export declare function updateSource(store: StoreLike, urlOrId: string, patch: {
     proxy?: string | boolean | null;
     cooldownHours?: number | null;
     url?: string;
+    score?: boolean;
+    translate?: boolean;
+    brief?: boolean;
+    digest?: boolean;
 }, currentEnabled?: boolean): Promise<void>;
 export declare function setSourceSummarize(store: StoreLike, urlOrId: string, summarize: boolean, currentEnabled?: boolean): Promise<void>;
 export interface OpmlImportResult {

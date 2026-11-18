@@ -85,8 +85,14 @@ export function zipEntries(entries: ZipEntry[]): Buffer {
   return Buffer.concat([...chunks, cd, eocd])
 }
 
-/** 解包：zip Buffer → {name,data} 列表（支持 deflate/store） */
-export function unzipEntries(buf: Buffer): ZipEntry[] {
+/** 解包：zip Buffer → {name,data} 列表（支持 deflate/store）。
+ *  解压配额（audit P2）：inflate 用 maxOutputLength 封顶单条目、总量 2GiB 封顶——
+ *  备份包存在"他人分享"场景，小体积高压缩比条目（zip 炸弹）不再能撑爆内存。 */
+const UNZIP_MAX_ENTRY_BYTES = 512 * 1024 ** 2   // 单条目解压上限（> BACKUP_ZIP_MAX_DB 即非法）
+const UNZIP_MAX_TOTAL_BYTES = 2 * 1024 ** 3     // 全包解压总量上限
+export function unzipEntries(buf: Buffer, caps: { entry?: number; total?: number } = {}): ZipEntry[] {
+  const maxEntry = caps.entry ?? UNZIP_MAX_ENTRY_BYTES
+  const maxTotal = caps.total ?? UNZIP_MAX_TOTAL_BYTES
   let eocd = -1
   for (let i = buf.length - 22; i >= 0 && i >= buf.length - 22 - 65557; i--) {
     if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break }
@@ -95,6 +101,7 @@ export function unzipEntries(buf: Buffer): ZipEntry[] {
   const count = buf.readUInt16LE(eocd + 10)
   let p = buf.readUInt32LE(eocd + 16)
   const out: ZipEntry[] = []
+  let totalBytes = 0
   for (let k = 0; k < count; k++) {
     if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error('zip 中央目录损坏')
     const method = buf.readUInt16LE(p + 10)
@@ -107,8 +114,12 @@ export function unzipEntries(buf: Buffer): ZipEntry[] {
     const ln = buf.readUInt16LE(lhOff + 26)
     const le = buf.readUInt16LE(lhOff + 28)
     const raw = buf.subarray(lhOff + 30 + ln + le, lhOff + 30 + ln + le + compSize)
-    const data = method === 8 ? inflateRawSync(raw) : method === 0 ? Buffer.from(raw) : null
+    const data = method === 8
+      ? inflateRawSync(raw, { maxOutputLength: maxEntry })
+      : method === 0 ? Buffer.from(raw) : null
     if (!data) throw new Error(`zip 内 ${name} 使用了不支持的压缩方式 ${method}`)
+    totalBytes += data.length
+    if (totalBytes > maxTotal) throw new Error(`zip 解压总量超过 ${maxTotal} 字节（疑似 zip 炸弹）`)
     out.push({ name, data })
     p += 46 + nlen + elen + clen
   }

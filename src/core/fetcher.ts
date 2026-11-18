@@ -12,7 +12,7 @@
  */
 
 import type { FetchFailure, FetchedDocument } from './types.js'
-import { ssrfRejectReason } from './ssrf.js'
+import { ssrfRejectReason, ipRejectReason } from './ssrf.js'
 
 /** Structured error thrown internally; callers receive {@link FetchFailure}. */
 class FeedFetchError extends Error {
@@ -165,6 +165,28 @@ async function resolveDispatcher(proxy: string | boolean | undefined, globalProx
   return agents.get(target) ?? agents.set(target, new undiciMod.ProxyAgent!(target)).get(target)
 }
 
+// ---- DNS 解析后复查（audit P3 加固）----
+type DnsModule = { promises: { lookup: (hostname: string, options: { all: true }) => Promise<Array<{ address: string; family: number }>> } }
+let dnsMod: DnsModule | null | undefined
+/** 把 hostname 解析出的全部地址过一遍内网/保留段——关掉"公网域名解析到内网 IP"
+ *  （DNS rebinding、split-DNS 劫持）的低成本利用面。不 pin 连接：解析与连接之间的
+ *  极致 TOCTOU 竞态仍属文档声明的边界。代理路径 DNS 由代理解析，本地无从复查，跳过。
+ *  解析失败返回 null（交给 fetch 本身报错）——测试环境的假 TLD 主机名照常走 mock。 */
+async function resolvedHostRejectReason(urlText: string): Promise<string | null> {
+  let host: string
+  try { host = new URL(urlText).hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '') } catch { return null }
+  if (host === '' || !host.includes('.') || /^[0-9.]+$/.test(host) || host.includes(':')) return null // IP 字面量/单标签：URL 层已按字面量或主机名规则校验
+  dnsMod ??= await import('node:dns').then((m) => m as unknown as DnsModule).catch(() => null)
+  if (!dnsMod) return null
+  let addrs: Array<{ address: string }>
+  try { addrs = await dnsMod.promises.lookup(host, { all: true }) } catch { return null }
+  for (const a of addrs) {
+    const reason = ipRejectReason(a.address)
+    if (reason) return `${reason} (${host} 解析后)`
+  }
+  return null
+}
+
 /** Create a fetch function with the given policies. */
 export function createFetcher(options: FetcherOptions = {}) {
   const fetchImpl: typeof fetch = options.fetchImpl ?? globalThis.fetch
@@ -187,6 +209,10 @@ export function createFetcher(options: FetcherOptions = {}) {
       for (let hop = 0; hop <= 5; hop += 1) {
         const blocked = ssrfRejectReason(current)
         if (blocked) return { url, status: 0, error: `SSRF blocked: ${blocked}`, retryable: false }
+        if (dispatcher === undefined) { // 代理路径 DNS 在代理端解析，本地复查无意义
+          const resolvedBlocked = await resolvedHostRejectReason(current)
+          if (resolvedBlocked) return { url, status: 0, error: `SSRF blocked: ${resolvedBlocked}`, retryable: false }
+        }
         response = await fetchImpl(current, {
           headers: {
             'user-agent': userAgent,

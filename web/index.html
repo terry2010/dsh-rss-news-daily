@@ -215,6 +215,12 @@
           <label class="f" for="newSrcTitle"><span class="f-lab">名称（可选）</span><input type="text" id="newSrcTitle" placeholder="留空时自动获取"></label>
           <label class="f" for="newSrcCat"><span class="f-lab">分类</span><select id="newSrcCat"><option value="">未分类</option></select></label>
           <input type="text" id="newSrcCatNew" placeholder="输入新分类名" hidden>
+          <div class="f-flags">
+            <label><input type="checkbox" id="newSrcScore" checked> 评分</label>
+            <label><input type="checkbox" id="newSrcTranslate" checked> 翻译</label>
+            <label><input type="checkbox" id="newSrcBrief" checked> 进快报</label>
+            <label><input type="checkbox" id="newSrcDigest" checked> 进日报</label>
+          </div>
           <p id="addSrcErr" class="addsrc-err" hidden></p>
           <div id="srcPreview" class="src-preview" hidden></div>
         </div>

@@ -244,7 +244,7 @@ export async function scoreNewItems(
 /** P8 时段快报/自定义快报：高分条目按领域分组追加/覆盖 `## HH:mm <节名>` 节（缺省 {day}-hourly.md）。 */
 export async function appendHourlyBrief(opts: {
   items: FeedItem[]
-  sourcesById: Map<string, { title: string; summarize?: boolean; stream?: boolean }>
+  sourcesById: Map<string, { title: string; summarize?: boolean; stream?: boolean; translate?: boolean; brief?: boolean; digest?: boolean }>
   day: string
   time: string // "HH:mm"
   minScore: number
@@ -295,7 +295,7 @@ export async function appendHourlyBrief(opts: {
   // 类型过滤链：源 → 关键字 → 分数 → 条数上限（按分键倒序截断）
   let scored = opts.items.filter((i) => !i.dupOf && !i.state.hidden)
   if (opts.sourceIds?.length) { const allow = new Set(opts.sourceIds); scored = scored.filter((i) => allow.has(i.sourceId)) }
-  else if (!opts.fromPool) scored = scored.filter((i) => opts.sourcesById.get(i.sourceId)?.stream !== true) // 通配快报不装 stream 源；池类型空 sourceIds=全池（池成员由供给器定）
+  else if (!opts.fromPool) scored = scored.filter((i) => { const s = opts.sourcesById.get(i.sourceId); return s?.stream !== true && s?.brief !== false }) // 通配快报不装 stream/brief 关闭源；池类型空 sourceIds=全池（池成员由供给器定）
   if (opts.keywords?.length) {
     const kws = opts.keywords.map((k) => k.toLowerCase())
     scored = scored.filter((i) => kws.some((k) => `${i.title}\n${i.summary ?? ''}`.toLowerCase().includes(k)))
@@ -327,7 +327,7 @@ export async function appendHourlyBrief(opts: {
     return 0
   }
   // 快报生成时补翻入选外文条目：isForeign 由 translateItems 内判（CJK≤50%），无译文才调；高峰快报不翻；stream 源永不翻
-  if (!opts.noTranslate && (opts.llmClient || opts.translateClient)) await translateItems(scored.filter((i) => !i.state.translation && opts.sourcesById.get(i.sourceId)?.stream !== true), opts.translateClient ?? opts.llmClient!, opts)
+  if (!opts.noTranslate && (opts.llmClient || opts.translateClient)) await translateItems(scored.filter((i) => { const s = opts.sourcesById.get(i.sourceId); return !i.state.translation && s?.stream !== true && s?.translate !== false }), opts.translateClient ?? opts.llmClient!, opts)
   const groups = new Map<string, FeedItem[]>()
   for (const it of [...scored].sort((a, b) => keyOf(b) - keyOf(a))) {
     const t = it.topic || '综合'
@@ -412,7 +412,9 @@ export async function appendHourlyBrief(opts: {
   return scored.length
 }
 
-/** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。 */
+/** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。
+ *  倒排索引收敛候选（audit P3）：只跟共享 ≥1 token 的已收条目比 Jaccard（交集 0 必不可能过阈），
+ *  结果与全量两两对比完全一致——大候选集（日报候选上限 5 万）从 O(n²) 降到近线性。 */
 export function dedupeStories(items: FeedItem[]): FeedItem[] {
   const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
   const toks = (s: string) => {
@@ -430,18 +432,25 @@ export function dedupeStories(items: FeedItem[]): FeedItem[] {
   }
   const out: FeedItem[] = []
   const tokSets: Array<Set<string>> = []
+  const inverted = new Map<string, number[]>() // token → out 下标
   for (const it of items) {
     const ts = toks(it.title)
     if (ts.size === 0) { out.push(it); tokSets.push(ts); continue }
+    const cand = new Set<number>()
+    for (const w of ts) { const l = inverted.get(w); if (l) for (const i of l) cand.add(i) }
     let hit = -1
-    for (let j = 0; j < out.length; j++) {
-      const inter = [...ts].filter((w) => tokSets[j].has(w)).length
+    for (const j of [...cand].sort((a, b) => a - b)) { // 升序=与全量对比相同的"首个命中"语义
+      const inter = [...ts].filter((w) => tokSets[j]!.has(w)).length
       // 真 Jaccard（交/并）：合成标题 "News item 1" vs "News item 2" → 2/4=0.5 不合并；
       // 真实同题 "OpenAI releases GPT-6" vs "OpenAI releases GPT-6 model today" → 5/6≈0.83 合并
-      if (inter / (ts.size + tokSets[j].size - inter) > 0.55) { hit = j; break }
+      if (inter / (ts.size + tokSets[j]!.size - inter) > 0.55) { hit = j; break }
     }
-    if (hit >= 0) { out[hit].dupCount = (out[hit].dupCount || 0) + 1; it.dupOf = out[hit].id }
-    else { out.push(it); tokSets.push(ts) }
+    if (hit >= 0) { out[hit]!.dupCount = (out[hit]!.dupCount || 0) + 1; it.dupOf = out[hit]!.id }
+    else {
+      const ni = out.length
+      out.push(it); tokSets.push(ts)
+      for (const w of ts) { const l = inverted.get(w); if (l) l.push(ni); else inverted.set(w, [ni]) }
+    }
   }
   return out
 }
@@ -514,7 +523,7 @@ function pickFinal(items: FeedItem[], opts: DigestPipelineOptions): FeedItem[] {
 /** 逐条一句话摘要：并发受限、单条失败只写 aiSummaryError 不丢条目；summarize=false 的源跳过（用 feed 原摘要）。 */
 async function itemSummaries(
   items: FeedItem[],
-  sourcesById: ReadonlyMap<string, { title: string; summarize?: boolean; stream?: boolean }>,
+  sourcesById: ReadonlyMap<string, { title: string; summarize?: boolean; stream?: boolean; translate?: boolean; brief?: boolean; digest?: boolean }>,
   client: LlmClient,
   opts: DigestPipelineOptions,
 ): Promise<void> {
@@ -602,7 +611,7 @@ export async function runDailyDigest(opts: DigestPipelineOptions): Promise<Diges
     )
   // stream 源（快讯类纯流）不进日报候选——在去重/评分之前就剔，避免 stream 条目
   // 在 dedupeStories 里把同题正常条目并掉（日报要留完整版不要一句话版）
-  const candidates = candidatesRaw.filter((i) => sourcesById.get(i.sourceId)?.stream !== true)
+  const candidates = candidatesRaw.filter((i) => { const s = sourcesById.get(i.sourceId); return s?.stream !== true && s?.digest !== false })
   // v2：启发式全量粗排 → 同题合并 → LLM 评分（可关/失败回退）→ 阈值+perTopic 挑选
   // 大候选集下各同步段（粗排/合并）插让渡点——启动补跑撞首屏时请求可插缝服务
   const tick = () => new Promise<void>((r) => setImmediate(r))

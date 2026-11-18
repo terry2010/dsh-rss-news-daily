@@ -16,6 +16,9 @@ export type TokenFeature = 'digest' | 'score' | 'translate' | 'topic'
 export interface TokenUsage { inputTokens: number; outputTokens: number; cacheReadTokens?: number }
 export interface TokenMeta { tokenStats?: TokenStats }
 
+/** days 明细保留上限（audit P3）：按日桶无清理会无限增长；400 天 ≈ 13 个月，超出删最旧（totalIn/totalOut 是终身累计不受影响） */
+const DAYS_CAP = 400
+
 /** 把一次 LLM 用量累计进 meta（按日+按功能）；零用量跳过 */
 export function addTokenStats(meta: TokenMeta, feature: TokenFeature, usage: TokenUsage | undefined, day: string): void {
   const tin = Math.max(0, usage?.inputTokens ?? 0), tout = Math.max(0, usage?.outputTokens ?? 0) // 负增量（流累计值跨重试错位）钳 0 防污染
@@ -30,4 +33,6 @@ export function addTokenStats(meta: TokenMeta, feature: TokenFeature, usage: Tok
   const fio = d.featureIO ?? (d.featureIO = {})
   const fb = fio[feature] ?? (fio[feature] = { in: 0, out: 0 })
   fb.in += tin; fb.out += tout; fb.cached = (fb.cached ?? 0) + tcache
+  const keys = Object.keys(st.days)
+  if (keys.length > DAYS_CAP) for (const k of keys.sort().slice(0, keys.length - DAYS_CAP)) delete st.days[k]
 }

@@ -167,9 +167,11 @@ export function briefFileOf(digestsDir: string, type: { id: string; builtin?: bo
     : join(briefsDirOf(digestsDir), `${day}-${type.id}.md`)
 }
 
-/** 读取侧按 key 定位（不问 prefs——已删类型的历史文件照样可读） */
+/** 读取侧按 key 定位（不问 prefs——已删类型的历史文件照样可读）。
+ *  key 消毒（audit P2 纵深防御）：API 层已校验 ID_RE，这里再剥路径分隔/穿越字符，防调用方漏校验。 */
 export function briefFileFor(digestsDir: string, typeKey: string, day: string): string {
-  return typeKey === 'hourly' ? join(digestsDir, `${day}-hourly.md`) : join(briefsDirOf(digestsDir), `${day}-${typeKey}.md`)
+  const key = typeKey === 'hourly' ? typeKey : String(typeKey).replace(/[^\w-]/g, '')
+  return key === 'hourly' ? join(digestsDir, `${day}-hourly.md`) : join(briefsDirOf(digestsDir), `${day}-${key}.md`)
 }
 
 // ---- 槽位调度 ----

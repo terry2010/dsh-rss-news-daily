@@ -13,6 +13,12 @@ import type { LogSink } from './types.js'
 
 const noopLog: LogSink = { info() {}, warn() {}, error() {} }
 
+/** 行内 JSON 列容错解析（audit P3）：单行损坏（手改库/恢复中断）不再炸整条查询 */
+const jsonColumn = (raw: unknown, fallback: unknown): unknown => {
+  try { const v = JSON.parse(raw as string); return v ?? fallback } catch { return fallback }
+}
+const freshItemState = (): FeedItem['state'] => ({ read: false, hidden: false, liked: 0 })
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY, hash TEXT UNIQUE NOT NULL, sourceId TEXT NOT NULL, topic TEXT,
@@ -107,9 +113,9 @@ const rowToItem = (r: Row): FeedItem => ({
   dupOf: r.dupOf == null ? undefined : (r.dupOf as string),
   dupCount: r.dupCount == null ? undefined : (r.dupCount as number),
   hotCycles: r.hotCycles == null ? undefined : (r.hotCycles as number),
-  tags: r.tags ? JSON.parse(r.tags as string) : undefined,
-  reasons: r.reasons ? JSON.parse(r.reasons as string) : [],
-  state: r.state ? JSON.parse(r.state as string) : { read: false, hidden: false, liked: 0 },
+  tags: r.tags ? jsonColumn(r.tags, undefined) as string[] | undefined : undefined,
+  reasons: r.reasons ? jsonColumn(r.reasons, []) as string[] : [],
+  state: r.state ? jsonColumn(r.state, null) as FeedItem['state'] ?? freshItemState() : freshItemState(),
 })
 const ITEM_COLS = ['id','hash','sourceId','topic','title','link','summary','content','publishedAt','fetchedAt','digestedDay','score','llmScore','llmReason','aiTitle','aiSummary','dupOf','dupCount','hotCycles','tags','reasons','state'] as const
 /** lite 候选列：剔除 content/aiSummary 两个重文本（行体积 ~95% 在这两列）——大批量候选物化从几百 MB 降到几十 MB */
@@ -898,7 +904,8 @@ export class SqliteStore {
           if (++inTxn >= 10_000) { this.db.exec('COMMIT'); this.db.exec('BEGIN'); inTxn = 0 }
         }
         else if (o.type === 'source') { const src = o.data as FeedSource; if (!this.srcList.find((x) => x.url === src.url)) { this.addSource(src); counts.sources++ } }
-        else if (o.type === 'digest' && o.day) {
+        else if (o.type === 'digest' && typeof o.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.day)) {
+          // day 白名单校验（audit P2）：导入文件可能是他人分享的——不校验会经 join 拼出 ../ 路径穿越写盘
           mkdirSync(digestsDir, { recursive: true })
           const f = join(digestsDir, `${o.day}${o.kind === 'hourly' ? '-hourly' : '-rss-briefing'}.md`)
           if (!ex(f)) { writeFileSync(f, o.data as string); counts.digests++ }

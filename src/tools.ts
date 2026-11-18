@@ -23,7 +23,7 @@ export interface LlmQueueInfo {
 /** 插件对外操作的统一门面（index.ts 注入，避免 tools.ts 直接绑 store） */
 export interface NewsService {
   listSources(): FeedSource[]
-  addSource(opts: { url: string; title?: string; category?: string }): Promise<FeedSource>
+  addSource(opts: { url: string; title?: string; category?: string; score?: boolean; translate?: boolean; brief?: boolean; digest?: boolean }): Promise<FeedSource>
   previewSource?(opts: { url: string; title?: string; category?: string }): Promise<{ url: string; title: string; category?: string; viaProxy: boolean; items: { title: string; link: string }[] }>
   setEnabled(urlOrId: string, enabled: boolean): Promise<void>
   setSummarize(urlOrId: string, summarize: boolean): Promise<void>

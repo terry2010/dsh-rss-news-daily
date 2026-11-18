@@ -23,6 +23,10 @@ export interface NewsService {
         url: string;
         title?: string;
         category?: string;
+        score?: boolean;
+        translate?: boolean;
+        brief?: boolean;
+        digest?: boolean;
     }): Promise<FeedSource>;
     previewSource?(opts: {
         url: string;

@@ -43,6 +43,11 @@ export interface FeedSource {
     /** 纯流源（快讯类）：条目只入库+展示——不 LLM 评分/逐条摘要/翻译/无效正文判定，
      *  不进日报与通配快报；快报类型显式 sourceIds 点名时仍可入选 */
     stream?: boolean;
+    /** 逐项 AI 开关（缺省=开；false=该源条目跳过对应管线，只入库展示） */
+    score?: boolean;
+    translate?: boolean;
+    brief?: boolean;
+    digest?: boolean;
     health: SourceHealth;
 }
 export interface ItemState {

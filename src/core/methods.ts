@@ -70,6 +70,11 @@ export interface SourceDef {
   summarize?: boolean
   /** 纯流源：只入库+展示，全程不碰 AI（评分/摘要/翻译/stub 判定），不进日报/通配快报 */
   stream?: boolean
+  /** 逐项 AI 开关（缺省=开）：score=LLM评分 translate=翻译 brief=进快报 digest=进日报 */
+  score?: boolean
+  translate?: boolean
+  brief?: boolean
+  digest?: boolean
   proxy?: string | boolean
   cooldownHours?: number
 }

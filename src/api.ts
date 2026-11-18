@@ -75,11 +75,17 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml',
 }
 
-/** 同源防护：拒绝 cross-site 请求（阅读器只服务本实例页面）。 */
+/** 同源防护：拒绝 cross-site 与 same-site 请求（阅读器只服务本实例页面）。
+ *  same-site 也拒（audit P2）：本机其他端口的应用发 fetch 属 same-site——text/plain
+ *  POST 可免 preflight 直达写接口（restore/import/prefs）。现代浏览器直开页面=
+ *  none、同源 fetch=same-origin，均放行；无该头的非浏览器客户端不受浏览器攻击面约束。 */
 function sameSite(req: Req): boolean {
   const site = String(req.headers?.['sec-fetch-site'] || '').toLowerCase()
-  return site !== 'cross-site'
+  return site !== 'cross-site' && site !== 'same-site'
 }
+
+/** 日历日 key 白名单（audit P2）：day 进文件路径前必须过它，防 ../ 穿越 */
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export interface ApiDeps {
   store: StoreLike
@@ -252,6 +258,7 @@ function apiArchive(deps: ApiDeps) {
 
 function apiDigest(deps: ApiDeps) {
   return async (req: Req, res: Res, day: string) => {
+    if (!DAY_RE.test(day)) { sendJson(res, 404, { ok: false, error: `no digest for ${day}` }); return }
     const { readFile: rf } = await import('node:fs/promises')
     try {
       const kind = new URL(req.url || '', 'http://x').searchParams.get('kind')
@@ -329,6 +336,9 @@ function apiBriefs(deps: ApiDeps) {
     const u = new URL(req.url || '', 'http://x')
     const day = u.searchParams.get('day') || zonedDayKey(new Date(), deps.timezone || undefined)
     const type = u.searchParams.get('type') || 'all'
+    // day/type 白名单（audit P2）：两者都进 briefFileFor 的拼路径——不校验即 ../ 任意读
+    if (!DAY_RE.test(day)) return sendJson(res, 400, { ok: false, error: 'day 必须是 YYYY-MM-DD' })
+    if (type !== 'all' && !/^[A-Za-z0-9_-]{1,60}$/.test(type)) return sendJson(res, 400, { ok: false, error: 'type 非法' })
     if (type !== 'all') {
       try {
         const md = await readFile(briefFileFor(deps.digestsDir, type, day), 'utf8')
@@ -409,9 +419,10 @@ function apiSources(deps: ApiDeps) {
       }
     }
     if (method === 'POST' && !sub) {
-      const body = await readBody(req) as { url?: string; title?: string; category?: string }
+      const body = await readBody(req) as { url?: string; title?: string; category?: string; score?: boolean; translate?: boolean; brief?: boolean; digest?: boolean }
       try {
-        const src = await deps.svc.addSource({ url: String(body.url || ''), title: body.title, category: body.category })
+        const flags = Object.fromEntries((['score', 'translate', 'brief', 'digest'] as const).filter((k) => typeof body[k] === 'boolean').map((k) => [k, body[k]]))
+        const src = await deps.svc.addSource({ url: String(body.url || ''), title: body.title, category: body.category, ...flags })
         return sendJson(res, 200, { ok: true, source: { id: src.id, url: src.url, title: src.title } })
       } catch (e) {
         return sendJson(res, 400, { ok: false, error: String((e as Error)?.message || e) })
@@ -419,7 +430,7 @@ function apiSources(deps: ApiDeps) {
     }
     const id = decodeURIComponent((sub || '').split('?')[0])
     if (method === 'PATCH') {
-      const body = await readBody(req) as { enabled?: boolean; title?: string; action?: string; summarize?: boolean; category?: string; proxy?: string | boolean | null; cooldownHours?: number | null }
+      const body = await readBody(req) as { enabled?: boolean; title?: string; action?: string; summarize?: boolean; category?: string; proxy?: string | boolean | null; cooldownHours?: number | null; score?: boolean; translate?: boolean; brief?: boolean; digest?: boolean }
       if (body.action === 'restore') {
         const ok = await (deps.svc as { restoreSource?: (u: string) => Promise<boolean> }).restoreSource?.(id)
         return sendJson(res, ok ? 200 : 404, { ok: !!ok })
@@ -698,6 +709,8 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     if (q.method !== 'POST') { r.statusCode = 405; r.end(); return }
     const body = await readBody(q) as { path?: string }
     if (!body.path?.trim()) { sendJson(r, 400, { ok: false, error: 'path required' }); return }
+    // 只吃本插件备份包（audit P2 纵深防御）：扩展名门控拦掉任意文件路径探测；真正解析校验在 stageRestore
+    if (!/\.zip$/i.test(body.path.trim())) { sendJson(r, 400, { ok: false, error: '备份文件必须是 .zip' }); return }
     const dataDir = dirname(deps.store.path)
     try {
       // 1) 在飞任务全部叫停，等它们真正退出（写库的动作不能与换库并发）
@@ -920,6 +933,8 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     if (!st.importNdjson) return sendJson(r, 400, { ok: false, error: 'sqlite backend required' })
     const body = await readBody(q) as { path?: string }
     if (!body.path) return sendJson(r, 400, { ok: false, error: 'path required' })
+    // 只吃 NDJSON 导出（audit P2）：前端无此入口、路径全凭请求给定——扩展名门控防任意文件被当 NDJSON 解析
+    if (!/\.(ndjson|jsonl)$/i.test(body.path)) return sendJson(r, 400, { ok: false, error: '导入文件必须是 .ndjson/.jsonl' })
     const counts = await st.importNdjson(body.path, deps.digestsDir)
     sendJson(r, 200, { ok: true, ...counts })
   }) }))

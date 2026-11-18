@@ -84,6 +84,9 @@ export declare function appendHourlyBrief(opts: {
         title: string;
         summarize?: boolean;
         stream?: boolean;
+        translate?: boolean;
+        brief?: boolean;
+        digest?: boolean;
     }>;
     day: string;
     time: string;
@@ -128,7 +131,9 @@ export declare function appendHourlyBrief(opts: {
     fromPool?: boolean;
     log?: LogSink;
 }): Promise<number>;
-/** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。 */
+/** v2 同题合并：标题归一化后 token 重叠 >0.55 视为同一事件；合并到排序靠前的主条目，dupCount 计数。
+ *  倒排索引收敛候选（audit P3）：只跟共享 ≥1 token 的已收条目比 Jaccard（交集 0 必不可能过阈），
+ *  结果与全量两两对比完全一致——大候选集（日报候选上限 5 万）从 O(n²) 降到近线性。 */
 export declare function dedupeStories(items: FeedItem[]): FeedItem[];
 /** 生成并落盘当日日报；返回 DigestDocument（含 degraded/note 元数据）。 */
 export declare function runDailyDigest(opts: DigestPipelineOptions): Promise<DigestDocument>;

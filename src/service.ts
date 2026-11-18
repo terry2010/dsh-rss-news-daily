@@ -87,6 +87,7 @@ function sourceIdOf(url: string): string {
 export function toFeedSource(raw: {
   url: string; title: string; category?: string; tier?: number; lang?: 'zh' | 'en'
   method?: string; enabled?: boolean; builtin?: boolean; addedAt?: string; summarize?: boolean; stream?: boolean; proxy?: string | boolean; cooldownHours?: number
+  score?: boolean; translate?: boolean; brief?: boolean; digest?: boolean
   provider?: string
 }): FeedSource {
   return {
@@ -104,6 +105,7 @@ export function toFeedSource(raw: {
     weight: 1,
     summarize: raw.summarize !== false,
     stream: raw.stream === true,
+    score: raw.score, translate: raw.translate, brief: raw.brief, digest: raw.digest,
     proxy: raw.proxy,
     cooldownHours: raw.cooldownHours,
     health: emptyHealth(),
@@ -282,6 +284,10 @@ export interface AddSourceOptions {
   url: string
   title?: string
   category?: string
+  score?: boolean
+  translate?: boolean
+  brief?: boolean
+  digest?: boolean
 }
 
 /** 添加源：SSRF → 真实抓取校验 → 解析 feed 提标题 → 落 store。校验不过不保存。 */
@@ -330,9 +336,6 @@ export async function previewSource(
   if (store.sources.some((s) => normalizeUrl(s.url) === normalizeUrl(url))) {
     throw new Error(`已存在该源: ${url}`)
   }
-  if (store.sources.some((s) => normalizeUrl(s.url) === normalizeUrl(url))) {
-    throw new Error(`已存在该源: ${url}`)
-  }
   const { url: finalUrl, feed, viaProxy } = await fetchFeedForAdd(fetch, url)
   if (store.sources.some((s) => normalizeUrl(s.url) === normalizeUrl(finalUrl))) {
     throw new Error(`已存在该源: ${finalUrl}`) // www 回退后的最终地址也可能已存在
@@ -362,6 +365,7 @@ export async function addSource(
   const src = toFeedSource({
     url: finalUrl, title: opts.title || feed.title || finalUrl, category,
     builtin: false, proxy: viaProxy ? true : undefined,
+    score: opts.score, translate: opts.translate, brief: opts.brief, digest: opts.digest,
   })
   store.addSource(src)
   store.setHealth(src.id, { ok: 1, fail: 0, failStreak: 0 }) // 校验抓取本身算一次成功
@@ -429,6 +433,7 @@ export async function setSourceEnabled(
 export async function updateSource(store: StoreLike, urlOrId: string, patch: {
   title?: string; category?: string; enabled?: boolean; summarize?: boolean
   proxy?: string | boolean | null; cooldownHours?: number | null; url?: string
+  score?: boolean; translate?: boolean; brief?: boolean; digest?: boolean
 }, currentEnabled = true): Promise<void> {
   const id = normalizeUrl(urlOrId)
   const builtin = builtinCatalog().find((s) => normalizeUrl(s.url) === id)
@@ -450,6 +455,10 @@ export async function updateSource(store: StoreLike, urlOrId: string, patch: {
     if (patch.summarize !== undefined) existing.summarize = patch.summarize
     if (patch.proxy !== undefined) (existing as { proxy?: string | boolean }).proxy = patch.proxy === null ? undefined : patch.proxy
     if (patch.cooldownHours !== undefined) (existing as { cooldownHours?: number }).cooldownHours = patch.cooldownHours === null ? undefined : patch.cooldownHours
+    if (patch.score !== undefined) existing.score = patch.score
+    if (patch.translate !== undefined) existing.translate = patch.translate
+    if (patch.brief !== undefined) existing.brief = patch.brief
+    if (patch.digest !== undefined) existing.digest = patch.digest
     store.addSource(existing) // upsert 写穿透——sqlite save() 不落 sources 表
   } else if (newUrl && builtin) {
     // 改内置源的 URL：旧 url 置停用（否则内置默认会再抓旧址）+ 新 url 落 override

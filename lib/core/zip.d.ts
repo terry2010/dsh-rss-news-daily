@@ -8,6 +8,8 @@ export interface ZipEntry {
 }
 /** 打包：{name,data} 列表 → 完整 zip Buffer（能 deflate 就用，存不下就 store） */
 export declare function zipEntries(entries: ZipEntry[]): Buffer;
-/** 解包：zip Buffer → {name,data} 列表（支持 deflate/store） */
-export declare function unzipEntries(buf: Buffer): ZipEntry[];
+export declare function unzipEntries(buf: Buffer, caps?: {
+    entry?: number;
+    total?: number;
+}): ZipEntry[];
 //# sourceMappingURL=zip.d.ts.map
