@@ -63,7 +63,8 @@ export declare function listCompanions(selfPkg: string, opts?: {
 }): Record<string, string>;
 /** 响应消毒：shape 不对/字段类型不对 → null（服务端被劫持也只能拿到"无更新"）。 */
 export declare function sanitizeUpdateInfo(v: unknown): UpdateInfo | null;
-/** 打一次端点；任何失败/异常 → null（调用方只 log，不阻断主流程）。 */
+/** 打一次端点；任何失败/异常 → null（调用方只 log，不阻断主流程）。
+ *  上报走 GET query——服务端是纯静态 nginx，access_log 即数据管线。 */
 export declare function runUpdateCheck(opts: {
     endpoint: string;
     timeoutMs: number;

@@ -109,6 +109,15 @@ test('runUpdateCheck: 成功解析；非 https 端点拒跑', async () => {
   assert.equal(info.latest, '1.3.0')
   assert.equal(await runUpdateCheck({ endpoint: 'http://u/v1/check', timeoutMs: 5000, report: { pkg: SELF, version: '1.2.0', companions: {} }, fetchImpl: okFetch({}), log: noopLog }), null)
 })
+test('runUpdateCheck: 上报字段编码进 GET query（nginx 日志管线）', async () => {
+  let hit = ''
+  const spy = async (url) => { hit = String(url); return { ok: true, text: async () => '{"latest":"1.2.0"}' } }
+  await runUpdateCheck({ endpoint: 'https://u/v1/check', timeoutMs: 5000, report: { pkg: SELF, version: '1.2.0', companions: { 'dsh-rss-news-zhuikan': '0.2.0' } }, fetchImpl: spy, log: noopLog })
+  const u = new URL(hit)
+  assert.equal(u.searchParams.get('pkg'), SELF)
+  assert.equal(u.searchParams.get('version'), '1.2.0')
+  assert.deepEqual(JSON.parse(u.searchParams.get('companions')), { 'dsh-rss-news-zhuikan': '0.2.0' })
+})
 test('runUpdateCheck: HTTP 错/异常/超大体 → null', async () => {
   const rep = { pkg: SELF, version: '1.2.0', companions: {} }
   assert.equal(await runUpdateCheck({ endpoint: 'https://u', timeoutMs: 5000, report: rep, fetchImpl: async () => ({ ok: false, status: 500 }), log: noopLog }), null)

@@ -159,7 +159,8 @@ export function sanitizeUpdateInfo(v: unknown): UpdateInfo | null {
   return out
 }
 
-/** 打一次端点；任何失败/异常 → null（调用方只 log，不阻断主流程）。 */
+/** 打一次端点；任何失败/异常 → null（调用方只 log，不阻断主流程）。
+ *  上报走 GET query——服务端是纯静态 nginx，access_log 即数据管线。 */
 export async function runUpdateCheck(opts: {
   endpoint: string
   timeoutMs: number
@@ -169,11 +170,17 @@ export async function runUpdateCheck(opts: {
 }): Promise<UpdateInfo | null> {
   const log = opts.log || noopLog
   if (!opts.endpoint.startsWith('https://')) { log.warn(`update check skipped: non-https endpoint ${opts.endpoint}`); return null }
+  let url: string
   try {
-    const res = await (opts.fetchImpl ?? fetch)(opts.endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'user-agent': `${opts.report.pkg}/${opts.report.version}` },
-      body: JSON.stringify(opts.report),
+    const u = new URL(opts.endpoint)
+    u.searchParams.set('pkg', opts.report.pkg)
+    u.searchParams.set('version', opts.report.version)
+    if (Object.keys(opts.report.companions).length) u.searchParams.set('companions', JSON.stringify(opts.report.companions))
+    url = u.toString()
+  } catch { log.warn(`update check skipped: bad endpoint ${opts.endpoint}`); return null }
+  try {
+    const res = await (opts.fetchImpl ?? fetch)(url, {
+      headers: { 'user-agent': `${opts.report.pkg}/${opts.report.version}` },
       signal: AbortSignal.timeout(opts.timeoutMs),
     })
     if (!res.ok) { log.warn(`update check: HTTP ${res.status}`); return null }
