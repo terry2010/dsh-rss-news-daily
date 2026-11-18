@@ -69,9 +69,10 @@ export interface DigestPipelineOptions {
 }
 /** 中文展示题：aiTitle（日报重写题）→ 译文首行（抓取期译题）→ 原标题（专题管线复用） */
 export declare function zhTitleOf(item: FeedItem): string;
-/** 外文判定：非汉字字母（拉丁/谚文/假名/西里尔等）≥10 个且超过汉字数 2 倍才算外文。
- *  旧规则按字符占比 ≤50% 判定，中文标题夹带型号/产品名（Windows 8GB、GPT-6）
- *  会被误判送翻译、模型原样回显；改按"文字脚本占比"判定，URL 不计入。 */
+/** 外文判定：非汉字"词"（连续非汉字字母串，拉丁/谚文/假名/西里尔等）≥3 个且数量
+ *  超过汉字数才算外文——分母是 外文词数+汉字数，即词级占比 >50%。
+ *  按词而非字母计数：产品名「Ultrafast」是 1 个词而非 9 个字母，中文标题夹带
+ *  型号/产品名（GPT-6.2 Astra、Windows 8GB）不会再被字母数放大成"外文"。 */
 export declare function textLooksForeign(text: string): boolean;
 /** P1 抓取后评分：本轮新条目本批去重 → 分块批量评分（无分跳过幂等）；返回评出条数。 */
 export declare function scoreNewItems(items: FeedItem[], client: LlmClient, opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs' | 'onScoreProgress'> & {

@@ -240,6 +240,8 @@ test('textLooksForeign: 中文标题夹带英文型号不再误判外文', async
   // 纯中文/中英产品名混排短标题 → 中文
   assert.equal(textLooksForeign('OpenAI发布GPT-6新模型'), false)
   assert.equal(textLooksForeign('苹果发布新MacBook Pro'), false)
+  // 真实误判案例：产品名长单词（Ultrafast=9字母）曾靠字母数压过 9 个汉字 → 词级判定后 = 中文
+  assert.equal(textLooksForeign('GPT-6.2 Astra、Sol 发布：Ultrafast API 半价优惠至 2 月 28 日'), false)
   // 纯外文标题 → 外文
   assert.equal(textLooksForeign('The 16GB Raspberry Pi 5 got another RAM price hike - The Verge'), true)
   assert.equal(textLooksForeign('Running Ollama on AMD Ryzen AI Max+ 395 with ROCm and Docker'), true)
