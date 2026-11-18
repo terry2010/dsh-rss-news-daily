@@ -77,8 +77,11 @@ This project is actively maintained. Found a bug, inaccurate content, or want a 
 
 ## Related plugins
 
+- **[dsh-rss-news-zhuikan](https://github.com/terry2010/dsh-rss-news-zhuikan)** — "watchlist" companion: subscribe to ordinary list pages with no RSS feed; AI learns the page structure, new items join the unified feed
 - **[dsh-rss-news-flash-kuaixun](https://github.com/terry2010/dsh-rss-news-flash-kuaixun)** — real-time finance flash-news companion: six sources at 60-second polling, multi-source corroboration, AI briefings and desktop notifications
 - **[dsh-rss-news-browser-fetch](https://github.com/terry2010/dsh-rss-news-browser-fetch)** — browserFetch transport service: dedicated Chrome + CDP, real-fingerprint same-origin fetch fallback for source adapters
+
+Writing your own companion? See [docs/COMPANION-PLUGIN.md](docs/COMPANION-PLUGIN.md) (rndSources contract, view/theme conventions, pitfalls, release checklist).
 
 ## License
 
