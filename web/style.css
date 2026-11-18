@@ -76,6 +76,11 @@ header { position: sticky; top: 0; z-index: 20; display: flex; align-items: cent
 .tabs { position: relative; display: inline-flex; gap: 2px; background: var(--tabs-track); border-radius: var(--r-md); padding: 3px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 /* 横向可滚但滚动条隐藏——右缘渐隐提示「后面还有内容」 */
 .tabs.scrollable { mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); }
+/* 视图折叠菜单（窄栏/多插件时视图 tab 收进「更多 ▾」） */
+.viewmenu { position: fixed; z-index: 60; min-width: 150px; max-width: 260px; padding: 4px; background: var(--panel2); border: .5px solid var(--line); border-radius: var(--r-md); box-shadow: var(--shadow-hi); }
+.viewmenu button { display: block; width: 100%; height: 28px; padding: 0 10px; border: none; box-shadow: none; background: none; border-radius: var(--r-sm); text-align: left; font-size: 12.5px; color: var(--lead); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.viewmenu button:hover { background: var(--seg-track); color: var(--fg); }
+.viewmenu button.active { color: var(--fg); font-weight: 600; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab-ind { position: absolute; top: 3px; bottom: 3px; left: 0; width: 0; background: var(--tabs-ind); border: 1px solid var(--line-l3); border-radius: var(--r-sm); transition: transform var(--m-slide) var(--ease); pointer-events: none; }
 .tab { position: relative; z-index: 1; background: none; border: none; box-shadow: none; color: var(--dim); height: 26px; padding: 0 12px; border-radius: var(--r-sm); cursor: pointer; font-size: 12.5px; font-weight: 500; white-space: nowrap; transition: color var(--m-in) var(--ease); }
