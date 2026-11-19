@@ -13,6 +13,7 @@
  * fetch/fs/clock 全注入，纯逻辑可测。
  */
 
+import { createHmac, randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,6 +42,8 @@ export interface UpdateInfo {
 export interface UpdateCheckState {
   /** 当天已尝试过的判据——成败都记，"每天只检查一次"优先于"不漏检查" */
   lastAttemptDay: string
+  /** 持久随机安装标识（uuid，首跑生成）——统计去重用，无机器信息 */
+  installId?: string
   lastCheckedAt?: string
   latest?: string
   hasUpdate?: boolean
@@ -50,6 +53,9 @@ export interface UpdateCheckState {
 
 const RESPONSE_CAP = 16 * 1024
 const COMPANION_PREFIX = 'dsh-rss-news-'
+/** 上报防污染签名 key——公开源码内，防随手伪造/扫描噪音，不防逆向。
+ *  与 zhuikan.net/server/report_stats.py 的 REPORT_KEY 必须一致。 */
+const REPORT_KEY = '9f4c2d7a1e5b83f60c4a9d2e7b153f8c6a0d4e9b2f7a5c3d8e1b6f0a4c9d2e7b'
 
 /** 宽松 semver 比较：x[.y[.z]][-prerelease]。返回 -1|0|1。预发版 < 同号正式版。 */
 export function compareSemver(a: string, b: string): number {
@@ -159,12 +165,25 @@ export function sanitizeUpdateInfo(v: unknown): UpdateInfo | null {
   return out
 }
 
+/** 上报签名：hmac(v1|iid|day|pkg|version|companionsJson)[:16hex] → "v1.<sig>"
+ *  服务端 recompute 校验——篡改任一字段签名即失效（统计防污染，非安全边界）。 */
+export function reportToken(opts: {
+  iid: string; day: string; pkg: string; version: string; companionsJson: string; key?: string
+}): string {
+  const canon = `v1|${opts.iid}|${opts.day}|${opts.pkg}|${opts.version}|${opts.companionsJson}`
+  return `v1.${createHmac('sha256', opts.key ?? REPORT_KEY).update(canon).digest('hex').slice(0, 16)}`
+}
+
 /** 打一次端点；任何失败/异常 → null（调用方只 log，不阻断主流程）。
  *  上报走 GET query——服务端是纯静态 nginx，access_log 即数据管线。 */
 export async function runUpdateCheck(opts: {
   endpoint: string
   timeoutMs: number
   report: UpdateReport
+  /** 持久随机安装标识（uuid）；给了才会带 iid/d/t 签名三参 */
+  installId?: string
+  /** 上报日（调用方本地时区口径），签名内绑定防改 */
+  day?: string
   fetchImpl?: typeof fetch
   log?: LogSink
 }): Promise<UpdateInfo | null> {
@@ -173,9 +192,15 @@ export async function runUpdateCheck(opts: {
   let url: string
   try {
     const u = new URL(opts.endpoint)
+    const companionsJson = Object.keys(opts.report.companions).length ? JSON.stringify(opts.report.companions) : ''
     u.searchParams.set('pkg', opts.report.pkg)
     u.searchParams.set('version', opts.report.version)
-    if (Object.keys(opts.report.companions).length) u.searchParams.set('companions', JSON.stringify(opts.report.companions))
+    if (companionsJson) u.searchParams.set('companions', companionsJson)
+    if (opts.installId && opts.day) {
+      u.searchParams.set('iid', opts.installId)
+      u.searchParams.set('d', opts.day)
+      u.searchParams.set('t', reportToken({ iid: opts.installId, day: opts.day, pkg: opts.report.pkg, version: opts.report.version, companionsJson }))
+    }
     url = u.toString()
   } catch { log.warn(`update check skipped: bad endpoint ${opts.endpoint}`); return null }
   try {
@@ -221,10 +246,12 @@ export function startUpdateCheck(timer: TimerSeam, opts: StartUpdateCheckOpts): 
     const meta = opts.meta()
     if (meta.updateCheck?.lastAttemptDay === today) return // 今天已试过（成败都算）
     meta.updateCheck = { ...(meta.updateCheck ?? { lastAttemptDay: '' }), lastAttemptDay: today }
+    meta.updateCheck.installId ||= randomUUID() // 首跑生成持久安装标识，随 meta 持久化
     opts.save()
     const info = await runUpdateCheck({
       endpoint: opts.endpoint(), timeoutMs: opts.timeoutMs,
       report: { pkg: opts.selfPkg, version: opts.selfVer, companions: opts.companions() },
+      installId: meta.updateCheck.installId, day: today,
       fetchImpl: opts.fetchImpl, log,
     })
     if (!info) return

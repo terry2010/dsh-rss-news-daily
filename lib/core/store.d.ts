@@ -59,6 +59,8 @@ export interface StoreMeta {
         hasUpdate?: boolean;
         url?: string;
         notes?: string;
+        /** 持久随机安装标识（uuid，首跑生成）——仅随更新检查上报，统计去重用 */
+        installId?: string;
     };
 }
 export interface StoreData {

@@ -35,6 +35,8 @@ export interface UpdateInfo {
 export interface UpdateCheckState {
     /** 当天已尝试过的判据——成败都记，"每天只检查一次"优先于"不漏检查" */
     lastAttemptDay: string;
+    /** 持久随机安装标识（uuid，首跑生成）——统计去重用，无机器信息 */
+    installId?: string;
     lastCheckedAt?: string;
     latest?: string;
     hasUpdate?: boolean;
@@ -63,12 +65,26 @@ export declare function listCompanions(selfPkg: string, opts?: {
 }): Record<string, string>;
 /** 响应消毒：shape 不对/字段类型不对 → null（服务端被劫持也只能拿到"无更新"）。 */
 export declare function sanitizeUpdateInfo(v: unknown): UpdateInfo | null;
+/** 上报签名：hmac(v1|iid|day|pkg|version|companionsJson)[:16hex] → "v1.<sig>"
+ *  服务端 recompute 校验——篡改任一字段签名即失效（统计防污染，非安全边界）。 */
+export declare function reportToken(opts: {
+    iid: string;
+    day: string;
+    pkg: string;
+    version: string;
+    companionsJson: string;
+    key?: string;
+}): string;
 /** 打一次端点；任何失败/异常 → null（调用方只 log，不阻断主流程）。
  *  上报走 GET query——服务端是纯静态 nginx，access_log 即数据管线。 */
 export declare function runUpdateCheck(opts: {
     endpoint: string;
     timeoutMs: number;
     report: UpdateReport;
+    /** 持久随机安装标识（uuid）；给了才会带 iid/d/t 签名三参 */
+    installId?: string;
+    /** 上报日（调用方本地时区口径），签名内绑定防改 */
+    day?: string;
     fetchImpl?: typeof fetch;
     log?: LogSink;
 }): Promise<UpdateInfo | null>;

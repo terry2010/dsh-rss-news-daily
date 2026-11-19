@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 
 const {
   compareSemver, companionVersions, findProfileDeps, scanProfileDeps, listCompanions,
-  sanitizeUpdateInfo, runUpdateCheck, startUpdateCheck,
+  sanitizeUpdateInfo, runUpdateCheck, startUpdateCheck, reportToken,
 } = await import('../lib/update-check.js')
 
 const noopLog = { info() {}, warn() {}, error() {} }
@@ -117,6 +117,26 @@ test('runUpdateCheck: 上报字段编码进 GET query（nginx 日志管线）', 
   assert.equal(u.searchParams.get('pkg'), SELF)
   assert.equal(u.searchParams.get('version'), '1.2.0')
   assert.deepEqual(JSON.parse(u.searchParams.get('companions')), { 'dsh-rss-news-zhuikan': '0.2.0' })
+})
+test('runUpdateCheck: installId+day → iid/d/t 签名三参且服务端可复算', async () => {
+  let hit = ''
+  const spy = async (url) => { hit = String(url); return { ok: true, text: async () => '{"latest":"1.2.0"}' } }
+  const comp = { 'dsh-rss-news-zhuikan': '0.2.0' }
+  await runUpdateCheck({ endpoint: 'https://u/v1/check', timeoutMs: 5000, report: { pkg: SELF, version: '1.2.0', companions: comp }, installId: 'iid-1', day: '2026-11-19', fetchImpl: spy, log: noopLog })
+  const u = new URL(hit)
+  assert.equal(u.searchParams.get('iid'), 'iid-1')
+  assert.equal(u.searchParams.get('d'), '2026-11-19')
+  assert.equal(u.searchParams.get('t'), reportToken({ iid: 'iid-1', day: '2026-11-19', pkg: SELF, version: '1.2.0', companionsJson: JSON.stringify(comp) }))
+  // 未给 installId 的旧行为：不带签名参数
+  hit = ''
+  await runUpdateCheck({ endpoint: 'https://u/v1/check', timeoutMs: 5000, report: { pkg: SELF, version: '1.2.0', companions: {} }, fetchImpl: spy, log: noopLog })
+  assert.equal(new URL(hit).searchParams.get('t'), null)
+})
+test('reportToken: 格式 v1.<16hex>，字段变动签名变', () => {
+  const base = { iid: 'i', day: '2026-11-19', pkg: SELF, version: '1.2.0', companionsJson: '' }
+  const t = reportToken(base)
+  assert.match(t, /^v1\.[0-9a-f]{16}$/)
+  assert.notEqual(reportToken({ ...base, version: '1.3.0' }), t)
 })
 test('runUpdateCheck: HTTP 错/异常/超大体 → null', async () => {
   const rep = { pkg: SELF, version: '1.2.0', companions: {} }
