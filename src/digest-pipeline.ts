@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path'
 import type { DigestDocument, DigestLanguage, FeedItem, LogSink } from './core/types.js'
 import { noopLog, isStaleItem } from './core/types.js'
 import type { StoreLike } from './core/store.js'
+import { isSystemicLlmError, LLM_SYSTEMIC_STREAK, LLM_FAIL_STREAK } from './dsh-llm.js'
 import type { LlmClient } from './summarizer.js'
 import { summarize } from './summarizer.js'
 import type { SummarizableItem } from './summarizer.js'
@@ -107,15 +108,22 @@ export function textLooksForeign(text: string): boolean {
   return words >= 3 && words > han
 }
 
+/** 自动翻译单条重试上限：达上限后快报/日报不再自动重试（手动「译」/积压重扫同款口径）——
+ *  此前失败条目每次快报运行都白撞一遍，同一批坏条目一天可被重试几十次。 */
+export const MAX_TRANSLATE_RETRIES = 3
+
 /** 逐条翻译：外文条目调翻译模型写 state.translation（'标题\n\n正文'），日报渲染中英对照。 */
-async function translateItems(items: FeedItem[], client: LlmClient, opts: Partial<Pick<DigestPipelineOptions, 'summaryConcurrency' | 'llmTimeoutMs' | 'signal' | 'onItemDone'>>): Promise<void> {
-  const targets = items.filter((i) => textLooksForeign(i.title + (i.summary || '')))
+async function translateItems(items: FeedItem[], client: LlmClient, opts: Partial<Pick<DigestPipelineOptions, 'summaryConcurrency' | 'llmTimeoutMs' | 'signal' | 'onItemDone' | 'log'>>): Promise<void> {
+  const targets = items.filter((i) => textLooksForeign(i.title + (i.summary || '')) && (i.state.translationRetries ?? 0) < MAX_TRANSLATE_RETRIES)
   const queue = [...targets]
   let done = 0
+  let stopped = false // 熔断标记：置位后各 worker 取完在飞条即退出
+  let systemicStreak = 0 // 连续系统性失败（凭证/路由/连接）：达阈值终止本轮，不扣条目重试次数
+  let failStreak = 0 // 连续任意失败兜底
   if (targets.length) opts.onItemDone?.(0, targets.length, 'translate') // 入口即报：上一阶段 stale ETA 不外溢，本阶段 EMA 立刻可估
   const workers = Array.from({ length: Math.max(1, opts.summaryConcurrency ?? 2) }, async () => {
     for (;;) {
-      if (opts.signal?.aborted) return
+      if (opts.signal?.aborted || stopped) return
       const item = queue.shift()
       if (!item) return
       try {
@@ -123,14 +131,34 @@ async function translateItems(items: FeedItem[], client: LlmClient, opts: Partia
           system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
           prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
           maxTokens: 2048, // 推理模型 reasoning 计入输出预算——1200 曾被思考吃光产出空回复
+          reasoningEffort: 'off', // 翻译禁用推理——无关断档则取最低档近似
           purpose: 'translate',
           signal: opts.signal,
           timeoutMs: opts.llmTimeoutMs ?? 30_000,
         })
         const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
         item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
+        delete item.state.translationError
+        delete item.state.translationRetries // 成功即重置——此前满限的条目（换模型后）可重新进入自动翻译
+        systemicStreak = 0; failStreak = 0
       } catch (e) {
-        item.state.translationError = e instanceof Error ? e.message : String(e)
+        const msg = e instanceof Error ? e.message : String(e)
+        item.state.translationError = msg
+        failStreak += 1
+        if (isSystemicLlmError(e)) {
+          systemicStreak += 1 // 通道故障不是条目的错：不消耗重试次数，但连续即熔断本轮
+          if (systemicStreak >= LLM_SYSTEMIC_STREAK) {
+            stopped = true
+            opts.log?.warn?.(`translate aborted: ${systemicStreak} consecutive systemic failures (last: ${msg.slice(0, 140)})`)
+          }
+        } else {
+          systemicStreak = 0
+          item.state.translationRetries = (item.state.translationRetries ?? 0) + 1
+          if (failStreak >= LLM_FAIL_STREAK) {
+            stopped = true
+            opts.log?.warn?.(`translate aborted: ${failStreak} consecutive failures (last: ${msg.slice(0, 140)})`)
+          }
+        }
       }
       done++
       opts.onItemDone?.(done, targets.length, 'translate')
@@ -260,6 +288,8 @@ export async function appendHourlyBrief(opts: {
   onBrief?: (brief: string, count: number) => void
   /** 高峰快报：跳过入选条目的翻译步（标题按原文进快报，低峰不补译——由 autoTranslate 积压自愈） */
   noTranslate?: boolean
+  /** 「自动翻译」总开关关闭时跳过翻译步——与 noTranslate 同为闸门但不打「高峰·未译」标 */
+  skipTranslate?: boolean
   /** 高峰快报：llmScore 未评出的条目用启发式 score×8 兜底入选（高峰不跑评分，等低峰补评） */
   heuristicScores?: boolean
   /** 槽位任务用：同刻已有快报节（峰内生成的正式节）则不重写——连概括/翻译调用一并省掉 */
@@ -327,7 +357,7 @@ export async function appendHourlyBrief(opts: {
     return 0
   }
   // 快报生成时补翻入选外文条目：isForeign 由 translateItems 内判（CJK≤50%），无译文才调；高峰快报不翻；stream 源永不翻
-  if (!opts.noTranslate && (opts.llmClient || opts.translateClient)) await translateItems(scored.filter((i) => { const s = opts.sourcesById.get(i.sourceId); return !i.state.translation && s?.stream !== true && s?.translate !== false }), opts.translateClient ?? opts.llmClient!, opts)
+  if (!opts.noTranslate && !opts.skipTranslate && (opts.llmClient || opts.translateClient)) await translateItems(scored.filter((i) => { const s = opts.sourcesById.get(i.sourceId); return !i.state.translation && s?.stream !== true && s?.translate !== false }), opts.translateClient ?? opts.llmClient!, opts)
   const groups = new Map<string, FeedItem[]>()
   for (const it of [...scored].sort((a, b) => keyOf(b) - keyOf(a))) {
     const t = it.topic || '综合'

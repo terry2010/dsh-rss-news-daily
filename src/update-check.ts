@@ -2,8 +2,10 @@
  * 每日更新检查：启动 delayMinutes 后向 update 端点上报一次自身版本 +
  * 已安装伴随插件版本，拉回最新升级信息；每个自然日最多一次（成败都计）。
  *
- * 隐私口径（docs 详设 §2.4）：上行仅 {pkg, version, companions} 三字段，
- * 无 install ID/OS/UA 指纹；端点非 https 直接拒跑（防降级伪造更新信息）。
+ * 隐私口径（docs 详设 §2.4）：上行 {pkg, version, companions} + iid/d/t——
+ * iid 是首跑生成的随机 uuid 安装标识（统计去重用，无机器信息），d 是上报日，
+ * t 是绑定这些字段的 HMAC 签名（防污染，非安全边界）；无 OS/UA 指纹
+ * （UA 仅 pkg/version 自身）。端点非 https 直接拒跑（防降级伪造更新信息）。
  *
  * 伴随插件版本来源：profile 清单 package.json 的 dependencies（cordis
  * registry 只有插件名没有版本）。manifest 定位 = 从自身模块路径向上找第一

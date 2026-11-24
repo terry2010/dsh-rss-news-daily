@@ -264,6 +264,48 @@ test('sof: 快报输出总结/领域速览/重要新闻三段，并在 LLM 失�
   assert.match(md, /# 时段快报[^\n]*\n\n> ⏳ 14:00 时段无 ≥6 分新条目，跳过。\n\n## 13:00/)
 })
 
+test('sof: 快报翻译失败计 translationRetries，达上限后不再自动重试', async () => {
+  const { appendHourlyBrief } = await import('../lib/digest-pipeline.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-hb-tl-'))
+  const items = [mkItem(1, { llmScore: 8, title: 'breaking news today' }), mkItem(2, { llmScore: 7, title: 'another big story' })]
+  const base = { items, sourcesById: new Map([['src1', { title: 'Src1' }]]), day: '2026-10-28', minScore: 6, digestsDir: dir, log: noopLog, summaryConcurrency: 1 }
+  let tlCalls = 0
+  const tlClient = mkClient(() => { tlCalls++; throw new Error('model exploded') }) // 条目级失败（非系统性）
+  const brief = mkClient(() => '要点。')
+  for (const time of ['09:00', '10:00', '11:00']) await appendHourlyBrief({ ...base, time, llmClient: brief, translateClient: tlClient })
+  assert.equal(tlCalls, 6) // 3 轮 × 2 条
+  assert.equal(items[0].state.translationRetries, 3)
+  await appendHourlyBrief({ ...base, time: '12:00', llmClient: brief, translateClient: tlClient })
+  assert.equal(tlCalls, 6) // 达上限 → 本轮零调用
+  assert.equal(items[0].state.translation, undefined)
+})
+
+test('sof: skipTranslate 跳过快报翻译步（自动翻译关闭语义），且不打「高峰·未译」标', async () => {
+  const { appendHourlyBrief } = await import('../lib/digest-pipeline.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-hb-tl3-'))
+  const items = [mkItem(1, { llmScore: 8, title: 'breaking news today' })]
+  const base = { items, sourcesById: new Map([['src1', { title: 'Src1' }]]), day: '2026-10-28', minScore: 6, digestsDir: dir, log: noopLog }
+  let tlCalls = 0
+  const tlClient = mkClient(() => { tlCalls++; return '标题：译题\n正文：译文' })
+  await appendHourlyBrief({ ...base, time: '09:00', skipTranslate: true, llmClient: mkClient(() => '要点。'), translateClient: tlClient })
+  assert.equal(tlCalls, 0) // 翻译步整个跳过（translateClient 兜底概括模型的路径也关掉）
+  const md = readFileSync(join(dir, '2026-10-28-hourly.md'), 'utf8')
+  assert.match(md, /## 09:00 时段快报\n/) // 无「（高峰·未译）」后缀——非高峰语义
+})
+
+test('sof: 系统性失败熔断——凭证错误不耗重试次数且快速终止队列', async () => {
+  const { appendHourlyBrief } = await import('../lib/digest-pipeline.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-hb-tl2-'))
+  const items = Array.from({ length: 6 }, (_, i) => mkItem(i + 1, { llmScore: 8, title: `breaking news story ${i}` }))
+  const base = { items, sourcesById: new Map([['src1', { title: 'Src1' }]]), day: '2026-10-28', minScore: 6, digestsDir: dir, log: noopLog, summaryConcurrency: 1 }
+  let tlCalls = 0
+  const tlClient = mkClient(() => { tlCalls++; throw new Error('LLM call failed: error: llm-pi-ai: no credential for provider route "omlx"') })
+  await appendHourlyBrief({ ...base, time: '09:00', llmClient: mkClient(() => '要点。'), translateClient: tlClient })
+  assert.equal(tlCalls, 3) // 连续系统性失败达阈值即熔断，不再逐条白撞
+  assert.equal(items[0].state.translationRetries, undefined) // 通道故障不消耗条目重试次数
+  assert.ok(items[0].state.translationError) // 仍留错误标记供诊断
+})
+
 test('sof: 评分块失败不阻塞后续块', async () => {
   const { scoreNewItems } = await import('../lib/digest-pipeline.js')
   const items = [mkItem(1), mkItem(2), mkItem(3), mkItem(4)]

@@ -98,6 +98,8 @@ export interface ApiDeps {
   runDigest: (force?: boolean, day?: string, opts?: { peakBypass?: boolean }) => Promise<unknown>
   /** 宿主 LLM runtime（可选能力）；用于 /api/llm 列 provider/model */
   getLlm?: () => { listProviders(): Array<{ id: string }>; listModels(p: string): Promise<Array<{ id: string }>> } | undefined
+  /** llm 路由保存后触发：探测翻译路由推理档位，未声明的推理模型自动生成 cordis 配置 */
+  probeLlmEffort?: () => void
   /** 宿主目录选择服务（可选能力）；native 能力弹系统对话框，browse/缺失时 pick-dir 返回 supported:false */
   getDirectoryPicker?: () => { capability?: () => { kind?: string; pick?: (s: AbortSignal) => Promise<string | null> } } | undefined
   /** config 层的 llm 路由对（用于 effective 判定展示） */
@@ -618,10 +620,12 @@ function apiLlm(deps: ApiDeps) {
       if (body.scope === 'translate') {
         if (provider && model) deps.prefs.save({ translateLlm: { provider, model } })
         else deps.prefs.save({ translateLlm: undefined })
+        deps.probeLlmEffort?.() // 翻译路由变了：后台探测是否需要生成 effort 配置
         return sendJson(res, 200, { ok: true, translateLlm: deps.prefs.get().translateLlm })
       }
       if (provider && model) deps.prefs.save({ llm: { provider, model } })
       else deps.prefs.save({ llm: undefined }) // 空对 = 清除覆盖回自动
+      deps.probeLlmEffort?.() // 日报路由是翻译的回落——同样复探
       return sendJson(res, 200, { ok: true, llm: deps.prefs.get().llm })
     }
     sendJson(res, 405, { ok: false, error: `unsupported ${method}` })

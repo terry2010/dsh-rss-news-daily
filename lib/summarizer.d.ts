@@ -57,6 +57,10 @@ export interface LlmTextRequest {
     timeoutMs?: number;
     /** 调用场景标记（开发日志用）：digest 内部多种调用共享 client，靠它区分 */
     purpose?: string;
+    /** 期望的推理强度：'off'＝禁用推理（优先选关断义档位，无则取最低档近似关断）；
+     *  'min'/'max' 为意图词取模型暴露的最低/最高档；也可填具体档位 id
+     *  （resolveModelInfo().reasoning.efforts）。模型未声明档位时 client 静默丢弃，调用照常。 */
+    reasoningEffort?: string;
 }
 /** Render the prompt body for a request. */
 export declare function buildPrompt(request: SummarizeRequest): {

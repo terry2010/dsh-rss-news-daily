@@ -271,8 +271,8 @@
           <label class="f" for="tlProvider"><span class="f-lab">服务商</span><select id="tlProvider"><option value="">跟随 dsh 默认</option></select></label>
           <label class="f" for="tlModel"><span class="f-lab">模型</span><select id="tlModel"><option value="">选择模型</option></select></label>
         </div>
-        <label class="setting-check"><input type="checkbox" id="autoTranslate"> 自动翻译抓取到的外文新闻</label>
-        <div id="autoTlWarn" class="settings-warning" hidden>开启后会调用模型翻译外文新闻，条目较多时会增加模型用量。</div>
+        <label class="setting-check"><input type="checkbox" id="autoTranslate"> 自动翻译外文新闻（新抓取条目与快报入选条目）</label>
+        <div id="autoTlWarn" class="settings-warning" hidden>开启后会调用模型翻译外文新闻；条目较多或用推理模型时用量会明显增加。</div>
         <div id="tlInfo" class="hist"></div>
       </div>
       <div class="settings-subsection">

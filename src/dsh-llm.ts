@@ -10,7 +10,7 @@
 import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { LlmRuntime, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { LlmRuntime, ReasoningEffortId, StreamChunk } from '@deepseek-ai/dsh-llm'
 
 class RssServiceError extends Error {}
 import type { LlmClient, LlmTextRequest } from './summarizer.js'
@@ -338,6 +338,8 @@ export class DshLlmClient implements LlmClient {
   private readonly idleTimeoutMs: number
   private readonly tag: string
   private resolution?: { provider: string; model: string }
+  /** 模型暴露的 reasoning effort 档位（随路由一次性探测）：undefined=未探测 null=模型无档位 */
+  private efforts?: readonly ReasoningEffortId[] | null
   /** 本 client 生命周期内的累计 token 用量（pipeline 每次 digest 新建实例 → 即单次日报用量） */
   readonly usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; _seen?: number; _seenOut?: number; _seenCache?: number } = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }
 
@@ -376,6 +378,44 @@ export class DshLlmClient implements LlmClient {
     }
   }
 
+  /** 把请求的 effort 意图映射到模型实际暴露的档位：精确匹配优先；
+   *  'off'＝优先选关断义档位（off/none/disabled 类命名），无则取最低档近似关断；
+   *  'min'/'max' 意图词取最低/最高档（efforts 按 least→greatest 排序）。模型没声明档位、
+   *  或请求档位无匹配——丢弃并一次性告警（优雅降级照常调用），绝不传不支持的档位让 adapter 拒掉。 */
+  private async resolveEffort(requested: string | undefined, route: { provider: string; model: string }, signal?: AbortSignal): Promise<ReasoningEffortId | undefined> {
+    if (requested === undefined) return undefined
+    if (this.efforts === undefined) {
+      // signal 透传：探测发生在 attempt/timeout 信号构建之前，挂起的探测不能被调用方中断会卡住整条调用
+      const info = await this.llm.resolveModelInfo?.(route.provider, route.model, signal).catch(() => undefined)
+      this.efforts = info?.reasoning?.efforts?.map((e) => e.id) ?? null
+      if (this.efforts !== null && this.efforts.length === 0) this.efforts = null
+    }
+    const list = this.efforts
+    // 按路由全局一次性告警：单条调用类调用方（translateItemCore 等）每条新建 client，
+    // 实例级标记会让"模型没声明档位"每翻一条刷一行 warn——几千条/天的量
+    const warn = (msg: string): void => {
+      const key = `${route.provider}/${route.model}`
+      if (effortWarnedRoutes.has(key)) return
+      effortWarnedRoutes.add(key)
+      this.log.warn(msg)
+    }
+    if (!list?.length) {
+      warn(`model ${route.provider}/${route.model} exposes no reasoning efforts — ignoring requested effort "${requested}"`)
+      return undefined
+    }
+    const exact = list.find((id) => (id as string) === requested)
+    if (exact !== undefined) return exact
+    // 意图词按档位序解析——efforts 按 least→greatest 排列，与具体 provider/模型解耦
+    if (/^(off|none|no_?think(ing)?|disabled?|false)$/i.test(requested)) {
+      // 优先真关断档（off/none 类命名），没有这类档位的模型退最低档——"尽力关断"
+      return list.find((id) => /^(off|none|no_?think(ing)?|disabled?)$/i.test(id as string)) ?? list[0]
+    }
+    if (/^(minimal|min|least|lowest|low)$/i.test(requested)) return list[0]
+    if (/^(max|highest|high)$/i.test(requested)) return list[list.length - 1]
+    warn(`model ${route.provider}/${route.model} has no effort "${requested}" (supports ${list.join('/')}) — ignoring`)
+    return undefined
+  }
+
   private async call(request: LlmTextRequest): Promise<string> {
     let route: { provider: string; model: string }
     try {
@@ -391,6 +431,7 @@ export class DshLlmClient implements LlmClient {
       throw e
     }
     this.log.info(`LLM summary via provider=${route.provider} model=${route.model}`)
+    const reasoningEffort = await this.resolveEffort(request.reasoningEffort, route, request.signal)
     let lastReasoning = 0
     let lastTail = ''
     const attempt = async (maxTokens: number | undefined, promptSuffix = ''): Promise<string> => {
@@ -408,6 +449,7 @@ export class DshLlmClient implements LlmClient {
         model: route.model,
         messages: [message],
         ...(req.system !== undefined ? { system: req.system } : {}),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         maxTokens: req.maxTokens,
         temperature: req.temperature,
         ...(req.signal !== undefined ? { signal: req.signal } : {}),
@@ -492,6 +534,22 @@ function reasoningContinuation(request: LlmTextRequest, reasoningChars: number, 
     suffix: `\n\n【续写指令】你之前已对本题做过详细分析，分析末尾片段如下：\n"${excerpt}"\n分析阶段已结束——不要再逐条分析或复述素材，直接输出最终答案。`,
   }
 }
+
+/** effort 降级告警去重（provider/model 维度，进程级一次）：逐条翻译调用共用路由，
+ *  模型未声明档位属常态配置而非故障——但用户值得知道"请求的 effort 没生效"这一事实 */
+const effortWarnedRoutes = new Set<string>()
+
+/** 系统性 LLM 错误（凭证缺失/鉴权/路由解析/连接/超时/配额限流/网关）——是"通道坏了"不是"条目坏了"。
+ *  逐条队列（翻译/判定）据此熔断：连续 SYSTEMIC_STREAK 次即终止本轮，且不计条目重试次数——
+ *  通道故障期逐条调用只是白白烧钱（线上曾单天 9K 次无 credential 徒劳调用）。 */
+const SYSTEMIC_ERR_RE = /no credential|unauthorized|forbidden|invalid api key|incorrect api key|\b40[13]\b|\b429\b|no llm provider|lists no model|unknown.?model|resolv\w* route|insufficient|quota|rate.?limit|too many requests|econnrefused|enotfound|eai_again|econnreset|etimedout|fetch failed|socket hang up|network|timed? ?out|stream idle|before a terminal response|bad gateway|\b50[234]\b|overloaded/i
+export function isSystemicLlmError(e: unknown): boolean {
+  return SYSTEMIC_ERR_RE.test(e instanceof Error ? e.message : String(e))
+}
+/** 连续同型系统性失败熔断阈值 */
+export const LLM_SYSTEMIC_STREAK = 3
+/** 连续任意失败兜底熔断阈值（系统性判定漏网时仍有上限） */
+export const LLM_FAIL_STREAK = 10
 
 /** 流每块输出间隔上限：只掐"连上但不出字"的死连接；推理模型持续吐 reasoning 不受影响。 */
 const LLM_IDLE_MS = 45_000

@@ -74,6 +74,9 @@ export declare function zhTitleOf(item: FeedItem): string;
  *  按词而非字母计数：产品名「Ultrafast」是 1 个词而非 9 个字母，中文标题夹带
  *  型号/产品名（GPT-6.2 Astra、Windows 8GB）不会再被字母数放大成"外文"。 */
 export declare function textLooksForeign(text: string): boolean;
+/** 自动翻译单条重试上限：达上限后快报/日报不再自动重试（手动「译」/积压重扫同款口径）——
+ *  此前失败条目每次快报运行都白撞一遍，同一批坏条目一天可被重试几十次。 */
+export declare const MAX_TRANSLATE_RETRIES = 3;
 /** P1 抓取后评分：本轮新条目本批去重 → 分块批量评分（无分跳过幂等）；返回评出条数。 */
 export declare function scoreNewItems(items: FeedItem[], client: LlmClient, opts: Pick<DigestPipelineOptions, 'llmTimeoutMs' | 'llmScoreCandidates' | 'llmMaxTokens' | 'signal' | 'prefs' | 'onScoreProgress'> & {
     shouldPause?: () => boolean;
@@ -104,6 +107,8 @@ export declare function appendHourlyBrief(opts: {
     onBrief?: (brief: string, count: number) => void;
     /** 高峰快报：跳过入选条目的翻译步（标题按原文进快报，低峰不补译——由 autoTranslate 积压自愈） */
     noTranslate?: boolean;
+    /** 「自动翻译」总开关关闭时跳过翻译步——与 noTranslate 同为闸门但不打「高峰·未译」标 */
+    skipTranslate?: boolean;
     /** 高峰快报：llmScore 未评出的条目用启发式 score×8 兜底入选（高峰不跑评分，等低峰补评） */
     heuristicScores?: boolean;
     /** 槽位任务用：同刻已有快报节（峰内生成的正式节）则不重写——连概括/翻译调用一并省掉 */

@@ -286,6 +286,78 @@ test('推理模型自救: 推理被截流 → 分析尾巴折回 prompt 续写',
   assert.ok(seen[1].maxTokens > 8192)
 })
 
+test('reasoningEffort: 意图词按档位序解析——min 取最低档/精确 id/max，无档位静默降级', async () => {
+  const { DshLlmClient } = await import('../lib/dsh-llm.js')
+  const mk = (efforts) => ({
+    listProviders: () => [{ id: 'p' }],
+    listModels: async () => [{ id: 'm' }],
+    resolveModelInfo: async () => efforts === undefined
+      ? { provider: 'p', model: 'm' } // 非推理模型：无 reasoning 字段
+      : { provider: 'p', model: 'm', reasoning: { efforts: efforts.map((id) => ({ id, name: id })) } },
+    stream: async function* (v) {
+      thisReq = v
+      yield { type: 'text-delta', text: 'ok' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  })
+  let thisReq
+
+  // 'off' 意图 → 优先关断义档位：{off,...} 取 'off'；无关断名 → 退最低档近似关断
+  let client = new DshLlmClient(mk(['off', 'low', 'high']), { provider: '', model: '' }, silentLog)
+  await client.generateText({ prompt: 'p', reasoningEffort: 'off' })
+  assert.equal(thisReq.reasoningEffort, 'off')
+  client = new DshLlmClient(mk(['minimal', 'low', 'high']), { provider: '', model: '' }, silentLog)
+  await client.generateText({ prompt: 'p', reasoningEffort: 'off' })
+  assert.equal(thisReq.reasoningEffort, 'minimal') // 无关断名 → 最低档
+  client = new DshLlmClient(mk(['low', 'high']), { provider: '', model: '' }, silentLog)
+  await client.generateText({ prompt: 'p', reasoningEffort: 'off' })
+  assert.equal(thisReq.reasoningEffort, 'low')
+
+  // 'min' 意图 → 暴露档位中最低档
+  await client.generateText({ prompt: 'p', reasoningEffort: 'min' })
+  assert.equal(thisReq.reasoningEffort, 'low')
+
+  // 'max' 意图 → 最高档；具体档位 id → 精确匹配（高级用法，与机器配置对齐时可用）
+  client = new DshLlmClient(mk(['minimal', 'medium', 'high']), { provider: '', model: '' }, silentLog)
+  await client.generateText({ prompt: 'p', reasoningEffort: 'max' })
+  assert.equal(thisReq.reasoningEffort, 'high')
+  await client.generateText({ prompt: 'p', reasoningEffort: 'medium' })
+  assert.equal(thisReq.reasoningEffort, 'medium')
+
+  // 模型无 effort 档位（非推理模型）→ 字段整个不进 stream 入参，调用照常
+  client = new DshLlmClient(mk(undefined), { provider: '', model: '' }, silentLog)
+  await client.generateText({ prompt: 'p', reasoningEffort: 'min' })
+  assert.equal(thisReq.reasoningEffort, undefined)
+
+  // resolveModelInfo 缺失（旧宿主/mock）→ 同样降级不炸
+  const legacy = { listProviders: () => [{ id: 'p' }], listModels: async () => [{ id: 'm' }], stream: async function* (v) { thisReq = v; yield { type: 'text-delta', text: 'ok' }; yield { type: 'finish', reason: { kind: 'stop' } } } }
+  client = new DshLlmClient(legacy, { provider: '', model: '' }, silentLog)
+  await client.generateText({ prompt: 'p', reasoningEffort: 'min' })
+  assert.equal(thisReq.reasoningEffort, undefined)
+
+  // 不请求 effort 时 resolveModelInfo 都懒得调
+  let probed = 0
+  const lazy = { ...mk(['minimal']), resolveModelInfo: async () => { probed++; return { reasoning: { efforts: [{ id: 'minimal', name: 'm' }] } } } }
+  client = new DshLlmClient(lazy, { provider: '', model: '' }, silentLog)
+  await client.generateText({ prompt: 'p' })
+  assert.equal(probed, 0)
+})
+
+test('isSystemicLlmError: 凭证/路由/连接/超时判系统性，条目毛病不算', async () => {
+  const { isSystemicLlmError } = await import('../lib/dsh-llm.js')
+  assert.ok(isSystemicLlmError(new Error('LLM call failed: error: llm-pi-ai: no credential for provider route "omlx"; its profile resolves OMLX_API_KEY')))
+  assert.ok(isSystemicLlmError(new Error('no LLM provider is registered in this dsh instance')))
+  assert.ok(isSystemicLlmError(new Error('provider omlx lists no model; configure summary.model')))
+  assert.ok(isSystemicLlmError(new Error('connect ECONNREFUSED 127.0.0.1:8080')))
+  assert.ok(isSystemicLlmError(new Error('LLM stream idle for 45s')))
+  assert.ok(isSystemicLlmError(new Error('HTTP 429 too many requests')))
+  assert.ok(isSystemicLlmError(new Error('Incorrect API key provided')))
+  assert.ok(isSystemicLlmError(new Error('The operation timed out')))
+  assert.ok(!isSystemicLlmError(new Error('LLM returned an empty completion (reasoning 6865 chars)')))
+  assert.ok(!isSystemicLlmError(new Error('LLM reasoning loop detected: ngram — n-gram repeat: 64-char block x4')))
+  assert.ok(!isSystemicLlmError(new Error('model exploded')))
+})
+
 test('LLM 耗时统计: 成功调用按 purpose 记录均值，作为进度 ETA 数据源', async () => {
   const { DshLlmClient, llmCallAvgMs } = await import('../lib/dsh-llm.js')
   const client = new DshLlmClient(mkStreamLlm([], new Map()), { provider: 'p', model: 'm' }, silentLog)

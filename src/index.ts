@@ -29,8 +29,9 @@ import type { SourceDef } from './core/methods.js'
 import { startScheduler } from './scheduler.js'
 import { registerTools } from './tools.js'
 import type { NewsService } from './tools.js'
-import { runDailyDigest, scoreNewItems, appendHourlyBrief, textLooksForeign, zhTitleOf } from './digest-pipeline.js'
-import { DshLlmClient, llmCallAvgMs, llmQueueSnapshot, setDevLogDir, setDevLogEnabled, setLlmConcurrency, setLlmDiagFile, setLlmDurPersistence, setLlmDurState, setLoopGuardEnabled } from './dsh-llm.js'
+import { runDailyDigest, scoreNewItems, appendHourlyBrief, textLooksForeign, zhTitleOf, MAX_TRANSLATE_RETRIES } from './digest-pipeline.js'
+import { DshLlmClient, llmCallAvgMs, llmQueueSnapshot, resolveDshRoute, setDevLogDir, setDevLogEnabled, setLlmConcurrency, setLlmDiagFile, setLlmDurPersistence, setLlmDurState, setLoopGuardEnabled, isSystemicLlmError, LLM_SYSTEMIC_STREAK, LLM_FAIL_STREAK } from './dsh-llm.js'
+import { ensureEffortConfig } from './effort-config.js'
 import type { LlmClient } from './summarizer.js'
 import type { FeedItem, FetchCycleResult } from './core/types.js'
 import { inBlocklist, isShortLead, leadKey, truncateCodePoints } from './core/parser.js'
@@ -361,6 +362,12 @@ export function apply(ctx: Context, config: ConfigType) {
     const pool = t.poolId ? sourceHub?.briefPoolOf(t.poolId) : undefined
     if (pool) for (const [id, name] of Object.entries(pool.sourceNames)) if (!sourcesById.has(id)) sourcesById.set(id, { title: name, summarize: false, stream: true })
     if (t.sourceNames) for (const [id, name] of Object.entries(t.sourceNames)) if (!sourcesById.has(id)) sourcesById.set(id, { title: name, summarize: false, stream: true })
+    const briefClient = llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log, 'brief') : undefined
+    // 快报翻译受「自动翻译」总开关管（原来只管抓取管线——关掉后快报仍逐条调翻译，token 照烧且不入账）。
+    // 注意不能只不建 translateClient：appendHourlyBrief 会回退用概括模型翻——必须连翻译步一起关
+    const autoTl = prefs.get().autoTranslate === true
+    const briefTlClient = llmRuntime && !opts?.noTranslate && autoTl
+      ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'brief-translate') : undefined
     await appendHourlyBrief({
       items,
       sourcesById,
@@ -373,9 +380,10 @@ export function apply(ctx: Context, config: ConfigType) {
       sourceIds: t.sourceIds, keywords: t.keywords, maxItems: t.maxItems, focus: t.focus,
       prompt: t.prompt, itemTime: t.itemTime, timezone: config.timezone || undefined, fromPool: !!t.poolId,
       // 概括 client 与 noTranslate 解耦：峰内快报也要 AI 概括（用户明示「需要调用ai只是不翻译」）
-      llmClient: llmRuntime ? new DshLlmClient(llmRuntime, pickRoute(), log, 'brief') : undefined,
-      translateClient: llmRuntime && !opts?.noTranslate ? new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'brief-translate') : undefined,
+      llmClient: briefClient,
+      translateClient: briefTlClient,
       noTranslate: opts?.noTranslate,
+      skipTranslate: !autoTl,
       heuristicScores: opts?.heuristicScores,
       summaryConcurrency: prefs.get().digestOpts?.summaryConcurrency ?? config.summary.concurrency,
       signal,
@@ -383,6 +391,9 @@ export function apply(ctx: Context, config: ConfigType) {
       llmMaxTokens: config.llm.maxTokens,
       onBrief: (brief) => notifyBrief(hm, brief, t.name),
     })
+    // 快报 LLM 用量分账：概括计入「评分/快报」桶、翻译计入「翻译」桶——此前两路 client 不记账，UI 成本低估
+    addTokens('score', briefClient?.usage)
+    addTokens('translate', briefTlClient?.usage)
   }
   // 评分本体：抓取管线与快报任务共用一份 LLM 配置（scoringInFlight 防重入——快报任务撞上抓取评分时幂等跳过，
   // 其入选分键回落启发式兜底）
@@ -445,18 +456,22 @@ export function apply(ctx: Context, config: ConfigType) {
       }
       if (!signal?.aborted && groups.size) fetchProg = { ...fetchProg, running: true, done: 0, total: groups.size, stage: 'judge', current: '' }
       const client = new DshLlmClient(llmRuntime, pickTranslateRoute(), log, 'stub-judge')
+      let systemicStreak = 0 // 通道故障熔断：凭证/路由坏时逐组白撞（与翻译同款口径）
       for (const g of groups.values()) {
         if (signal?.aborted) break
+        if (systemicStreak >= LLM_SYSTEMIC_STREAK) { log.warn(`stub-judge aborted: ${systemicStreak} consecutive systemic failures`); break }
         if (peakNow()) { markPeakDefer(cycleStart); break } // 进峰即停：未判组出峰重扫（stubJudged 幂等）
         try {
           const out = await client.generateText({
             system: '判断给定"新闻正文"是否为无效内容——占位/引导/无实际信息的短文本（如"点击查看原文""视频请见原文""内容已被删除"），有实质摘要信息的判有效。只输出 YES（无效）或 NO（有效），不要解释。',
             prompt: `正文：${g.text}`,
             maxTokens: 256, // YES/NO 输出虽短，推理模型 reasoning 也要占预算
+            reasoningEffort: 'off', // 机械判定禁用推理——无关断档则取最低档近似
             signal,
             timeoutMs: config.llm.timeoutMs,
             purpose: 'judge',
           })
+          systemicStreak = 0
           if (/\byes\b/i.test(out)) {
             for (const it of g.items) it.state.stubLead = true
             if (!inBlocklist(g.text, list)) { list.push(g.text); added = true }
@@ -465,9 +480,14 @@ export function apply(ctx: Context, config: ConfigType) {
             for (const it of g.items) it.state.stubJudged = true // 判有效也落标：高峰补跑/下轮重扫不再送判
             dirty = true
           }
-        } catch (e) { if (signal?.aborted) break; log.warn(`stub-judge failed: ${String((e as Error)?.message || e)}`) }
+        } catch (e) {
+          if (signal?.aborted) break
+          systemicStreak = isSystemicLlmError(e) ? systemicStreak + 1 : 0
+          log.warn(`stub-judge failed: ${String((e as Error)?.message || e)}`)
+        }
         fetchProg.done += 1
       }
+      addTokens('translate', client.usage) // 走翻译路由的调用计入翻译桶（与 tokenPrice 口径一致：按路由计费）
     }
     if (added) prefs.save({ contentBlocklist: list })
     if (dirty) await store.save()
@@ -485,19 +505,27 @@ export function apply(ctx: Context, config: ConfigType) {
     // 外文未翻全部进重试（早退轮次不打 error 标记的条目也会搁浅——不能只挑有 error 的）
     const backlog = opts?.backlog === false ? [] : store.items
       .filter((i) => i.fetchedAt < cycleStart && !i.state.hidden && !i.state.translation && !i.aiSummary && i.llmScore != null
-        && (i.state.translationRetries ?? 0) < 3 && !streams.has(i.sourceId) && !noTr.has(i.sourceId) && isForeign(i))
+        && (i.state.translationRetries ?? 0) < MAX_TRANSLATE_RETRIES && !streams.has(i.sourceId) && !noTr.has(i.sourceId) && isForeign(i))
       .slice(0, 50)
     const queue = [...fresh, ...backlog]
     if (queue.length && !signal?.aborted) fetchProg = { running: true, done: 0, total: queue.length, stage: 'translate', current: '' }
-    let translated = 0
+    let translated = 0, systemicStreak = 0, failStreak = 0, lastFail = ''
     for (const it of queue) {
       if (signal?.aborted) break // 抓取/翻译共用信号；取消后不再开始下一条
+      // 熔断：系统性失败连击（凭证/路由/连接）或失败长尾——不再逐条徒劳调用（曾单天 9K 次无 credential 白撞）
+      if (systemicStreak >= LLM_SYSTEMIC_STREAK || failStreak >= LLM_FAIL_STREAK) {
+        log.warn(`autoTranslate aborted: ${systemicStreak >= LLM_SYSTEMIC_STREAK ? 'systemic' : 'consecutive'} failures ×${Math.max(systemicStreak, failStreak)} (last: ${lastFail.slice(0, 140)})`)
+        break
+      }
       if (peakNow()) { markPeakDefer(cycleStart); break } // 进峰即停：未译条目由积压/低峰补跑接走
-      try { await translateItemCore(it, signal) }
+      try { await translateItemCore(it, signal); systemicStreak = 0; failStreak = 0 }
       catch (e) {
         if (signal?.aborted) break
-        it.state.translationError = e instanceof Error ? e.message : String(e)
-        it.state.translationRetries = (it.state.translationRetries ?? 0) + 1
+        lastFail = e instanceof Error ? e.message : String(e)
+        it.state.translationError = lastFail
+        failStreak += 1
+        if (isSystemicLlmError(e)) systemicStreak += 1 // 通道故障不消耗条目重试次数
+        else { systemicStreak = 0; it.state.translationRetries = (it.state.translationRetries ?? 0) + 1 }
       }
       fetchProg.done += 1
       translated += 1
@@ -768,6 +796,7 @@ export function apply(ctx: Context, config: ConfigType) {
       system: '你是翻译助手。把给定新闻标题和摘要翻译成简体中文，严格按此格式输出两行：\n标题：<译题>\n正文：<译文>\n只输出译文，不要解释。',
       prompt: `标题：${item.title}\n\n正文：${item.summary || item.title}`,
       maxTokens: config.llm.maxTokens, // 推理模型 reasoning 计入输出预算——1200 曾被思考吃光产出空回复
+      reasoningEffort: 'off', // 翻译禁用推理——无关断档则取最低档近似
       signal,
       timeoutMs: config.llm.timeoutMs,
       purpose: 'translate',
@@ -776,6 +805,7 @@ export function apply(ctx: Context, config: ConfigType) {
     const m = text.match(/标题：\s*([^\n]+)\n+(?:[\s\S]*?)正文：\s*([\s\S]+)/)
     item.state.translation = m ? `${m[1].trim()}\n\n${m[2].trim()}` : text.trim()
     delete item.state.translationError // 成功后清掉历史失败标记（换模型重试成功后不再误报失败）
+    delete item.state.translationRetries // 成功即重置失败计数——此前满限的条目可重新进入自动翻译
   }
   // 只看标题判定：中文标题的条目不需要翻译——摘要里混英文（促销文案/型号名）
   // 不应把中文标题条目误判成外文送进翻译队列
@@ -791,11 +821,13 @@ export function apply(ctx: Context, config: ConfigType) {
         system: `把 RSS 源归类到这些分类之一：${CLASSIFY_CATS.join('、')}。只输出分类名，不要解释。`,
         prompt: `频道：${feed.title}\n\n条目：${feed.items.slice(0, 5).map((i) => i.title).join('；')}`,
         maxTokens: 256, // 分类输出虽短，推理模型 reasoning 也要占预算
+        reasoningEffort: 'off', // 机械归类禁用推理——无关断档则取最低档近似
         timeoutMs: config.llm.timeoutMs,
         purpose: 'classify',
       })
       return CLASSIFY_CATS.find((c) => text.trim().includes(c)) || ''
     } catch { return '' }
+    finally { addTokens('translate', client.usage) } // 翻译路由调用计入翻译桶
   }
 
   const enabledBriefTypes = () => briefTypesOf().filter((t) => t.enabled !== false)
@@ -1111,6 +1143,40 @@ export function apply(ctx: Context, config: ConfigType) {
     if (t?.provider && t?.model) return t // 翻译模型覆盖 > 日报模型 > config
     return pickRoute()
   }
+  // 翻译路由 reasoning 档位自检：llm 就绪/路由保存后各跑一次——模型未声明档位且确为推理模型时
+  // 按 provider API 方言在 cordis.patch.yml 生成 reasoningEfforts（重启/重载 cordis 生效）。
+  // 探测对象是解析后的实际路由——translateLlm 未配时回落到日报路由，「从未配置」同样覆盖。
+  const effortProbedRoutes = new Set<string>() // 终态记号：同一路由同进程不重复探测
+  const effortInflight = new Set<string>() // 在飞探测：并发触发（inject+保存连发）不重复跑
+  const kickEffortProbe = (): void => {
+    if (!llmRuntime) return
+    const probeRoute = pickTranslateRoute()
+    void resolveDshRoute(llmRuntime, probeRoute)
+      .then((resolved) => {
+        const key = `${resolved.provider}/${resolved.model}`
+        if (effortProbedRoutes.has(key) || effortInflight.has(key)) return
+        effortInflight.add(key)
+        return ensureEffortConfig(llmRuntime!, resolved).then((r) => {
+        switch (r.kind) {
+          case 'probe-failed': // 不记号——服务没起来/超时是暂时的，下次触发再试
+            log.warn(`effort probe failed for ${key}: ${r.detail}`)
+            break
+          case 'written':
+            effortProbedRoutes.add(key)
+            log.info(`已为 ${key} 生成 reasoningEfforts（api=${r.api}）：${r.file} —— 重启 dsh 后翻译调用关闭推理`)
+            desktopNotify('RSS 翻译：已生成关断推理配置', `${resolved.model} 的 reasoningEfforts 已写入 cordis.patch.yml，重启 dsh 生效`, { url: '' })
+            break
+          case 'unsupported':
+            effortProbedRoutes.add(key)
+            log.warn(`无法自动配置 reasoningEfforts（${key}）：${r.detail}`)
+            break
+          default: // has-efforts / exists / no-reasoning——终态记号不再重跑
+            effortProbedRoutes.add(key)
+        }
+        }).finally(() => effortInflight.delete(key))
+      })
+      .catch((e) => log.warn(`effort probe error: ${e instanceof Error ? e.message : e}`))
+  }
   let digestAbort: AbortController | undefined // 「停止生成」：中止在飞的 LLM 调用（流逐条失败→降级收尾，不落半文件）
   let topicAbort: AbortController | undefined
   const TASK_WAIT_MAX = 16 // 全局等待队列上限（topicQueue 原有 8 条上限升级为统一闸门）
@@ -1331,6 +1397,7 @@ export function apply(ctx: Context, config: ConfigType) {
     if (runtime) {
       llmRuntime = runtime as ConstructorParameters<typeof DshLlmClient>[0]
       log.info('llm service available: LLM summaries enabled')
+      kickEffortProbe() // llm 就绪：探测翻译路由档位，推理模型未声明则自动生成 cordis 配置
     }
   })
   ctx.inject(['directoryPicker'], (c) => {
@@ -1359,6 +1426,7 @@ export function apply(ctx: Context, config: ConfigType) {
           fetchTimes: config.schedule.fetchTimes,
         },
         devlogDir,
+        probeLlmEffort: kickEffortProbe, // /api/llm 保存后复探：新路由可能换了推理模型
         briefDefaults: {
           enabled: prefs.get().digestOpts?.hourlyBrief ?? config.fetch.hourlyBrief,
           minScore: config.fetch.hourlyMinScore,

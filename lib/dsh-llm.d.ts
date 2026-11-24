@@ -85,6 +85,8 @@ export declare class DshLlmClient implements LlmClient {
     private readonly idleTimeoutMs;
     private readonly tag;
     private resolution?;
+    /** 模型暴露的 reasoning effort 档位（随路由一次性探测）：undefined=未探测 null=模型无档位 */
+    private efforts?;
     /** 本 client 生命周期内的累计 token 用量（pipeline 每次 digest 新建实例 → 即单次日报用量） */
     readonly usage: {
         inputTokens: number;
@@ -96,7 +98,17 @@ export declare class DshLlmClient implements LlmClient {
     };
     constructor(llm: LlmRuntime, route: DshLlmRoute, log: LogSink, tag?: string, idleTimeoutMs?: number);
     generateText(request: LlmTextRequest): Promise<string>;
+    /** 把请求的 effort 意图映射到模型实际暴露的档位：精确匹配优先；
+     *  'off'＝优先选关断义档位（off/none/disabled 类命名），无则取最低档近似关断；
+     *  'min'/'max' 意图词取最低/最高档（efforts 按 least→greatest 排序）。模型没声明档位、
+     *  或请求档位无匹配——丢弃并一次性告警（优雅降级照常调用），绝不传不支持的档位让 adapter 拒掉。 */
+    private resolveEffort;
     private call;
 }
+export declare function isSystemicLlmError(e: unknown): boolean;
+/** 连续同型系统性失败熔断阈值 */
+export declare const LLM_SYSTEMIC_STREAK = 3;
+/** 连续任意失败兜底熔断阈值（系统性判定漏网时仍有上限） */
+export declare const LLM_FAIL_STREAK = 10;
 export {};
 //# sourceMappingURL=dsh-llm.d.ts.map

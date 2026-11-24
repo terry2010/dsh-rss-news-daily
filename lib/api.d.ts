@@ -48,6 +48,8 @@ export interface ApiDeps {
             id: string;
         }>>;
     } | undefined;
+    /** llm 路由保存后触发：探测翻译路由推理档位，未声明的推理模型自动生成 cordis 配置 */
+    probeLlmEffort?: () => void;
     /** 宿主目录选择服务（可选能力）；native 能力弹系统对话框，browse/缺失时 pick-dir 返回 supported:false */
     getDirectoryPicker?: () => {
         capability?: () => {
