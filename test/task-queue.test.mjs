@@ -72,6 +72,7 @@ test('running 态取消：调 cancel 钩子，任务本体仍在跑到 settle', 
   let aborted = false
   q.enqueue({ id: 'a', kind: 'fetch', label: 'A', queuedAt: 1, start: () => g.p, cancel: () => { aborted = true } })
   q.enqueue({ id: 'b', kind: 'digest', label: 'B', queuedAt: 2, start: () => Promise.resolve('b-done') })
+  await tick() // 先让 a 发射（间隙中取消按 waiting 口径——running 取消要在 start() 之后）
   assert.equal(q.cancel('a'), 'running'); assert.equal(aborted, true)
   assert.equal(q.isRunning('a'), true) // abort 是请求——任务收尾才释放槽位
   g.resolve(); await tick() // a 收尾→b 接棒
@@ -90,6 +91,53 @@ test('start 抛错：任务失败不堵队列，下一个照样接棒', async ()
   assert.equal(bRan, true)
   assert.equal(warns.length, 1); assert.match(warns[0], /boom/)
   assert.equal(q.waitingCount(), 0); assert.equal(q.isRunning('a'), false)
+})
+
+test('启动间隙取消：任务已占 running 位但 start() 未发——按 waiting 口径撤，不发 start', async () => {
+  const { createTaskQueue } = await import(T)
+  const q = createTaskQueue({ limit: () => 1, log: silentLog })
+  const sideFx = []
+  const settled = deferred()
+  let started = false
+  q.enqueue({ id: 'a', kind: 'fetch', label: 'A', queuedAt: 1,
+    start: () => { started = true; return Promise.resolve() },
+    onCancelQueued: () => sideFx.push('a-cancelled'),
+    settle: { resolve: (v) => settled.resolve(v), reject: () => {} } })
+  // 任务已进 running 表（占槽+同类互斥生效）但 start() 要等 setImmediate——此刻取消
+  assert.equal(q.isRunning('a'), true)
+  assert.equal(q.cancel('a'), 'waiting')
+  assert.deepEqual(sideFx, ['a-cancelled'])
+  assert.deepEqual(await settled.p, { cancelled: 'waiting' })
+  for (let i = 0; i < 3; i++) await tick()
+  assert.equal(started, false); assert.equal(q.isRunning('a'), false)
+})
+
+test('启动间隙 removeQueued：发射台跳过且不调 onCancelQueued（meta 由删除方处理）', async () => {
+  const { createTaskQueue } = await import(T)
+  const q = createTaskQueue({ limit: () => 1, log: silentLog })
+  const sideFx = []
+  let started = false
+  q.enqueue({ id: 'topic:x', kind: 'topic', label: 'X', queuedAt: 1,
+    start: () => { started = true; return Promise.resolve() },
+    onCancelQueued: () => sideFx.push('x') })
+  assert.equal(q.removeQueued('topic:x'), true)
+  assert.deepEqual(sideFx, [])
+  for (let i = 0; i < 3; i++) await tick()
+  assert.equal(started, false); assert.equal(q.isRunning('topic:x'), false)
+})
+
+test('启动间隙撤下后槽位正常释放，等待任务按序接棒', async () => {
+  const { createTaskQueue } = await import(T)
+  const q = createTaskQueue({ limit: () => 1, log: silentLog })
+  const g = deferred()
+  const ran = []
+  q.enqueue({ id: 'a', kind: 'fetch', label: 'A', queuedAt: 1, start: () => g.p })
+  q.enqueue({ id: 'b', kind: 'digest', label: 'B', queuedAt: 2, start: () => { ran.push('b'); return Promise.resolve() } })
+  q.enqueue({ id: 'c', kind: 'topic', label: 'C', queuedAt: 3, start: () => { ran.push('c'); return Promise.resolve() } })
+  q.cancel('a') // 间隙取消——a 永不发射；b/c 依次接棒跑完
+  for (let i = 0; i < 8; i++) await tick()
+  assert.deepEqual(ran, ['b', 'c'])
+  assert.equal(q.waitingCount(), 0); assert.equal(q.runningList().length, 0)
 })
 
 test('removeQueued 只摘不调副作用；waitingIds/runningList 快照', async () => {

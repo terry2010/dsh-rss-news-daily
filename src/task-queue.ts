@@ -29,6 +29,13 @@ export type EnqueueResult = 'started' | 'queued' | 'dup'
 export function createTaskQueue(opts: { limit: () => number; canStart?: (t: GTask) => boolean; log?: { warn: (s: string) => void } }) {
   const waiting: GTask[] = []
   const running = new Map<string, GTask>()
+  // running 表里的任务分两态：launched=start() 已发射（真在跑）；未发射=启动间隙
+  // （任务已占槽/占同类互斥，但 start() 还在 setImmediate 那拍之后）。间隙中 cancel 调
+  // cancel() 钩子会打在还没建的 AbortController 上——取消静默丢失、任务照跑；removeQueued
+  // 也够不着（不在 waiting）——删除方清了 meta 后任务又把它写回（死档复活）。
+  // cancelReq 标记让发射台跳过 start()，按 waiting 取消语义兑现。
+  const launched = new WeakSet<GTask>()
+  const cancelReq = new WeakSet<GTask>()
   const limit = () => Math.max(1, Math.min(8, Math.floor(opts.limit() || 1)))
 
   const pump = () => {
@@ -43,7 +50,11 @@ export function createTaskQueue(opts: { limit: () => number; canStart?: (t: GTas
       // setImmediate 排水：任务启动推迟到 check 阶段——poll 阶段先到一步的 HTTP 请求先被服务；
       // 若走 microtask，任务同步前缀（如专题候选查询）会把门口请求堵住数秒（表现为页面白屏转圈）
       new Promise<void>((res) => setImmediate(res))
-        .then(() => t.start())
+        .then(() => {
+          if (cancelReq.has(t)) return { cancelled: 'waiting' } // 启动间隙被撤——不发 start()，同 waiting 取消口径
+          launched.add(t)
+          return t.start()
+        })
         .then((v) => t.settle?.resolve(v))
         .catch((e) => { t.settle?.reject(e); opts.log?.warn(`task ${t.id} failed: ${e instanceof Error ? e.message : String(e)}`) })
         .finally(() => { running.delete(t.id); pump() })
@@ -68,13 +79,21 @@ export function createTaskQueue(opts: { limit: () => number; canStart?: (t: GTas
         return 'waiting'
       }
       const r = running.get(id)
-      if (r) { r.cancel?.(); return 'running' }
-      return 'none'
+      if (!r) return 'none'
+      if (!launched.has(r)) { // 启动间隙：start() 未发——按 waiting 取消语义走（副作用+发射台跳过）
+        cancelReq.add(r)
+        r.onCancelQueued?.()
+        return 'waiting'
+      }
+      r.cancel?.()
+      return 'running'
     },
-    /** 只摘 waiting 不调副作用（删除接口用——meta 由删除方处理） */
+    /** 只摘 waiting/启动间隙，不调副作用（删除接口用——meta 由删除方处理） */
     removeQueued(id: string): boolean {
       const i = waiting.findIndex((t) => t.id === id)
       if (i >= 0) { waiting.splice(i, 1); return true }
+      const r = running.get(id)
+      if (r && !launched.has(r)) { cancelReq.add(r); return true } // 发射台跳过即摘，绝不调 onCancelQueued
       return false
     },
     has: (id: string) => running.has(id) || waiting.some((t) => t.id === id),

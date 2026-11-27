@@ -196,6 +196,9 @@ function apiArchive(deps: ApiDeps) {
   const open = (p: string): ArchDb => {
     let e = cache.get(p)
     if (!e) {
+      // DatabaseSync 对不存在路径会新建空库——探测任意 4 位年份都会在数据目录
+      // 落一个空 archive-YYYY.db，从此混进 list 且永不消失；先查存在性再开
+      if (!existsSync(p)) throw new Error(`archive not found: ${p}`)
       const db = new DatabaseSync(p)
       // table_xinfo 不用 table_info：VIRTUAL 生成列对后者不可见
       const cols = new Set((db.prepare('PRAGMA table_xinfo(items)').all() as Array<{ name: string }>).map((r) => r.name))
@@ -651,7 +654,9 @@ function patchProviderScalars(text: string, provider: string): { baseURL?: strin
 async function patchProviderEntry(provider: string): Promise<{ baseURL?: string; api?: string } | undefined> {
   const candidates: string[] = []
   try {
-    candidates.push(join(dirname(fileURLToPath(new URL('.', import.meta.url))), '..', '..', '..', 'cordis.patch.yml'))
+    // fileURLToPath(URL('.')) 本身就是模块目录（lib/）——此前又叠了一层 dirname
+    // 把候选顶到了 profiles/ 根（死路径）；lib 上三级 = profile 根
+    candidates.push(join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..', 'cordis.patch.yml'))
   } catch { /* 非 file: 模块时忽略 */ }
   try {
     const dshHome = process.env.DSH_HOME || join(process.env.HOME || homedir(), '.dsh')
@@ -981,6 +986,13 @@ export function mountApi(ws: WebServerLike, deps: ApiDeps): () => void {
     for (const f of files) {
       if (!f.endsWith('.md')) continue // 只清日报/快报,index.json 等保留
       await unlink(join(deps.digestsDir, f))
+      deleted += 1
+    }
+    // 自定义快报类型的文件在 briefs/ 子目录——漏清会让合并视图继续显示已删快报的旧节
+    const briefFiles = await readdir(join(deps.digestsDir, 'briefs')).catch(() => [] as string[])
+    for (const f of briefFiles) {
+      if (!f.endsWith('.md')) continue
+      await unlink(join(deps.digestsDir, 'briefs', f))
       deleted += 1
     }
     sendJson(r, 200, { ok: true, deleted })

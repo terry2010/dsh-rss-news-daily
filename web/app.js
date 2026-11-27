@@ -1102,13 +1102,15 @@ const startSlotWatch = (doneToast = '快报已生成') => {
     } catch { /* 进度不可达不阻塞 */ }
   }, 1500)
 }
+let tpWatch = 0 // 专题 watcher 句柄：重入防叠——连点生成/再生成各起一个轮询会重复 toast+loadTopicsView
 function startTopicWatch() {
+  if (tpWatch) return tpWatch
   state.topicBusy = true
   $('#btnDigestStop').hidden = false
   busyShow('topic', '⏳ 专题生成中…')
   let lastSig = ''
   let seenRun = false // 区分「跑完收尾」与「排队中被取消」——toast 文案不同
-  const dp = setInterval(async () => {
+  const dp = tpWatch = setInterval(async () => {
     try {
       const p = await api('/topic-progress')
       const sig = `${p.running}:${p.id}:${(p.queuedIds || []).join(',')}` // 在跑 id + 排队名单变化→刷新视图（queued↔generating 转换、regen 完成都立即可见）
@@ -1126,7 +1128,7 @@ function startTopicWatch() {
         busyShow('topic', (p.heldIds || []).length ? `⌛ 高峰暂停中·出峰自动执行…${taskSfx(p.taskWaiting)}` : `⌛ 专题排队中…${taskSfx(p.taskWaiting)}`)
         return
       }
-      clearInterval(dp)
+      clearInterval(dp); tpWatch = 0
       state.topicBusy = false
       busyDone('topic')
       toast(seenRun ? '专题生成已结束' : '专题排队已取消')
@@ -2011,7 +2013,9 @@ async function saveWeightsPost(w) {
   try { const r = await post('/prefs', w || harvestWeights()); state.prefs = r.prefs || state.prefs; toast('权重已保存') }
   catch (err) { toast(`保存失败: ${err.message}`) }
 }
-$('#prefsView').addEventListener('change', (e) => { if (e.target.matches('input[data-wt]')) debounce(saveWeightsPost)() })
+// debounce 必须提升为单例——在 handler 里现造防抖器等于每个 change 各起一个 500ms 定时器，连改多字段发多个 POST
+const saveWeightsDebounced = debounce(saveWeightsPost)
+$('#prefsView').addEventListener('change', (e) => { if (e.target.matches('input[data-wt]')) saveWeightsDebounced() })
 
 $('#btnTune').addEventListener('click', async () => {
   const text = $('#tuneText').value.trim()

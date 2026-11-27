@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const mkStore = async () => {
   const { Store } = await import('../lib/core/store.js')
@@ -518,4 +518,35 @@ test('api: cross-site 请求被 403', async () => {
   req.headers['sec-fetch-site'] = 'cross-site'
   await items(req, res)
   assert.equal(res.statusCode, 403)
+})
+
+test('api: /archive/items 探测不存在的年份 404，且不在数据目录落空库文件', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  const arch = findPrefix(regs, '/dsh-rss-news-daily/api/archive')
+  const res = mkRes()
+  await arch(mkReq('GET', '/dsh-rss-news-daily/api/archive/items?year=1999'), res)
+  assert.equal(res.statusCode, 404)
+  // 此前 DatabaseSync 会就地新建 archive-1999.db——探测一次 list 里就多一条永不消失的空档
+  assert.equal(existsSync(join(dirname(deps.store.path), 'archive-1999.db')), false)
+})
+
+test('api: /digests/clear 连带清 briefs/ 子目录的自定义快报文件', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  mkdirSync(join(deps.digestsDir, 'briefs'), { recursive: true })
+  writeFileSync(join(deps.digestsDir, '2026-01-01-rss-briefing.md'), 'x')
+  writeFileSync(join(deps.digestsDir, 'briefs', '2026-01-01-tech.md'), 'x')
+  writeFileSync(join(deps.digestsDir, 'index.json'), '{}')
+  const clear = findHandler(regs, '/dsh-rss-news-daily/api/digests/clear')
+  const res = mkRes()
+  await clear(mkReq('POST', '/dsh-rss-news-daily/api/digests/clear', {}), res)
+  const r = JSON.parse(res.body)
+  assert.equal(r.deleted, 2)
+  assert.equal(existsSync(join(deps.digestsDir, 'index.json')), true)
+  assert.equal(existsSync(join(deps.digestsDir, 'briefs', '2026-01-01-tech.md')), false)
 })

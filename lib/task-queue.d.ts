@@ -37,7 +37,7 @@ export declare function createTaskQueue(opts: {
     enqueue(t: GTask): EnqueueResult;
     /** 取消：waiting→撤队（onCancelQueued 副作用 + settle 兑现 cancelled）;running→cancel() 钩子；都没中→'none' */
     cancel(id: string): "waiting" | "running" | "none";
-    /** 只摘 waiting 不调副作用（删除接口用——meta 由删除方处理） */
+    /** 只摘 waiting/启动间隙，不调副作用（删除接口用——meta 由删除方处理） */
     removeQueued(id: string): boolean;
     has: (id: string) => boolean;
     isQueued: (id: string) => boolean;

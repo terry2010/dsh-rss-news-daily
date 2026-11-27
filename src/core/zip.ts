@@ -111,8 +111,12 @@ export function unzipEntries(buf: Buffer, caps: { entry?: number; total?: number
     const clen = buf.readUInt16LE(p + 32)
     const lhOff = buf.readUInt32LE(p + 42)
     const name = buf.subarray(p + 46, p + 46 + nlen).toString('utf8')
+    // 本地头签名+包体越界双重校验：subarray 越界会静默截断——store 条目（method=0）
+    // 会悄悄解出残缺的 store.db 并在重启时把库换成坏文件
+    if (lhOff + 30 > buf.length || buf.readUInt32LE(lhOff) !== 0x04034b50) throw new Error(`zip 内 ${name} 的本地文件头损坏`)
     const ln = buf.readUInt16LE(lhOff + 26)
     const le = buf.readUInt16LE(lhOff + 28)
+    if (lhOff + 30 + ln + le + compSize > buf.length) throw new Error(`zip 内 ${name} 数据越界（声明大小超出包体）`)
     const raw = buf.subarray(lhOff + 30 + ln + le, lhOff + 30 + ln + le + compSize)
     const data = method === 8
       ? inflateRawSync(raw, { maxOutputLength: maxEntry })
