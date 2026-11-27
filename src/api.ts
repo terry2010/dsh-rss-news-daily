@@ -97,7 +97,16 @@ export interface ApiDeps {
   digestsDir: string
   runDigest: (force?: boolean, day?: string, opts?: { peakBypass?: boolean }) => Promise<unknown>
   /** 宿主 LLM runtime（可选能力）；用于 /api/llm 列 provider/model */
-  getLlm?: () => { listProviders(): Array<{ id: string }>; listModels(p: string): Promise<Array<{ id: string }>> } | undefined
+  getLlm?: () => {
+    listProviders(): Array<{ id: string }>
+    listModels(p: string): Promise<Array<{ id: string }>>
+    /** 可配置 provider 目录：拿到 settingsNs/settingsPath 才能去 settings 里读该路由的 baseURL */
+    listConfigurableProviders?(): Array<{ provider: string; settingsNs: string; settingsPath: readonly string[]; declared?: boolean }>
+    /** 在线询问 provider 端点 /models（pi-ai 按 provider 自解析已存凭据）；宿主未注册该 ns 的 discovery 会抛 */
+    discoverModels?(ns: string, req: { provider?: string; baseURL?: string; api?: string }, signal?: AbortSignal): Promise<Array<{ id: string }>>
+  } | undefined
+  /** 宿主 settings 服务（可选能力）；读 provider profile 的 baseURL/api 供在线模型发现 */
+  getSettings?: () => { get?(ns: string): unknown } | undefined
   /** llm 路由保存后触发：探测翻译路由推理档位，未声明的推理模型自动生成 cordis 配置 */
   probeLlmEffort?: () => void
   /** 宿主目录选择服务（可选能力）；native 能力弹系统对话框，browse/缺失时 pick-dir 返回 supported:false */
@@ -593,6 +602,97 @@ function apiPrefs(deps: ApiDeps) {
   }
 }
 
+/** ?provider= 的在线补单：手写目录 provider（omlx 类本地网关）的 models 清单是配路时刻的
+ *  快照——端点删模型/下新模型后快照照旧。仅对用户声明型路由（declared，宿主目录不提供兜底
+ *  catalog、清单本就来自端点或手填）走 model discovery 问 {baseURL}/models；答了就用活清单
+ *  （已删模型才会消失），任何一步不可用/失败回落配置快照。目录型 provider 不问——在线列表会
+ *  冲掉用户在配置里精选的模型子集。 */
+const liveSkipLogged = new Set<string>() // 按 provider+原因只记一次——llm.log 不被开页刷量
+
+/** cordis.patch.yml 窄行解析：providers: → <provider>: → baseURL/api 标量。
+ *  文件由 `omlx launch dsh` 等工具生成、缩进稳定——不引 yaml 依赖。 */
+function patchProviderScalars(text: string, provider: string): { baseURL?: string; api?: string } | undefined {
+  const lines = text.split('\n')
+  const indent = (l: string) => l.length - l.trimStart().length
+  const meaningful = (l: string) => l.trim() !== '' && !l.trim().startsWith('#')
+  const scalar = (l: string): string | undefined => {
+    const v = l.slice(l.indexOf(':') + 1).trim().replace(/\s+#.*$/, '').trim()
+    if (!v) return undefined
+    const q = v[0]
+    return v.length > 1 && (q === '"' || q === "'") && v.endsWith(q) ? v.slice(1, -1) : v
+  }
+  const keyRe = new RegExp(`^\\s*${provider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*(?:#.*)?$`)
+  const pi = lines.findIndex((l) => /^\s*providers:\s*(?:#.*)?$/.test(l))
+  if (pi < 0) return undefined
+  const pIndent = indent(lines[pi])
+  let ki = -1
+  for (let i = pi + 1; i < lines.length; i++) {
+    const l = lines[i]
+    if (!meaningful(l)) continue
+    if (indent(l) <= pIndent) break
+    if (keyRe.test(l)) { ki = i; break }
+  }
+  if (ki < 0) return undefined
+  const kIndent = indent(lines[ki])
+  const out: { baseURL?: string; api?: string } = {}
+  for (let j = ki + 1; j < lines.length; j++) {
+    const l = lines[j]
+    if (!meaningful(l)) continue
+    if (indent(l) <= kIndent) break
+    if (/^\s*baseURL\s*:/.test(l)) out.baseURL = scalar(l)
+    else if (/^\s*api\s*:/.test(l)) out.api = scalar(l)
+  }
+  return out
+}
+
+/** settings 服务对第三方插件不可见时，直读 profile 的 cordis.patch.yml 拿
+ *  providers.<provider> 的 baseURL/api。候选：本包装在 profile/node_modules
+ *  下时 lib/api.js 上三级即 profile 根；否则扫 <dshHome>/profiles/*。 */
+async function patchProviderEntry(provider: string): Promise<{ baseURL?: string; api?: string } | undefined> {
+  const candidates: string[] = []
+  try {
+    candidates.push(join(dirname(fileURLToPath(new URL('.', import.meta.url))), '..', '..', '..', 'cordis.patch.yml'))
+  } catch { /* 非 file: 模块时忽略 */ }
+  try {
+    const dshHome = process.env.DSH_HOME || join(process.env.HOME || homedir(), '.dsh')
+    for (const prof of await readdir(join(dshHome, 'profiles')))
+      candidates.push(join(dshHome, 'profiles', prof, 'cordis.patch.yml'))
+  } catch { /* profiles 目录不存在 */ }
+  for (const file of candidates) {
+    const text = await readFile(file, 'utf8').catch(() => '')
+    const entry = text ? patchProviderScalars(text, provider) : undefined
+    if (entry?.baseURL) return entry
+  }
+  return undefined
+}
+
+async function listLiveModels(deps: ApiDeps, runtime: NonNullable<ReturnType<NonNullable<ApiDeps['getLlm']>>>, provider: string): Promise<string[] | undefined> {
+  const skip = (reason: string): undefined => {
+    const key = `${provider}:${reason}`
+    if (!liveSkipLogged.has(key)) { liveSkipLogged.add(key); deps.bootMark?.(`llm-live skip ${provider}: ${reason}`) }
+    return undefined
+  }
+  if (typeof runtime.listConfigurableProviders !== 'function' || typeof runtime.discoverModels !== 'function') return skip('no discovery api')
+  const settings = deps.getSettings?.() as { get?: (ns: string) => unknown; section?: (ns: string) => unknown } | undefined
+  const readNs = (ns: string): unknown => settings?.get?.(ns) ?? settings?.section?.(ns)
+  try {
+    const entry = runtime.listConfigurableProviders().find((e) => e.provider === provider)
+    if (!entry?.declared) return undefined // 目录型 provider：配置清单即精选子集，不问端点
+    let profile: unknown = readNs(entry.settingsNs)
+    for (const seg of entry.settingsPath) profile = (profile as Record<string, unknown> | null | undefined)?.[seg]
+    let { baseURL, api } = (profile ?? {}) as { baseURL?: string; api?: string }
+    if (!baseURL) { // settings 服务拿不到 → 直读 profile 的 cordis.patch.yml
+      const patch = await patchProviderEntry(provider)
+      baseURL = patch?.baseURL
+      api ??= patch?.api
+    }
+    if (!baseURL) return skip('no baseURL via settings or patch')
+    const ids = (await runtime.discoverModels(entry.settingsNs, { provider, baseURL, api }, AbortSignal.timeout(4_000))).map((m) => m.id)
+    if (ids.length === 0) return skip('endpoint listed zero models')
+    return ids
+  } catch (e) { return skip(`discover failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`) }
+}
+
 /** /api/llm：GET 列 provider（?provider=p 时列其 model）；POST 设/清 UI 模型覆盖 */
 function apiLlm(deps: ApiDeps) {
   return async (req: Req, res: Res) => {
@@ -609,7 +709,8 @@ function apiLlm(deps: ApiDeps) {
       const providers = runtime.listProviders().map((p) => ({ id: p.id }))
       let models: string[] = []
       if (provider) {
-        models = (await runtime.listModels(provider).catch(() => [])).map((m) => m.id)
+        models = (await listLiveModels(deps, runtime, provider))
+          ?? (await runtime.listModels(provider).catch(() => [])).map((m) => m.id)
       }
       return sendJson(res, 200, { ok: true, available: true, providers, models, current, effective })
     }

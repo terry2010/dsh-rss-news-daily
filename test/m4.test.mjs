@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -354,6 +354,74 @@ test('api: /api/llm GET 列 provider+current+effective；POST 设/清覆盖', as
   res = mkRes()
   await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm'), res)
   assert.equal(JSON.parse(res.body).effective, 'auto')
+})
+
+test('api: /api/llm ?provider= 对声明型 provider 走在线发现，失败回落配置目录', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  let discoverCalls = 0
+  let discoverFail = false
+  deps.getLlm = () => ({
+    listProviders: () => [{ id: 'omlx' }, { id: 'deepseek' }],
+    listModels: async (p) => p === 'omlx' ? [{ id: 'stale-model' }] : [{ id: 'deepseek-chat' }],
+    listConfigurableProviders: () => [
+      { provider: 'omlx', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'omlx'], declared: true },
+      { provider: 'deepseek', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'deepseek'], declared: false },
+    ],
+    discoverModels: async (ns, req) => {
+      discoverCalls++
+      assert.equal(ns, 'llm-pi-ai')
+      assert.equal(req.baseURL, 'http://127.0.0.1:8001/v1')
+      if (discoverFail) throw new Error('endpoint down')
+      return [{ id: 'fresh-model' }, { id: 'fresh-model-2' }]
+    },
+  })
+  deps.getSettings = () => ({ get: (ns) => ns === 'llm-pi-ai' ? { providers: { omlx: { baseURL: 'http://127.0.0.1:8001/v1', api: 'openai-responses' } } } : undefined })
+  const regs = []
+  mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+  const llm = findHandler(regs, '/dsh-rss-news-daily/api/llm')
+
+  // 声明型 provider：在线清单取代配置快照（已删模型消失、新模型出现）
+  let res = mkRes()
+  await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm?provider=omlx'), res)
+  assert.deepEqual(JSON.parse(res.body).models, ['fresh-model', 'fresh-model-2'])
+  assert.equal(discoverCalls, 1)
+
+  // 目录型 provider 不问端点——在线全量列表会冲掉配置精选子集
+  res = mkRes()
+  await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm?provider=deepseek'), res)
+  assert.deepEqual(JSON.parse(res.body).models, ['deepseek-chat'])
+  assert.equal(discoverCalls, 1)
+
+  // 端点不可达：回落配置快照
+  discoverFail = true
+  res = mkRes()
+  await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm?provider=omlx'), res)
+  assert.deepEqual(JSON.parse(res.body).models, ['stale-model'])
+
+  // settings 服务对本插件不可见：直读 <DSH_HOME>/profiles/*/cordis.patch.yml 拿 baseURL 照样走在线发现
+  deps.getSettings = undefined
+  const dshHome = mkdtempSync(join(tmpdir(), 'rnd-dsh-'))
+  mkdirSync(join(dshHome, 'profiles', 'desktop'), { recursive: true })
+  writeFileSync(join(dshHome, 'profiles', 'desktop', 'cordis.patch.yml'), [
+    '- id: llm-pi-ai',
+    '  config:',
+    '    providers:',
+    '      omlx:',
+    '        api: openai-responses',
+    '        baseURL: "http://127.0.0.1:8001/v1"',
+  ].join('\n'))
+  const prevHome = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+  discoverFail = false
+  try {
+    res = mkRes()
+    await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm?provider=omlx'), res)
+    assert.deepEqual(JSON.parse(res.body).models, ['fresh-model', 'fresh-model-2'])
+  } finally {
+    if (prevHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prevHome
+  }
 })
 
 test('prefs: llm 覆盖字段落盘往返（PrefsStore）', async () => {

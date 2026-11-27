@@ -1131,6 +1131,8 @@ export function apply(ctx: Context, config: ConfigType) {
   }
 
   let llmRuntime: ConstructorParameters<typeof DshLlmClient>[0] | undefined
+  // 宿主 settings 服务（可选能力）：/api/llm 读 provider profile 的 baseURL 做在线模型发现
+  let settingsSvc: { get?: (ns: string) => unknown } | undefined
   // 宿主目录选择服务（可选能力）：桌面端 = native 系统对话框；browse/无服务时 /api/pick-dir 降级
   let directoryPickerSvc: { capability?: () => { kind?: string; pick?: (s: AbortSignal) => Promise<string | null> } } | undefined
   const pickRoute = (): { provider: string; model: string } => {
@@ -1400,6 +1402,14 @@ export function apply(ctx: Context, config: ConfigType) {
       kickEffortProbe() // llm 就绪：探测翻译路由档位，推理模型未声明则自动生成 cordis 配置
     }
   })
+  ctx.inject(['settings'], (c) => {
+    settingsSvc = (c as unknown as { settings?: typeof settingsSvc }).settings
+    if (settingsSvc) log.info('settings service available: live model discovery enabled')
+  })
+  // inject 不保证等得到 settings（宿主作用域可见性看版本）——每次请求惰性回退 ctx.get 直读服务表
+  const getSettingsSvc = () =>
+    settingsSvc ?? (ctx as unknown as { get?: (n: string, strict?: boolean) => unknown }).get?.('settings') as typeof settingsSvc
+    ?? (ctx as unknown as { get?: (n: string, strict?: boolean) => unknown }).get?.('settings', false) as typeof settingsSvc
   ctx.inject(['directoryPicker'], (c) => {
     directoryPickerSvc = (c as unknown as { directoryPicker?: typeof directoryPickerSvc }).directoryPicker
     if (directoryPickerSvc) log.info(`directoryPicker service available: ${directoryPickerSvc.capability?.().kind ?? 'unknown'}`)
@@ -1419,6 +1429,7 @@ export function apply(ctx: Context, config: ConfigType) {
         digestsDir: join(dataDir, 'digests'),
         runDigest: digestNow,
         getLlm: () => llmRuntime,
+        getSettings: getSettingsSvc,
         getDirectoryPicker: () => directoryPickerSvc,
         configLlm: { provider: config.llm.provider, model: config.llm.model },
         configSchedule: {

@@ -47,6 +47,25 @@ export interface ApiDeps {
         listModels(p: string): Promise<Array<{
             id: string;
         }>>;
+        /** 可配置 provider 目录：拿到 settingsNs/settingsPath 才能去 settings 里读该路由的 baseURL */
+        listConfigurableProviders?(): Array<{
+            provider: string;
+            settingsNs: string;
+            settingsPath: readonly string[];
+            declared?: boolean;
+        }>;
+        /** 在线询问 provider 端点 /models（pi-ai 按 provider 自解析已存凭据）；宿主未注册该 ns 的 discovery 会抛 */
+        discoverModels?(ns: string, req: {
+            provider?: string;
+            baseURL?: string;
+            api?: string;
+        }, signal?: AbortSignal): Promise<Array<{
+            id: string;
+        }>>;
+    } | undefined;
+    /** 宿主 settings 服务（可选能力）；读 provider profile 的 baseURL/api 供在线模型发现 */
+    getSettings?: () => {
+        get?(ns: string): unknown;
     } | undefined;
     /** llm 路由保存后触发：探测翻译路由推理档位，未声明的推理模型自动生成 cordis 配置 */
     probeLlmEffort?: () => void;

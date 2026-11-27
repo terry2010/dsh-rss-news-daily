@@ -2110,7 +2110,7 @@ async function loadLlm() {
     $('#llmProvider').innerHTML = r.providers.map((p) =>
       `<option value="${esc(p.id)}" ${p.id === r.current.provider ? 'selected' : ''}>${esc(p.id)}</option>`).join('')
     const llmProv = r.current.provider || r.providers[0]?.id || ''
-    const llmModels = await loadLlmModels(llmProv, r.current.model)
+    const llmModels = await loadLlmModels(llmProv, r.current.model, true)
     if (llmModels && r.current.model && !llmModels.includes(r.current.model)) {
       $('#llmInfo').textContent += '（该模型不在 provider 列表中，请重新选择）'
     }
@@ -2119,7 +2119,7 @@ async function loadLlm() {
     $('#tlProvider').innerHTML = r.providers.map((p) =>
       `<option value="${esc(p.id)}" ${p.id === (t?.provider || r.current.provider) ? 'selected' : ''}>${esc(p.id)}</option>`).join('')
     const tlProv = t?.provider || r.current.provider || r.providers[0]?.id || ''
-    const tlModels = await loadTlModels(tlProv, t?.model || '')
+    const tlModels = await loadTlModels(tlProv, t?.model || '', true)
     $('#tlInfo').textContent = t?.provider && t?.model
       ? `翻译模型: ${t.provider}/${t.model}` + (tlModels && !tlModels.includes(t.model) ? '（该模型不在 provider 列表中，请重新选择）' : '')
       : '翻译模型: 跟随日报模型'
@@ -2133,7 +2133,7 @@ async function loadLlm() {
 }
 
 let tlModelSeq = 0 // 模型列表请求序号：仅最新一轮允许写 DOM/触发保存
-async function loadTlModels(provider, selected) {
+async function loadTlModels(provider, selected, keepMissing) {
   const sel = $('#tlModel')
   if (!provider) return null // 空 provider 不算新请求——不能作废在飞的一轮（否则 sel 永远禁用）
   const seq = ++tlModelSeq
@@ -2141,8 +2141,11 @@ async function loadTlModels(provider, selected) {
   try {
     const r = await api(`/llm?provider=${encodeURIComponent(provider)}`)
     if (seq !== tlModelSeq) return null // 已有更新一轮请求：本次结果作废
-    sel.innerHTML = r.models.map((m) =>
-      `<option value="${esc(m)}" ${m === selected ? 'selected' : ''}>${esc(m)}</option>`).join('')
+    // keepMissing：同路由重建时把已保存但不在列表的模型留成合成项——否则下拉静默落到
+    // 首项，下一次保存就把用户选择覆盖成首项；换 provider 不传：prev 属旧 provider 必须回落
+    const list = keepMissing && selected && !r.models.includes(selected) ? [selected, ...r.models] : r.models
+    sel.innerHTML = list.map((m) =>
+      `<option value="${esc(m)}" ${m === selected ? 'selected' : ''}>${esc(m)}${r.models.includes(m) ? '' : '（不在列表中）'}</option>`).join('')
     return r.models
   } catch { return null } // 拉取失败不触发保存，避免 provider/model 错配落盘
   finally { if (seq === tlModelSeq) sel.disabled = false }
@@ -2156,9 +2159,9 @@ const enqueueLlm = (fn) => {
   return llmChain
 }
 
-const saveTlModel = async (provider) => {
+const saveTlModel = async (provider, model) => {
   try {
-    const r = await post('/llm', { provider: provider ?? $('#tlProvider').value, model: $('#tlModel').value, scope: 'translate' })
+    const r = await post('/llm', { provider: provider ?? $('#tlProvider').value, model: model ?? $('#tlModel').value, scope: 'translate' })
     if (state.prefs) state.prefs.translateLlm = r.translateLlm // 同步本地缓存：loadLlm 用它重渲下拉，避免被旧值刷回
     toast('翻译模型已保存'); loadLlm()
   } catch (e) { toast(`保存失败: ${e.message}`) }
@@ -2173,10 +2176,11 @@ $('#tlProvider').addEventListener('change', (e) => {
     if (ms !== null) await saveTlModel(provider)
   })
 })
-$('#tlModel').addEventListener('change', () => enqueueLlm(() => saveTlModel()))
+// model 同样事件时刻定死——排队期间列表重建会把已删/缺失的已选项落回首项，回读 DOM 存成错值
+$('#tlModel').addEventListener('change', (e) => { const provider = $('#tlProvider').value; const model = e.target.value; enqueueLlm(() => saveTlModel(provider, model)) })
 
 let llmModelSeq = 0 // 同上：仅最新一轮允许写 DOM/触发保存
-async function loadLlmModels(provider, selected) {
+async function loadLlmModels(provider, selected, keepMissing) {
   const sel = $('#llmModel')
   if (!provider) return null // 同上：空 provider 不作废在飞请求
   const seq = ++llmModelSeq
@@ -2184,18 +2188,20 @@ async function loadLlmModels(provider, selected) {
   try {
     const r = await api(`/llm?provider=${encodeURIComponent(provider)}`)
     if (seq !== llmModelSeq) return null // 已有更新一轮请求：本次结果作废
-    sel.innerHTML = r.models.map((m) =>
-      `<option value="${esc(m)}" ${m === selected ? 'selected' : ''}>${esc(m)}</option>`).join('')
+    // 同 loadTlModels 的 keepMissing——已保存模型缺位时留成合成项而非静默落首项
+    const list = keepMissing && selected && !r.models.includes(selected) ? [selected, ...r.models] : r.models
+    sel.innerHTML = list.map((m) =>
+      `<option value="${esc(m)}" ${m === selected ? 'selected' : ''}>${esc(m)}${r.models.includes(m) ? '' : '（不在列表中）'}</option>`).join('')
     return r.models
   } catch { return null } // 拉取失败不触发保存，避免 provider/model 错配落盘
   finally { if (seq === llmModelSeq) sel.disabled = false }
 }
 
-const saveLlmModel = async (provider) => {
+const saveLlmModel = async (provider, model) => {
   const prov = provider ?? $('#llmProvider').value
-  const model = $('#llmModel').value
-  if (!prov || !model) return toast('provider 和 model 都要选')
-  await post('/llm', { provider: prov, model })
+  const m = model ?? $('#llmModel').value
+  if (!prov || !m) return toast('provider 和 model 都要选')
+  await post('/llm', { provider: prov, model: m })
   toast('模型已保存，下次日报生效')
   loadLlm()
 }
@@ -2208,7 +2214,8 @@ $('#llmProvider').addEventListener('change', (e) => {
     if (ms !== null) await saveLlmModel(provider)
   })
 })
-$('#llmModel').addEventListener('change', () => enqueueLlm(() => saveLlmModel()))
+// model 事件时刻定死——排队期间列表重建会把缺失的已选项落回首项，回读 DOM 存成错值
+$('#llmModel').addEventListener('change', (e) => { const provider = $('#llmProvider').value; const model = e.target.value; enqueueLlm(() => saveLlmModel(provider, model)) })
 $('#btnLlmClear').addEventListener('click', () => enqueueLlm(async () => {
   await post('/llm', { provider: '', model: '' })
   toast('已恢复自动路由')
