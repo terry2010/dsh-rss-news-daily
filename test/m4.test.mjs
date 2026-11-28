@@ -356,6 +356,53 @@ test('api: /api/llm GET 列 provider+current+effective；POST 设/清覆盖', as
   assert.equal(JSON.parse(res.body).effective, 'auto')
 })
 
+test('api: /api/llm 未声明模型→POST 标记 undeclared/pendingRestart；GET 报 pending 待重启', async () => {
+  const { mountApi } = await import('../lib/api.js')
+  const deps = await mkDeps()
+  deps.getLlm = () => ({
+    listProviders: () => [{ id: 'ds-test' }],
+    listModels: async () => [{ id: 'declared-m' }],
+  })
+  deps.configLlm = { provider: '', model: '' }
+  // 未声明路径会真实扫 cordis.patch.yml 候选——DSH_HOME 指到空目录防误写真 profile
+  const prevHome = process.env.DSH_HOME
+  process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'llm-pending-'))
+  try {
+    const regs = []
+    mountApi({ register: (o) => { regs.push(o); return () => {} } }, deps)
+    const llm = findHandler(regs, '/dsh-rss-news-daily/api/llm')
+    // 选中模型不在声明清单且无 patch 可写 → undeclared 原因透出
+    let res = mkRes()
+    await llm(mkReq('POST', '/dsh-rss-news-daily/api/llm', { provider: 'ds-test', model: 'ghost-m' }), res)
+    let out = JSON.parse(res.body)
+    assert.ok(out.undeclared, `expected undeclared flag, got ${res.body}`)
+    // GET：当前选中不在声明清单 → pending.llm 常驻待重启标记
+    res = mkRes()
+    await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm'), res)
+    assert.equal(JSON.parse(res.body).pending?.llm, true)
+    // translate 路由同样判 pending
+    res = mkRes()
+    await llm(mkReq('POST', '/dsh-rss-news-daily/api/llm', { provider: 'ds-test', model: 'ghost-m', scope: 'translate' }), res)
+    res = mkRes()
+    await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm'), res)
+    assert.equal(JSON.parse(res.body).pending?.translate, true)
+    // 已声明模型：无 pending 无标记
+    res = mkRes()
+    await llm(mkReq('POST', '/dsh-rss-news-daily/api/llm', { provider: 'ds-test', model: 'declared-m' }), res)
+    out = JSON.parse(res.body)
+    assert.equal(out.pendingRestart, undefined)
+    assert.equal(out.undeclared, undefined)
+    res = mkRes()
+    await llm(mkReq('POST', '/dsh-rss-news-daily/api/llm', { provider: 'ds-test', model: 'declared-m', scope: 'translate' }), res)
+    res = mkRes()
+    await llm(mkReq('GET', '/dsh-rss-news-daily/api/llm'), res)
+    assert.equal(JSON.parse(res.body).pending, undefined)
+  } finally {
+    if (prevHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prevHome
+  }
+})
+
 test('api: /api/llm ?provider= 对声明型 provider 走在线发现，失败回落配置目录', async () => {
   const { mountApi } = await import('../lib/api.js')
   const deps = await mkDeps()

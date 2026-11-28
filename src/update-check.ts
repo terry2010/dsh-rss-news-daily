@@ -1,5 +1,5 @@
 /**
- * 每日更新检查：启动 delayMinutes 后向 update 端点上报一次自身版本 +
+ * 每日更新检查：挂在当日第一次抓取上——向 update 端点上报一次自身版本 +
  * 已安装伴随插件版本，拉回最新升级信息；每个自然日最多一次（成败都计）。
  *
  * 隐私口径（docs 详设 §2.4）：上行 {pkg, version, companions} + iid/d/t——
@@ -19,7 +19,6 @@ import { createHmac, randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { TimerSeam } from './scheduler.js'
 import { zonedDayKey } from './core/time.js'
 import type { LogSink } from './core/types.js'
 import { noopLog } from './core/types.js'
@@ -223,7 +222,6 @@ export async function runUpdateCheck(opts: {
 export interface StartUpdateCheckOpts {
   enabled: () => boolean
   endpoint: () => string
-  delayMs: number
   timeoutMs: number
   timezone?: string
   selfPkg: string
@@ -239,8 +237,9 @@ export interface StartUpdateCheckOpts {
   log?: LogSink
 }
 
-/** 装配启动延迟定时器；返回 disposer（插件重载清钟用）。 */
-export function startUpdateCheck(timer: TimerSeam, opts: StartUpdateCheckOpts): () => void {
+/** 组装每日一次门控的更新检查。返回的函数挂在「当日第一次抓取」上调用——
+ *  内部 lastAttemptDay 门控：enabled 关/当天已试过（成败都算）立即返回，可放心每轮抓取都调。 */
+export function startUpdateCheck(opts: StartUpdateCheckOpts): () => Promise<void> {
   const log = opts.log || noopLog
   const fire = async (): Promise<void> => {
     if (!opts.enabled()) return
@@ -263,5 +262,5 @@ export function startUpdateCheck(timer: TimerSeam, opts: StartUpdateCheckOpts): 
     log.info(hasUpdate ? `update available: ${opts.selfVer} → ${info.latest}` : `update check: ${opts.selfVer} up to date`)
     if (hasUpdate) opts.onUpdate?.(info)
   }
-  return timer.timeout(() => { void fire().catch((e) => log.warn(`update check crashed: ${e instanceof Error ? e.message : String(e)}`)) }, opts.delayMs)
+  return () => fire().catch((e) => log.warn(`update check crashed: ${e instanceof Error ? e.message : String(e)}`))
 }

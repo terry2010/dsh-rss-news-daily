@@ -24,6 +24,7 @@ import { parseTune, learnFromFeedback } from './core/tune.js'
 import { normalizeTopicParams, listTopics, deleteTopic, exportTopic, topicsDirOf, type TopicParams } from './topic-pipeline.js'
 import { briefFileFor, briefScheduleText, briefsDirOf, mergeBriefMarkdown, newBriefTypeId, normalizeBriefType, normalizeBriefTypes, resolveBriefTypes } from './brief-types.js'
 import type { BriefType } from './brief-types.js'
+import { declareModelEntry } from './effort-config.js'
 
 const BASE = '/dsh-rss-news-daily'
 
@@ -698,6 +699,19 @@ async function listLiveModels(deps: ApiDeps, runtime: NonNullable<ReturnType<Non
   } catch (e) { return skip(`discover failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`) }
 }
 
+/** 保存的模型不在路由声明清单（runtime.listModels）时补登 cordis.patch.yml——
+ *  在线发现会把"端点已加载但 pi-ai 未声明"的模型放进下拉，选了必 UNKNOWN_MODEL。
+ *  pendingRestart：已写入/已存在但 runtime 不可见，重启生效；undeclared：写不进去的原因。 */
+async function declareIfMissing(runtime: NonNullable<ReturnType<NonNullable<ApiDeps['getLlm']>>>, provider: string, model: string): Promise<{ pendingRestart?: true; undeclared?: string }> {
+  try {
+    const declared = await runtime.listModels(provider).then((ms) => ms.map((m) => m.id)).catch(() => undefined)
+    if (declared?.includes(model)) return {}
+    const r = await declareModelEntry(provider, model)
+    if (r.kind === 'written' || r.kind === 'exists') return { pendingRestart: true }
+    return { undeclared: r.detail }
+  } catch (e) { return { undeclared: (e instanceof Error ? e.message : String(e)).slice(0, 120) } }
+}
+
 /** /api/llm：GET 列 provider（?provider=p 时列其 model）；POST 设/清 UI 模型覆盖 */
 function apiLlm(deps: ApiDeps) {
   return async (req: Req, res: Res) => {
@@ -717,22 +731,32 @@ function apiLlm(deps: ApiDeps) {
         models = (await listLiveModels(deps, runtime, provider))
           ?? (await runtime.listModels(provider).catch(() => [])).map((m) => m.id)
       }
-      return sendJson(res, 200, { ok: true, available: true, providers, models, current, effective })
+      // 待重启判定：已选模型不在 runtime 声明清单——多半是补登的条目等重启生效（也可能是配置失效）
+      const pendingCheck = async (route?: { provider: string; model: string }): Promise<boolean> => {
+        if (!route?.provider || !route.model) return false
+        const declared = await runtime.listModels(route.provider).then((ms) => ms.map((m) => m.id)).catch(() => undefined)
+        return declared !== undefined && !declared.includes(route.model)
+      }
+      const pending: { llm?: true; translate?: true } = {}
+      if (await pendingCheck(effective === 'ui' ? ui : effective === 'config' ? cfg : undefined)) pending.llm = true
+      if (await pendingCheck(deps.prefs.get().translateLlm)) pending.translate = true
+      return sendJson(res, 200, { ok: true, available: true, providers, models, current, effective, ...(pending.llm || pending.translate ? { pending } : {}) })
     }
     if (method === 'POST') {
       const body = await readBody(req) as { provider?: string; model?: string; scope?: string }
       const provider = String(body.provider || '').trim()
       const model = String(body.model || '').trim()
+      const extra = provider && model && runtime ? await declareIfMissing(runtime, provider, model) : {}
       if (body.scope === 'translate') {
         if (provider && model) deps.prefs.save({ translateLlm: { provider, model } })
         else deps.prefs.save({ translateLlm: undefined })
         deps.probeLlmEffort?.() // 翻译路由变了：后台探测是否需要生成 effort 配置
-        return sendJson(res, 200, { ok: true, translateLlm: deps.prefs.get().translateLlm })
+        return sendJson(res, 200, { ok: true, translateLlm: deps.prefs.get().translateLlm, ...extra })
       }
       if (provider && model) deps.prefs.save({ llm: { provider, model } })
       else deps.prefs.save({ llm: undefined }) // 空对 = 清除覆盖回自动
       deps.probeLlmEffort?.() // 日报路由是翻译的回落——同样复探
-      return sendJson(res, 200, { ok: true, llm: deps.prefs.get().llm })
+      return sendJson(res, 200, { ok: true, llm: deps.prefs.get().llm, ...extra })
     }
     sendJson(res, 405, { ok: false, error: `unsupported ${method}` })
   }

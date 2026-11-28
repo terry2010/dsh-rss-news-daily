@@ -684,6 +684,8 @@ export function apply(ctx: Context, config: ConfigType) {
   }
   /** prefs.briefTypes 变更后调用：重挂调度钟（增删改/启停立即生效） */
   const briefsChanged = () => armBriefs()
+  /** 每日更新检查任务（apply 尾段装配）——挂在抓取入口，内部当日门控 */
+  let updateCheckTask: (() => Promise<void>) | undefined
   // 抓取管线经全局任务队列：id 'fetch' 同类去重（定时器/手动/源重试撞车合并成一个任务）；
   // 返回的 Promise 在任务真正跑完才兑现——调度器的周期锁语义与改造前一致。
   const runFetchPool = (pool: ReturnType<typeof effectiveSources>, force = false): Promise<FetchCycleResult> => {
@@ -707,6 +709,7 @@ export function apply(ctx: Context, config: ConfigType) {
     return doneP
   }
   const runFetchWork = (pool: ReturnType<typeof effectiveSources>, force = false) => {
+    void updateCheckTask?.() // 每日更新检查：当日第一次抓取时触发（内部门控，重复调零成本）
     const cycleStart = new Date().toISOString()
     store.meta.lastFetchStartedAt = cycleStart // 本轮起点:「本次」实时计数以此为界
     const mergedForce = force || pendingFetch.force
@@ -1363,11 +1366,11 @@ export function apply(ctx: Context, config: ConfigType) {
         onDigestDeferred: () => markPeakDefer(new Date().toISOString(), { digest: true }),
         log,
       }))
-      // 每日更新检查：启动 delayMinutes 后打一次端点（当天已试则跳过），结果落 meta.updateCheck → /api/status
-      disposers.push(startUpdateCheck(ctx as unknown as TimerSeam, {
+      // 每日更新检查：挂在当日第一次抓取上（updateCheckTask 在 runFetchWork 头部触发，
+      // 内部 lastAttemptDay 门控，当天已试即跳过），结果落 meta.updateCheck → /api/status
+      updateCheckTask = startUpdateCheck({
         enabled: () => config.updateCheck.enabled,
         endpoint: () => config.updateCheck.endpoint,
-        delayMs: config.updateCheck.delayMinutes * 60_000,
         timeoutMs: config.updateCheck.timeoutMs,
         timezone: config.timezone,
         selfPkg: 'dsh-rss-news-daily',
@@ -1382,7 +1385,7 @@ export function apply(ctx: Context, config: ConfigType) {
           ? (info) => desktopNotify('dsh-rss-news-daily 有新版本', `v${info.latest} 可用（当前 v${pkgVersion ?? '?'}）`, { url: info.url ?? '' })
           : undefined,
         log,
-      }))
+      })
       armPeak() // 高峰边界定时器首次挂钟
       armBriefs() // 快报类型调度首次挂钟（从未跑过的类型立即到期——首次启动即产一份快报）
       disposers.push(() => { peakTimer?.(); peakTimer = undefined }) // 插件重载必须清钟：孤儿定时器会拿旧闭包再跑一遍 pump/补跑

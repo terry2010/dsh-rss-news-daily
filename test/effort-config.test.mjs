@@ -213,3 +213,56 @@ test('cordisFiles: npm 布局下包自带 patch 先命中时 profile patch 仍�
   const hit = files.map((f) => patchCordisText(readFileSync(f, 'utf8'), 'omlx', 'Ornith-1.5-35B-A3B-BigBang-MTP-mlx-4bit')).find((r) => r.text !== undefined)
   assert.ok(hit, 'expected some candidate to contain the model block')
 })
+
+test('patchCordisModelText: 未声明模型补登到 models 列表尾', async () => {
+  const { patchCordisModelText } = await import('../lib/effort-config.js')
+  const r = patchCordisModelText(YAML_BASE, 'omlx', 'Hy-MT3-1.8B-oQ8e')
+  assert.ok(r.text, `expected text, got ${JSON.stringify(r)}`)
+  const out = r.text
+  // 插在 omlx models 尾（translategemma 条目之后、strata provider 之前）
+  const om = out.indexOf('omlx:')
+  const st = out.indexOf('strata:')
+  const seg = out.slice(om, st)
+  assert.match(seg, /- id: Hy-MT3-1\.8B-oQ8e\n {12}name: Hy-MT3-1\.8B-oQ8e\n {12}contextWindow: 32768\n {12}maxTokens: 8192\n {12}input:\n {14}- text/)
+  // 插在列表尾：translategemma 条目之后、仍属 omlx 块（strata 前）
+  assert.ok(out.indexOf('- id: Hy-MT3-1.8B-oQ8e') > out.indexOf('- id: translategemma-4b-it-4bit'))
+  assert.ok(out.indexOf('- id: Hy-MT3-1.8B-oQ8e') < st)
+  // 兄弟 provider 块未受影响
+  assert.equal((out.slice(st).match(/Hy-MT3/g) || []).length, 0)
+})
+
+test('patchCordisModelText: 已声明返回 exists；provider/条目/列表缺失一律不写', async () => {
+  const { patchCordisModelText } = await import('../lib/effort-config.js')
+  assert.equal(patchCordisModelText(YAML_BASE, 'omlx', 'translategemma-4b-it-4bit').exists, true)
+  assert.ok(patchCordisModelText(YAML_BASE, 'nosuch', 'm').reason)
+  assert.ok(patchCordisModelText('- id: other\n  config: {}\n', 'omlx', 'm').reason)
+  const noModels = YAML_BASE.replace('        models:\n          - id: q2_0', '        entries:\n          - id: q2_0') // strata 块改名 models 键
+  assert.match(patchCordisModelText(noModels, 'strata', 'x').reason ?? '', /models/)
+})
+
+test('patchCordisModelText: 非常规模型 id 加引号防 YAML 歧义', async () => {
+  const { patchCordisModelText } = await import('../lib/effort-config.js')
+  const r = patchCordisModelText(YAML_BASE, 'omlx', 'my model #1')
+  assert.ok(r.text)
+  assert.match(r.text, /- id: "my model #1"\n {12}name: "my model #1"/)
+  // 幂等：带引号 id 再喂一遍仍识别为 exists
+  const r2 = patchCordisModelText(r.text, 'omlx', 'my model #1')
+  assert.equal(r2.exists, true)
+})
+
+test('declareModelEntry: 端到端写到含目标 provider 的候选文件', async () => {
+  const { declareModelEntry } = await import('../lib/effort-config.js')
+  const home = mkdtempSync(join(tmpdir(), 'declare-model-'))
+  const pkgLib = join(home, 'profiles', 'desktop', 'node_modules', 'dsh-rss-news-daily', 'lib')
+  mkdirSync(pkgLib, { recursive: true })
+  writeFileSync(join(pkgLib, '..', 'cordis.patch.yml'), '- insert: []\n') // 包自带 patch：无 llm-pi-ai
+  const profilePatch = join(home, 'profiles', 'desktop', 'cordis.patch.yml')
+  writeFileSync(profilePatch, YAML_BASE)
+  const r = await declareModelEntry('omlx', 'Hy-MT3-1.8B-oQ8e', { fromDir: pkgLib, dshHome: home })
+  assert.equal(r.kind, 'written')
+  const { readFileSync } = await import('node:fs')
+  assert.match(readFileSync(profilePatch, 'utf8'), /- id: Hy-MT3-1\.8B-oQ8e/)
+  // 二次调用：已存在 → exists（幂等不重复写）
+  const r2 = await declareModelEntry('omlx', 'Hy-MT3-1.8B-oQ8e', { fromDir: pkgLib, dshHome: home })
+  assert.equal(r2.kind, 'exists')
+})

@@ -1,5 +1,5 @@
 /**
- * 每日更新检查：启动 delayMinutes 后向 update 端点上报一次自身版本 +
+ * 每日更新检查：挂在当日第一次抓取上——向 update 端点上报一次自身版本 +
  * 已安装伴随插件版本，拉回最新升级信息；每个自然日最多一次（成败都计）。
  *
  * 隐私口径（docs 详设 §2.4）：上行 {pkg, version, companions} + iid/d/t——
@@ -14,7 +14,6 @@
  *
  * fetch/fs/clock 全注入，纯逻辑可测。
  */
-import type { TimerSeam } from './scheduler.js';
 import type { LogSink } from './core/types.js';
 /** 上行 payload —— 用户定稿的最小集，勿加字段（隐私口径）。 */
 export interface UpdateReport {
@@ -93,7 +92,6 @@ export declare function runUpdateCheck(opts: {
 export interface StartUpdateCheckOpts {
     enabled: () => boolean;
     endpoint: () => string;
-    delayMs: number;
     timeoutMs: number;
     timezone?: string;
     selfPkg: string;
@@ -110,7 +108,8 @@ export interface StartUpdateCheckOpts {
     fetchImpl?: typeof fetch;
     log?: LogSink;
 }
-/** 装配启动延迟定时器；返回 disposer（插件重载清钟用）。 */
-export declare function startUpdateCheck(timer: TimerSeam, opts: StartUpdateCheckOpts): () => void;
+/** 组装每日一次门控的更新检查。返回的函数挂在「当日第一次抓取」上调用——
+ *  内部 lastAttemptDay 门控：enabled 关/当天已试过（成败都算）立即返回，可放心每轮抓取都调。 */
+export declare function startUpdateCheck(opts: StartUpdateCheckOpts): () => Promise<void>;
 export {};
 //# sourceMappingURL=update-check.d.ts.map

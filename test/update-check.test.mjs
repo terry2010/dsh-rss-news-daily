@@ -145,12 +145,9 @@ test('runUpdateCheck: HTTP 错/异常/超大体 → null', async () => {
   assert.equal(await runUpdateCheck({ endpoint: 'https://u', timeoutMs: 5000, report: rep, fetchImpl: async () => ({ ok: true, text: async () => 'x'.repeat(20 * 1024) }), log: noopLog }), null)
 })
 
-// ---------- startUpdateCheck：一天一次闸 ----------
-const mkTimer = () => { const t = { fn: null, ms: 0, timeout(fn, ms) { t.fn = fn; t.ms = ms; return () => { t.fn = null } }, interval() { return () => {} } }; return t }
-// 定时回调是 fire-and-forget：t.fn() 只启动异步链，微任务排空后才可断言
-const fire = async (t) => { t.fn(); await new Promise((r) => setImmediate(r)) }
+// ---------- startUpdateCheck：一天一次闸（挂在当日第一次抓取上调用） ----------
 const mkOpts = (over = {}) => ({
-  enabled: () => true, endpoint: () => 'https://u/v1/check', delayMs: 30 * 60_000, timeoutMs: 5000,
+  enabled: () => true, endpoint: () => 'https://u/v1/check', timeoutMs: 5000,
   selfPkg: SELF, selfVer: '1.2.0', companions: () => ({ 'dsh-rss-news-zhuikan': '0.2.0' }),
   meta: () => mkOpts._meta, save: () => { mkOpts._saves++ }, log: noopLog, ...over,
 })
@@ -159,37 +156,33 @@ test('startUpdateCheck: 成功写 meta + hasUpdate + onUpdate；同日二次触�
   mkOpts._meta = {}; mkOpts._saves = 0
   let fetches = 0, updates = 0
   const fetchImpl = async () => { fetches++; return { ok: true, text: async () => JSON.stringify({ latest: '1.3.0', url: 'https://x' }) } }
-  const t = mkTimer()
-  startUpdateCheck(t, mkOpts({ fetchImpl, onUpdate: () => updates++ }))
-  assert.equal(t.ms, 30 * 60_000)
-  await fire(t) // 第一次：发请求
+  const check = startUpdateCheck(mkOpts({ fetchImpl, onUpdate: () => updates++ }))
+  await check() // 当日第一次抓取触发：发请求
   assert.equal(fetches, 1)
   assert.equal(mkOpts._meta.updateCheck.hasUpdate, true)
   assert.equal(mkOpts._meta.updateCheck.latest, '1.3.0')
   assert.equal(updates, 1)
-  await fire(t) // 同日第二次：闸住
+  await check() // 同日第二次：闸住
   assert.equal(fetches, 1)
 })
 test('startUpdateCheck: 失败也记 lastAttemptDay（当天不再重试）；无更新不回调', async () => {
   mkOpts._meta = {}; mkOpts._saves = 0
   let fetches = 0, updates = 0
   const fetchImpl = async () => { fetches++; throw new Error('down') }
-  const t = mkTimer()
-  startUpdateCheck(t, mkOpts({ fetchImpl, onUpdate: () => updates++ }))
-  await fire(t)
+  const check = startUpdateCheck(mkOpts({ fetchImpl, onUpdate: () => updates++ }))
+  await check()
   assert.equal(fetches, 1)
   assert.equal(mkOpts._meta.updateCheck.lastAttemptDay.length, 10) // YYYY-MM-DD
   assert.equal(mkOpts._meta.updateCheck.hasUpdate, undefined)
   assert.equal(updates, 0)
-  await fire(t)
+  await check()
   assert.equal(fetches, 1)
 })
 test('startUpdateCheck: disabled 不记台账不发请求', async () => {
   mkOpts._meta = {}; mkOpts._saves = 0
   let fetches = 0
-  const t = mkTimer()
-  startUpdateCheck(t, mkOpts({ enabled: () => false, fetchImpl: async () => { fetches++ } }))
-  await fire(t)
+  const check = startUpdateCheck(mkOpts({ enabled: () => false, fetchImpl: async () => { fetches++ } }))
+  await check()
   assert.equal(fetches, 0)
   assert.equal(mkOpts._meta.updateCheck, undefined)
 })

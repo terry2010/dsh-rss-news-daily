@@ -99,8 +99,6 @@ export interface UpdateCheckSectionConfig {
     enabled: boolean;
     /** 检查端点（仅 https，非 https 拒跑） */
     endpoint: string;
-    /** 启动后延迟分钟数 */
-    delayMinutes: number;
     /** 请求超时 ms */
     timeoutMs: number;
     /** 发现新版本时弹系统通知（独立于 notifyEnabled） */

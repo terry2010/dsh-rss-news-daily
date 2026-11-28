@@ -39,4 +39,27 @@ export declare function ensureEffortConfig(llm: LlmRuntime, resolved: {
     provider: string;
     model: string;
 }): Promise<EffortProbeResult>;
+/** 往 provider 的 models 列表尾追加模型条目。在线模型发现会暴露"端点上已加载但
+ *  路由层未声明"的模型——保存这种选择一调就是 UNKNOWN_MODEL，故落盘前自动补一条
+ *  最小声明（contextWindow/maxTokens 为保守默认值，真实规格可按 patch 改），重启生效。
+ *  纯文本手术，不碰文件系统。 */
+export declare function patchCordisModelText(text: string, provider: string, model: string): {
+    text?: string;
+    exists?: boolean;
+    reason?: string;
+};
+export type DeclareModelResult = {
+    kind: 'exists';
+} | {
+    kind: 'written';
+    file: string;
+} | {
+    kind: 'unsupported';
+    detail: string;
+};
+/** 主流程：模型未在路由声明清单时补登 cordis.patch.yml（逐候选文件找该 provider 的 models 块）。 */
+export declare function declareModelEntry(provider: string, model: string, opts?: {
+    fromDir?: string;
+    dshHome?: string;
+}): Promise<DeclareModelResult>;
 //# sourceMappingURL=effort-config.d.ts.map

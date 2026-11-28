@@ -112,9 +112,10 @@ const indentOf = (line: string): number => line.length - line.trimStart().length
 const escRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 interface ModelBlock { start: number; end: number; indent: number; api?: string; hasEfforts: boolean; compatIdx?: number; compatEnd?: number }
+interface ProviderBlock { provIdx: number; provEnd: number; api?: string }
 
-/** 在 patch 文本里定位 provider>models>model 条目块；找到就返回边界信息。 */
-function locateModelBlock(lines: string[], provider: string, model: string): ModelBlock | { reason: string } {
+/** 定位 patch 文本里的 llm-pi-ai > providers.<provider> 块边界。 */
+function locateProvider(lines: string[], provider: string): ProviderBlock | { reason: string } {
   const entryIdx = lines.findIndex((l) => /^\s*-\s*id:\s*["']?llm-pi-ai["']?\s*$/.test(l))
   if (entryIdx < 0) return { reason: 'patch 里没有 llm-pi-ai 条目（非 pi-ai 路由？）' }
   let entryEnd = lines.length
@@ -143,19 +144,26 @@ function locateModelBlock(lines: string[], provider: string, model: string): Mod
   const api = lines.slice(provIdx, provEnd)
     .map((l) => l.match(/^\s*api:\s*["']?([\w-]+)["']?\s*$/)?.[1])
     .find(Boolean)
-  const modelsIdx = lines.findIndex((l, i) => i > provIdx && i < provEnd && /^\s+models:\s*$/.test(l))
+  return { provIdx, provEnd, api }
+}
+
+/** 在 patch 文本里定位 provider>models>model 条目块；找到就返回边界信息。 */
+function locateModelBlock(lines: string[], provider: string, model: string): ModelBlock | { reason: string } {
+  const blk = locateProvider(lines, provider)
+  if ('reason' in blk) return blk
+  const modelsIdx = lines.findIndex((l, i) => i > blk.provIdx && i < blk.provEnd && /^\s+models:\s*$/.test(l))
   if (modelsIdx < 0) return { reason: `${provider} 路由没有手写 models 列表（catalog 模型改不动）` }
   const modelsIndent = indentOf(lines[modelsIdx])
   const itemRe = new RegExp(`^\\s*-\\s*id:\\s*["']?${escRe(model)}["']?\\s*$`)
-  for (let i = modelsIdx + 1; i < provEnd; i++) {
+  for (let i = modelsIdx + 1; i < blk.provEnd; i++) {
     const l = lines[i]
     if (!l.trim() || l.trimStart().startsWith('#')) continue
     if (indentOf(l) <= modelsIndent) break
     if (!itemRe.test(l)) continue
     // 条目块：[i, 下一个同级 '- ' 或 dedent 之前)
     const indent = indentOf(l)
-    let end = provEnd
-    for (let j = i + 1; j < provEnd; j++) {
+    let end = blk.provEnd
+    for (let j = i + 1; j < blk.provEnd; j++) {
       const lj = lines[j]
       if (!lj.trim() || lj.trimStart().startsWith('#')) continue
       const d = indentOf(lj)
@@ -172,7 +180,7 @@ function locateModelBlock(lines: string[], provider: string, model: string): Mod
       }
       compatEnd ??= end
     }
-    return { start: i, end, indent, api, hasEfforts, compatIdx: compatIdx < 0 ? undefined : compatIdx, compatEnd }
+    return { start: i, end, indent, api: blk.api, hasEfforts, compatIdx: compatIdx < 0 ? undefined : compatIdx, compatEnd }
   }
   return { reason: `models 列表里没有 ${model}` }
 }
@@ -237,4 +245,68 @@ export async function ensureEffortConfig(
     lastReason = r.reason ?? ''
   }
   return { kind: 'unsupported', detail: lastReason || '无可用 patch 目标' }
+}
+
+/** 往 provider 的 models 列表尾追加模型条目。在线模型发现会暴露"端点上已加载但
+ *  路由层未声明"的模型——保存这种选择一调就是 UNKNOWN_MODEL，故落盘前自动补一条
+ *  最小声明（contextWindow/maxTokens 为保守默认值，真实规格可按 patch 改），重启生效。
+ *  纯文本手术，不碰文件系统。 */
+export function patchCordisModelText(text: string, provider: string, model: string): { text?: string; exists?: boolean; reason?: string } {
+  const lines = text.split('\n')
+  const blk = locateProvider(lines, provider)
+  if ('reason' in blk) return { reason: blk.reason }
+  const modelsIdx = lines.findIndex((l, i) => i > blk.provIdx && i < blk.provEnd && /^\s+models:\s*$/.test(l))
+  if (modelsIdx < 0) return { reason: `${provider} 路由没有手写 models 列表（catalog 模型改不动）` }
+  const modelsIndent = indentOf(lines[modelsIdx])
+  const itemRe = new RegExp(`^\\s*-\\s*id:\\s*["']?${escRe(model)}["']?\\s*$`)
+  let itemIndent = modelsIndent + 2
+  let listEnd = blk.provEnd
+  for (let i = modelsIdx + 1; i < blk.provEnd; i++) {
+    const l = lines[i]
+    if (!l.trim() || l.trimStart().startsWith('#')) continue
+    const d = indentOf(l)
+    if (d <= modelsIndent) { listEnd = i; break }
+    if (/^\s*-\s*id:\s*/.test(l)) {
+      itemIndent = d
+      if (itemRe.test(l)) return { exists: true }
+    }
+  }
+  const scalar = (s: string): string => (/^[\w./:+-]+$/.test(s) ? s : `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
+  const itemPad = ' '.repeat(itemIndent)
+  const fieldPad = ' '.repeat(itemIndent + 2)
+  lines.splice(listEnd, 0,
+    `${itemPad}- id: ${scalar(model)}`,
+    `${fieldPad}name: ${scalar(model)}`,
+    `${fieldPad}contextWindow: 32768`,
+    `${fieldPad}maxTokens: 8192`,
+    `${fieldPad}input:`,
+    `${fieldPad}  - text`,
+  )
+  return { text: lines.join('\n') }
+}
+
+export type DeclareModelResult =
+  | { kind: 'exists' }                          // patch 里已含该条目——runtime 没它多半在等重启
+  | { kind: 'written'; file: string }           // 已补登记（重启生效）
+  | { kind: 'unsupported'; detail: string }     // 结构不识别/无可用文件——调用方自行提示
+
+/** 主流程：模型未在路由声明清单时补登 cordis.patch.yml（逐候选文件找该 provider 的 models 块）。 */
+export async function declareModelEntry(provider: string, model: string, opts: { fromDir?: string; dshHome?: string } = {}): Promise<DeclareModelResult> {
+  const files = await cordisFiles(opts)
+  let lastReason = ''
+  for (const file of files) {
+    const text = await readFile(file, 'utf8').catch(() => '')
+    if (!text) continue
+    const r = patchCordisModelText(text, provider, model)
+    if (r.exists) return { kind: 'exists' }
+    if (r.text !== undefined) {
+      const tmp = `${file}.tmp-${process.pid}`
+      await writeFile(tmp, r.text)
+      try { await rename(tmp, file) }
+      catch (e) { await unlink(tmp).catch(() => {}); throw e }
+      return { kind: 'written', file }
+    }
+    lastReason = r.reason ?? ''
+  }
+  return { kind: 'unsupported', detail: lastReason || '找不到 cordis.patch.yml' }
 }

@@ -34,6 +34,7 @@ test('单源重试显示进度并走自动翻译，翻译完成后恢复空闲�
   }
   resetFeedGate()
   globalThis.fetch = (_url, init) => new Promise((resolve, reject) => {
+    if (!String(_url).startsWith(feedUrl)) { reject(new Error('non-feed fetch blocked in test')) ; return } // 更新检查等旁路请求快速失败——不抢 releaseFeed 门控
     releaseFeed = () => resolve(new Response(feedBody, { status: 200, headers: { 'content-type': 'application/rss+xml' } }))
     init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
     startedFeed()
@@ -164,6 +165,7 @@ test('翻译 LLM 挂起不返回 → llm.timeoutMs 超时释放抓取循环，�
   const feedUrl = 'https://news.example/feed'
   const oldFetch = globalThis.fetch
   globalThis.fetch = (_url, init) => new Promise((resolve, reject) => {
+    if (!String(_url).startsWith(feedUrl)) { reject(new Error('non-feed fetch blocked in test')); return } // 更新检查等旁路请求快速失败
     init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
     resolve(new Response(RSS, { status: 200, headers: { 'content-type': 'application/rss+xml' } }))
   })

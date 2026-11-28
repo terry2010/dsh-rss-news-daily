@@ -108,8 +108,6 @@ export interface UpdateCheckSectionConfig {
   enabled: boolean
   /** 检查端点（仅 https，非 https 拒跑） */
   endpoint: string
-  /** 启动后延迟分钟数 */
-  delayMinutes: number
   /** 请求超时 ms */
   timeoutMs: number
   /** 发现新版本时弹系统通知（独立于 notifyEnabled） */
@@ -212,7 +210,6 @@ const ScheduleSectionSchema = Schema.object({
 const UpdateCheckSectionSchema = Schema.object({
   enabled: Schema.boolean().default(true).description('每天一次向 zhuikan.net 上报自身+伴随插件版本并拉取升级信息；false 完全不外联。'),
   endpoint: Schema.string().default('https://news-update.zhuikan.net/v1/check'),
-  delayMinutes: Schema.number().min(1).default(30),
   timeoutMs: Schema.number().min(1000).default(10_000),
   notify: Schema.boolean().default(false).description('发现新版本时弹系统通知。'),
 }).description('每日更新检查。')
