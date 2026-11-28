@@ -138,6 +138,9 @@ async function readBody(
         chunks.push(decoder.decode(next, { stream: true }))
       }
     }
+    // reader.cancel() 会把挂起的 read() 兑现成 done——不在这里拦一下的话，
+    // abort（超时/取消）会把截断 body 当成功文档返回（audit2：慢响应读流途中超时=静默收半篇）
+    if (signal?.aborted) throw new FeedFetchError('fetch aborted during body read', true)
     decoder ??= pickDecoder(contentType, head)
     for (const bufferedChunk of buffered) {
       chunks.push(decoder.decode(bufferedChunk, { stream: true }))
@@ -175,7 +178,9 @@ let dnsMod: DnsModule | null | undefined
 async function resolvedHostRejectReason(urlText: string): Promise<string | null> {
   let host: string
   try { host = new URL(urlText).hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '') } catch { return null }
-  if (host === '' || !host.includes('.') || /^[0-9.]+$/.test(host) || host.includes(':')) return null // IP 字面量/单标签：URL 层已按字面量或主机名规则校验
+  // IP 字面量（含 IPv6）：URL 层已按字面量规则校验过，解析结果必然同字面量——跳过复查。
+  // 单标签主机名（http://nas/）不能跳：resolv.conf search-domain/split-DNS 可把它解析到内网地址。
+  if (host === '' || /^[0-9.]+$/.test(host) || host.includes(':')) return null
   dnsMod ??= await import('node:dns').then((m) => m as unknown as DnsModule).catch(() => null)
   if (!dnsMod) return null
   let addrs: Array<{ address: string }>

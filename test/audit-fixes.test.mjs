@@ -280,3 +280,52 @@ test('audit: tokenStats days 桶按 400 天上限收敛', async () => {
   assert.ok(!meta.tokenStats.days['2025-01-01'], 'oldest buckets pruned')
   assert.ok(meta.tokenStats.days[keys[0]] < meta.tokenStats.days[keys[399]] || keys[0] > '2025-01-01', 'kept buckets are the newest')
 })
+
+// ---- 9. fetcher 读流途中 abort 不伪装成功（audit2） ----
+
+test('audit: 响应体读流途中 abort 返回失败而非截断成功', async () => {
+  const { createFetcher } = await import(core + 'fetcher.js')
+  const ctrl = new AbortController()
+  // 首 chunk 后永不闭合的流——只有 reader.cancel() 能把挂起的 read() 兑现成 done
+  const body = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('partial')) } })
+  const fetcher = createFetcher({ fetchImpl: async () => new Response(body, { status: 200 }) })
+  setTimeout(() => ctrl.abort(), 20)
+  const r = await fetcher('http://nonexistent.invalid/f', ctrl.signal)
+  assert.ok('error' in r, 'mid-body abort must surface as failure, not a truncated success')
+})
+
+// ---- 10. exportNdjson briefs 覆盖 + 缺失目录容忍 + importNdjson rel 白名单（audit2） ----
+
+test('audit: exportNdjson 覆盖 briefs/ 与缺失目录容忍；importNdjson rel 白名单', async () => {
+  const { SqliteStore } = await import(core + 'sqlite-store.js')
+  const dir = mkdtempSync(join(tmpdir(), 'rnd-audit-exp-'))
+  const st = new SqliteStore({ path: join(dir, 'store.db') })
+  await st.load()
+  // digestsDir 尚不存在（从未产出日报）也不抛
+  const missing = await st.exportNdjson(join(dir, 'none.ndjson'), join(dir, 'no-such-dir'), 'digests')
+  assert.equal(missing, 0)
+  const digests = join(dir, 'digests')
+  mkdirSync(join(digests, 'briefs'), { recursive: true })
+  writeFileSync(join(digests, '2026-11-20-rss-briefing.md'), '# daily')
+  writeFileSync(join(digests, 'briefs', '2026-11-20-tech.md'), '# brief')
+  const f = join(dir, 'exp.ndjson')
+  await st.exportNdjson(f, digests)
+  const dir2 = mkdtempSync(join(tmpdir(), 'rnd-audit-imp2-'))
+  const st2 = new SqliteStore({ path: join(dir2, 'store.db') })
+  await st2.load()
+  const c = await st2.importNdjson(f, join(dir2, 'digests'))
+  assert.equal(c.digests, 2, 'daily + briefs/ custom type both round-trip')
+  assert.equal(readFileSync(join(dir2, 'digests', 'briefs', '2026-11-20-tech.md'), 'utf8'), '# brief')
+  // rel 穿越一律不落盘；干净 rel 正常落盘
+  const evil = join(dir, 'evil-rel.ndjson')
+  writeFileSync(evil, [
+    JSON.stringify({ type: 'digest', rel: '../x.md', data: 'E' }),
+    JSON.stringify({ type: 'digest', rel: 'briefs/../../x.md', data: 'E' }),
+    JSON.stringify({ type: 'digest', rel: 'briefs\\win.md', data: 'E' }),
+    JSON.stringify({ type: 'digest', rel: 'briefs/good-name.md', data: 'G' }),
+  ].join('\n'))
+  const c2 = await st2.importNdjson(evil, join(dir2, 'digests'))
+  assert.equal(c2.digests, 1, 'only the clean rel lands')
+  assert.equal(existsSync(join(dir2, 'x.md')), false, 'no traversal write outside digestsDir')
+  assert.equal(readFileSync(join(dir2, 'digests', 'briefs', 'good-name.md'), 'utf8'), 'G')
+})
