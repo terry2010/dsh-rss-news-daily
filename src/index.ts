@@ -54,7 +54,7 @@ import { createTaskQueue } from './task-queue.js'
 import { isPeak, nextPeakTransition, peakRangeValid } from './core/peak.js'
 import { briefDue, briefFileOf, briefWindowStart, nextBriefMs, resolveBriefTypes } from './brief-types.js'
 import type { BriefType } from './brief-types.js'
-import { listCompanions, startUpdateCheck } from './update-check.js'
+import { compareSemver, listCompanions, startUpdateCheck } from './update-check.js'
 
 export { Config }
 export { RndSourceHub }
@@ -1112,7 +1112,9 @@ export function apply(ctx: Context, config: ConfigType) {
         todayTokens: (() => { const d = store.meta.tokenStats?.days?.[zonedDayKey(new Date(), config.timezone || undefined)]; return d ? { total: d.in + d.out, digest: d.digest, score: d.score, translate: d.translate, topic: d.topic ?? 0 } : undefined })(),
         tokenStats: store.meta.tokenStats,
         version: pkgVersion,
-        update: (() => { const u = store.meta.updateCheck; return u?.latest ? { hasUpdate: u.hasUpdate === true, latest: u.latest, url: u.url, notes: u.notes, checkedAt: u.lastCheckedAt } : undefined })(),
+        // hasUpdate 是上次检查的持久化结果——版本可能已升级过（台账还停在旧 latest），
+        // 透出时必须拿 latest 和当前版本复核，否则旧台账会渲染"发现新版本 v旧"的反向横幅
+        update: (() => { const u = store.meta.updateCheck; return u?.latest ? { hasUpdate: u.hasUpdate === true && compareSemver(u.latest, pkgVersion ?? '0.0.0') > 0, latest: u.latest, url: u.url, notes: u.notes, checkedAt: u.lastCheckedAt } : undefined })(),
         lastFetchAt: store.meta.lastFetchAt,
         lastDigestDay: store.meta.lastDigestDay,
         failures,
